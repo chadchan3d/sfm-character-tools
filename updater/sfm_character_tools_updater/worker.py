@@ -10,6 +10,7 @@
   python -m sfm_character_tools_updater.worker download-official --installation CFG --result OUT
                                                                 --release-tag TAG --descriptor-sha SHA
                                                                 [--allow-older]
+  python -m sfm_character_tools_updater.worker discard-prepared --installation CFG --result OUT --prepared ID
   python -m sfm_character_tools_updater.worker install          --installation CFG --result OUT
                                                                 --prepared ID --confirm-sha SHA
                                                                 [--accept-replacement]
@@ -24,7 +25,11 @@ preparation (consent is bound to it); `--accept-replacement` is required when th
 reports `consent_required`.
 
 check-official and download-official are the only commands that use the network, each run on an
-explicit user action (Get Official Data). check-official writes nothing; download-official takes
+explicit user action (Get Official Data).
+
+Staging cleanup (L-4): after an install that completes or finds the data already installed, the
+consumed preparation and stale updater staging folders are removed (staging.py); discard-prepared
+removes a preparation the user cancelled. Neither touches transactions or recovery data. check-official writes nothing; download-official takes
 the release the check reported (`--release-tag`, `--descriptor-sha`), downloads it into
 updater-private staging and prepares it exactly as prepare-official does.
 
@@ -38,12 +43,12 @@ import json
 import sys
 import traceback
 
-from . import VERSION, backend, recovery
+from . import VERSION, backend, recovery, staging
 from .layout import Layout, resolve_installation
 from .messages import MESSAGES, Stop
 
 COMMANDS = ("status", "prepare-rebuild", "prepare-import", "prepare-official", "check-official",
-            "download-official", "install", "recover")
+            "download-official", "discard-prepared", "install", "recover")
 
 
 def build_parser(commands=COMMANDS):
@@ -93,7 +98,16 @@ def dispatch(args, extra=None):
     if args.command == "install":
         if not args.prepared or not args.confirm_sha:
             raise Stop("REFUSED", "NOTHING", reason="install requires --prepared and --confirm-sha")
-        return backend.install(layout, args.prepared, args.confirm_sha, args.accept_replacement)
+        res = backend.install(layout, args.prepared, args.confirm_sha, args.accept_replacement)
+        if res.get("outcome") in ("COMPLETE", "NOOP"):
+            res["staging_cleanup"] = staging.cleanup(layout, consumed=(args.prepared,))
+        return res
+    if args.command == "discard-prepared":
+        layout.prepdir(args.prepared or "")
+        why = staging.remove(layout, args.prepared)
+        if why:
+            raise Stop("REFUSED", "NOTHING", reason="prepared data not removed", kept=why)
+        return {"operation": "discard-prepared", "outcome": "DISCARDED", "message": MESSAGES["DISCARDED"]}
     if args.command == "recover":
         return recovery.recover(layout, args.policy)
     raise Stop("REFUSED", "NOTHING", reason="unknown command")

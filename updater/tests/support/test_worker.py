@@ -17,7 +17,9 @@ Wraps the product worker (sfm_character_tools_updater.worker) and, for this one 
     through the test-only seam hooks.network_rewrite, and shortens the network timeout
     (--net-timeout SECONDS) through hooks.network_timeout;
   * records every name lookup and socket connection attempt of the operation (Python audit
-    hook) in the result as `network`.
+    hook) in the result as `network`;
+  * (L-4) holds at a named barrier indefinitely (--hold-at NAME), after creating the marker file
+    --hold-marker PATH, so that the GUI qualification can kill or close a worker mid-operation.
 
 Process forms: clear | real | raise | rc:N | output:TEXT (\\n allowed).
 """
@@ -25,6 +27,7 @@ import json
 import os
 import sys
 import threading
+import time
 from urllib.parse import urlsplit
 
 UPDATER = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -35,6 +38,7 @@ from sfm_character_tools_updater.layout import resolve_installation  # noqa: E40
 from sfm_character_tools_updater.messages import Stop  # noqa: E402
 
 STOPS = set()
+HOLD = {}
 PASSED = []
 TOKEN = [None]
 BARRIER_TIMEOUT = [120.0]
@@ -62,6 +66,11 @@ def make_rewrite(base):
 def barrier(name):
     """Exact-token, fail-closed: only `GO <name> <token>` continues."""
     PASSED.append(name)
+    if name in HOLD.get("names", ()):
+        with open(HOLD["marker"], "x", encoding="ascii") as f:
+            f.write("%s %d\n" % (name, os.getpid()))
+        while True:
+            time.sleep(1)
     if name in STOPS:
         sys.stdout.write("BARRIER %s\n" % name)
         sys.stdout.flush()
@@ -121,7 +130,8 @@ def under(path, root):
 
 def main(argv):
     test_opts = {"--stop-at": [], "--token": [], "--barrier-timeout": [], "--inject": [],
-                 "--scratch-root": [], "--forbid": [], "--trust-key": [], "--net-base": [], "--net-timeout": []}
+                 "--scratch-root": [], "--forbid": [], "--trust-key": [], "--net-base": [], "--net-timeout": [],
+                 "--hold-at": [], "--hold-marker": []}
     rest = []
     i = 0
     while i < len(argv):
@@ -153,6 +163,8 @@ def main(argv):
         hooks.process_query = query
     if test_opts["--trust-key"]:
         hooks.extra_trusted_keys = {official.key_id_for(bytes.fromhex(k)): k for k in test_opts["--trust-key"]}
+    if test_opts["--hold-at"]:
+        HOLD.update(names=set(test_opts["--hold-at"]), marker=test_opts["--hold-marker"][0])
     if test_opts["--net-base"]:
         hooks.network_rewrite = make_rewrite(test_opts["--net-base"][0])
     if test_opts["--net-timeout"]:

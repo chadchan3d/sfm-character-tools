@@ -8,7 +8,92 @@ Blueprint, or expands scope, report the conflict before dependent edits.
 Otherwise proceed with the assigned milestone.
 
 ## Current milestone
-**L-3 — Get Official Data online (headless) and official repository identity: COMPLETE / PASS (bounded), 2026-10-17.**
+**L-4 — SFM Character Tools Updater GUI and bounded worker: COMPLETE / PASS (bounded), 2026-10-17.**
+Authorized by the owner under the L card §5. The designer accepted the report provisionally (private evidence,
+`L4_IMPLEMENTATION_REPORT.md` `78d1d47a…`; evidence manifest `e61a7963…`, 51 entries). Base: `59e5254…`.
+- **Source (GitHub, `updater/`; digests in `updater/SHA256SUMS.txt`):**
+  - **New:** `gui/app.py`, `gui/__init__.py`, `gui/__main__.py`, `supervisor.py` and `staging.py`.
+  - **Changed:** `worker.py` (post-install cleanup; `discard-prepared`), `discovery.py` (the download folder is
+    removed once prepared), `messages.py` and `__init__.py` (version `0.4.0-l4`).
+  - **Tests:** group U in `run_l1.py`, `support/test_worker.py` (test-only `--hold-at`/`--hold-marker`) and the new
+    `support/gui_driver.py`.
+  - **Unchanged since L-3:** `backend`, `candidate`, `recovery`, `journal`, `w32`, `layout`, `legacy_lock`,
+    `process_gate`, `official`, `hooks` and the release producer.
+- **GUI** (`python -m sfm_character_tools_updater.gui`, Tkinter):
+  - three equal-width primary buttons labelled exactly **Get Official Data**, **Rebuild My Data** and **Use Another
+    TXT** (no ellipses, no menu), each with a plain explanation;
+  - an installation selector (read-only Steam library detection, plus Choose Folder);
+  - the note "Save your work and close SFM before installing data.";
+  - progress, preview and result screens, a recovery mode, and a Details area.
+- **Workflows:** each action runs only the existing worker commands, so the GUI writes no installed file and there is
+  no second publication path.
+  - **Get Official Data:** `check-official`, then (when AVAILABLE) `download-official` and `install`.
+  - **Rebuild My Data:** `prepare-rebuild`, then `install`.
+  - **Use Another TXT:** a file picker, `prepare-import`, a preview (file, destination, backup note), consent before
+    Install (bound to the observed destination TXT), then `install`. Cancel runs `discard-prepared`.
+- **Truthful outcomes:**
+  - Success is shown only for a backend COMPLETE, after the backend's own verification, or a recovery reporting
+    WORKING.
+  - Refused (SFM open or its state unknown: "Close SFM, then try again", with Try Again), NOOP, UNVERIFIED,
+    interrupted and recovery-needed are distinct screens.
+  - Unfinished work shows the recovery screen with the primary actions disabled; Recover runs the L-1 `recover`.
+- **Bounded worker (`supervisor.py`):**
+  - the unchanged worker is created suspended, assigned to a Windows Job Object, then resumed;
+  - job-wide memory ceiling **2 GiB**, with kill-on-job-close (no worker outlives the GUI) and
+    die-on-unhandled-exception;
+  - a result is classified WORKER_MEMORY_LIMIT, WORKER_STOPPED or WORKER_FAILED when the worker gives none, never
+    success.
+- **Measured peak job memory (G1-scale workload, 54 runs):** status 126 MiB; prepare 303 MiB; download 329 MiB;
+  install 141 MiB; recover 125 MiB; check 30 MiB. The ceiling is about 6× the highest peak.
+- **Staging cleanup (`staging.py`):**
+  - only direct children of `…\staging` that the updater itself creates (preparation and `download-<id>` folders
+    with only known plain files);
+  - removed after COMPLETE/NOOP (the consumed preparation), on discard, once a download is prepared, or after 24 h
+    untouched;
+  - unexpected content, unfamiliar names, recent folders and links are kept;
+  - transactions and recovery data are outside its scope.
+- **Production surface:** the entry point passes no test arguments, and the shipping worker rejects every test
+  option. `official.TRUSTED_KEYS` remains empty, so no official package can be installed and unverified data is never
+  offered.
+- **Result:** effective 267/267 PASS.
+  - `final`, 2026-10-17 23:39 to 10-18 00:36Z: groups A–W4 except Q, 211/211 (rerun as regression because the install
+    and download paths changed).
+  - `final_q`: Q 33/33.
+  - `final_u`: U 23/23 on the final GUI source.
+  - The real process status was CLEAR throughout. The live installation fingerprint was identical before and after.
+    Sources were frozen before each run and unchanged during it.
+- **Group U** drives the real window, invoking its buttons as clicks:
+  - the three actions end-to-end;
+  - consent accepted, declined and invalidated by a destination change; a cancelled file picker;
+  - official data: none published, unverified, and installed with a test key;
+  - install refused for SFM RUNNING and UNKNOWN, then Try Again;
+  - recovery presented, executed, and refused while SFM runs;
+  - worker killed during install and during preparation;
+  - the memory ceiling (64 MiB in the test);
+  - window closed during install, and close declined;
+  - GUI process killed during install (its worker ended with it; recovered);
+  - cleanup scope;
+  - the shipping worker at the production ceiling;
+  - the product surface.
+- **Recorded corrections (preserved in the evidence):**
+  - **Product defect found and fixed:** a Tk variable could be garbage-collected on the worker-wait thread
+    (`Tcl_AsyncDelete`). The consent variable now lives as long as the window.
+  - **Test design:** a junction in staging makes every command refuse (the L-1 reparse rule), so that case calls the
+    cleanup function directly (U19b).
+  - **Test-only failure in `final`:** 25 Q cases failed on a user-agent check pinned to `0.3.0-l3`, although every
+    outcome matched. The check now reads `VERSION`, and Q was rerun.
+  - **GUI layout:** after `final`, the consent box moved above Install (only `gui/app.py` changed), and U was rerun.
+- **Not yet done:** a hands-on owner review of the window. Layout was checked only by two screenshots and
+  programmatically.
+- **Scope of the PASS:** a headless-driven GUI on scratch installations with test keys and a loopback GitHub
+  stand-in, plus the shipping worker on a scratch installation. It does not cover packaging (L-5), native SFM, a
+  real official release, production trust or release eligibility.
+- **No official data release has been published.** Release dependencies are unchanged: the production signing key,
+  the signed compatibility profile and installed-software inventory (L-5; `sct-authority-profile-1` remains
+  provisional, not certified), `published_at` and the final signed `data-v1.0.0` package.
+- **L-5:** NOT STARTED / REQUIRES AUTHORIZATION. **L-6:** NOT STARTED.
+
+Previous milestone: **L-3 — Get Official Data online (headless) and official repository identity: COMPLETE / PASS (bounded), 2026-10-17.**
 Authorized by the owner under the L card §5, together with the repository identity resolution. The designer accepted
 the report provisionally (private evidence, `L3_IMPLEMENTATION_REPORT.md` `834619bb…`; evidence manifest
 `1d2a1635…`, 55 entries). Base: `230aa5b…`.
@@ -89,7 +174,8 @@ the report provisionally (private evidence, `L3_IMPLEMENTATION_REPORT.md` `83461
   - proxies or certificate-store packaging;
   - native SFM or the GUI;
   - production trust or release eligibility.
-- **L-4:** NOT STARTED / REQUIRES AUTHORIZATION. **L-5, L-6:** NOT STARTED.
+- **L-4:** NOT STARTED / REQUIRES AUTHORIZATION at this checkpoint. It has since been completed (see Current
+  milestone). **L-5, L-6:** NOT STARTED.
 
 Previous milestone: **L-2 — Use Another TXT and Get Official Data (headless): COMPLETE / PASS (bounded), 2026-10-17.**
 Authorized by the owner under the L card §5. The designer accepted the report (private evidence,
@@ -737,7 +823,10 @@ checkpoint (2026-10-17) changed only files under `updater/` (adding `official.py
 run, the isolated qualification environment and its evidence are local only. The L-3 checkpoint (2026-10-17)
 changed only files under `updater/` (adding `discovery.py` and two test-support files, regenerating
 `updater/SHA256SUMS.txt`) and this Ledger. Its scratch run, the unsigned `data-v1.0.0` candidate and the evidence are
-local only. No release, tag or key exists.
+local only. No release, tag or key exists. The L-4 checkpoint (2026-10-17) changed only files under `updater/`
+(adding `gui/`, `supervisor.py`, `staging.py` and one test-support file, regenerating `updater/SHA256SUMS.txt`) and
+this Ledger. Its scratch run, screenshots and evidence are local only. The local git remote now uses the renamed
+repository URL.
 
 **References for transfer:**
 - Authoritative R15 design: `cpm/qualification/R15_IMPLEMENTATION_BLUEPRINT.md`, frozen from
@@ -980,10 +1069,18 @@ Evidence:
 - **L-3 items (later L stages or release; not L-3 prerequisites):**
   - **Freshness:** a check does not record authenticated sequences that are seen but not prepared. The
     high-water mark advances at preparation. First-contact suppression is not detectable (R2 D4).
-  - **Downloads:** download folders under `staging\download-<id>` are kept (L-4 cleanup). The payload is
-    held in memory before writing, within the existing bounds.
+  - **Downloads:** download folders were kept (resolved in L-4: removed once prepared). The payload is held in
+    memory before writing, within the existing bounds.
   - **Untested until later:** real GitHub asset-redirect hosts (untestable until a release exists);
     proxies (untested); the TLS certificate store (an L-5 packaging decision).
+- **L-4 items (later L stages or owner review; not L-4 prerequisites):**
+  - **Owner review:** a hands-on visual review of the window has not yet occurred.
+  - **Older releases:** explicit older official installation exists in the worker (`--allow-older`) but not in
+    the GUI. OLDER_ONLY is reported, not offered.
+  - **Cleanup race:** cleanup removes by path after re-checking shape. A folder swapped for a link between the
+    check and the removal is a residual race inside the user's own installation folder.
+  - **L-5 packaging:** the one-folder package, the launcher and the shipping worker command; the Python, Tk and
+    `cryptography` runtime; and the pinned dependencies, which still load from repository paths.
 - **Removed from the v1 critical path with P2/P3 (not passed):** native Master access, the CPM working
   directory, the native channel/key oracle, bytecode content and restoration recoverability. These were the
   former U0B open items; see Current milestone.
@@ -1036,7 +1133,7 @@ Evidence:
   **Pre-K complete. `4e35f292…` is the exact CPM candidate eligible to enter K.**
   - **K — COMPLETE / PASS** (K1A2 + K2A1, 2026-10-10).
 
-  L: L-1, L-2 and L-3 COMPLETE / PASS (bounded), 2026-10-17. L-4 NOT STARTED / REQUIRES AUTHORIZATION. The
+  L: L-1 to L-4 COMPLETE / PASS (bounded), 2026-10-17. L-5 NOT STARTED / REQUIRES AUTHORIZATION. The
   final packaging layout is decided in L-5.
 - **Session 4 notes (not failures; carried to K; unchanged by items 7–8):**
   - Fit's exception path releases the stage with a bare `release()` (no
@@ -1049,16 +1146,17 @@ Evidence:
   R15 suite PASS.
 
 ## Next
-Stop. This is the L-3 GitHub checkpoint (2026-10-17).
-- **Next action:** an owner decision on authorizing **L-4** (Tkinter GUI with the three primary buttons and the
-  bounded worker, card §5). L-4 is NOT STARTED / REQUIRES AUTHORIZATION.
+Stop. This is the L-4 GitHub checkpoint (2026-10-17).
+- **Next action:** a hands-on owner review of the L-4 window, then an owner decision on authorizing **L-5**
+  (compatibility profile, signed inventory and one-folder packaging, card §5). L-5 is NOT STARTED / REQUIRES
+  AUTHORIZATION.
 - **Outstanding release dependencies:** the production signing key, the signed compatibility profile and
   inventory (L-5), `published_at` and the final signed `data-v1.0.0` package (see Current milestone). No official
   data release has been published.
-- **Not authorized by this checkpoint:** L-4 or any later increment; signing, tagging or publishing a release;
+- **Not authorized by this checkpoint:** L-5 or any later increment; signing, tagging or publishing a release;
   any native SFM run; WPR/ETW work; or a live installation write.
 
-L-1, L-2 and L-3 are COMPLETE / PASS (bounded). K is COMPLETE / PASS. U0A is PASS (bounded). U0B is closed for v1 at the P1
+L-1 to L-4 are COMPLETE / PASS (bounded). K is COMPLETE / PASS. U0A is PASS (bounded). U0B is closed for v1 at the P1
 evidence boundary. `4e35f292…`, the
 production Normalizer `1f4ec5a2…` and exact G1 authority remain installed.
 

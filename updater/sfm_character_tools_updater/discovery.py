@@ -29,7 +29,7 @@ import time
 import uuid
 from urllib.parse import urlsplit
 
-from . import VERSION, backend, hooks, official, w32
+from . import VERSION, backend, hooks, official, staging, w32
 from .messages import MESSAGES, Stop
 
 API_HOST = "api.github.com"
@@ -364,10 +364,14 @@ def download_official(layout, release_tag, descriptor_sha, allow_older=False):
         ok, err = w32.write_new_file(os.path.join(ddir, n), data)
         if not ok:
             raise Stop("REFUSED", "NOTHING", reason="download write failed", error=w32.ename(err))
-    res = backend.prepare_official(layout, ddir, allow_older)
+    try:
+        res = backend.prepare_official(layout, ddir, allow_older)
+    finally:
+        # The preparation copies what it needs; the download folder is never used again (L-4).
+        kept = staging.remove(layout, os.path.basename(ddir))
     res["download"] = {"repository": official.REPOSITORY, "release_tag": release_tag,
                        "descriptor_sha256": auth["descriptor_sha256"],
-                       "folder": os.path.relpath(ddir, layout.cfg),
+                       "folder": os.path.relpath(ddir, layout.cfg), "folder_removed": kept is None,
                        "bytes": sum(len(b) for _, b in payload)}
     return res
 

@@ -89,6 +89,16 @@ MESSAGES = {
     "DOWNLOAD_FAILED": "Couldn't download the official data. Nothing was changed. Try again.",
     "RELEASE_CHANGED": "The official release changed or was removed since it was checked. Nothing was changed. "
                        "Check for updates again.",
+    # L-4 additions (GUI and bounded worker)
+    "DISCARDED": "The prepared data was discarded. Nothing was installed.",
+    "WORKER_MEMORY_LIMIT": "The updater needed more memory than it is allowed to use, so it stopped. Nothing was "
+                           "reported as installed.",
+    "WORKER_FAILED": "The updater stopped unexpectedly. Nothing was reported as installed.",
+    "WORKER_STOPPED": "The operation was stopped. Nothing was reported as installed.",
+    "INTERRUPTED": "The update was interrupted. Close SFM, then choose Recover.",
+    "RECOVERY_NEEDED": "An earlier update was interrupted. Close SFM, then choose Recover. Other actions are "
+                       "unavailable until it is recovered.",
+    "CLOSE_NOTE": "Save your work and close SFM before installing data.",
 }
 
 
