@@ -8,7 +8,165 @@ Blueprint, or expands scope, report the conflict before dependent edits.
 Otherwise proceed with the assigned milestone.
 
 ## Current milestone
-**L-4 — SFM Character Tools Updater GUI and bounded worker: COMPLETE / PASS (bounded), 2026-10-17.**
+**L-4R — GUI usability refinement and final polish: COMPLETE, owner-accepted, 2026-10-18.**
+The owner visually reviewed and approved the final GUI, and requested no further interface changes. This entry
+completes the L-4 usability refinement below and supersedes its wording where they differ. It is committed at the
+L-4R GitHub checkpoint.
+- **Private evidence:**
+  - refinement: report `ce2e69b1…`, manifest `e2fb0af8…`, 43 entries;
+  - final polish: `L4R_FINAL_POLISH_REPORT.md` `32d395e7…`, manifest `4567f193…`, 40 entries.
+- **Versioning (owner note):**
+  - The **SFM Control Group Updater** targets initial public version **v0.1.0**, to be assigned during L-5 packaging.
+    Until L-5 the current development version (`0.4.0-l4`) is kept, and the About window keeps showing the running
+    application version dynamically (`VERSION`).
+  - **Animation-group data** is versioned separately, beginning with `data-v1.0.0`.
+- **Approved product identity and copy (all verbatim; frozen documents unchanged):**
+  - The title is **SFM Control Group Updater**, in the window and the title bar. Modules, APIs and history keep
+    their names.
+  - The three equally prominent buttons are:
+    - **Get Published Version**: "Download the flex and bone organization maintained by ChadChan3D."
+    - **Update Using SFM's TXT**: "Build Character Tools data from the animation-group TXT already in your SFM
+      folder."
+    - **Choose Another TXT File**: "Select a different animation-group TXT to use in SFM."
+  - "SFM folder:" / Change Folder. The folder picker is titled "Select your SourceFilmmaker folder" and starts at
+    the selected installation.
+  - "Close SFM before updating its animation-group TXT or Character Tools data." in regular weight under the
+    actions. "Choose an action." is removed.
+  - The matching status, "Installed animation-group TXT and Character Tools data match.", is subtle text at the
+    bottom. It is hidden during operations and refreshed after them. Mismatches, errors and recovery stay prominent
+    under the folder line. It describes local files only.
+  - **Update Using SFM's TXT:** one stable "Updating Character Tools data…" message and progress bar through both
+    steps. NOOP shows "Your data already matches" / "Character Tools data already matches the animation-group TXT
+    in SFM. Nothing was changed." Success shows "Character Tools data updated" / "Character Tools data now matches
+    the animation-group TXT in SFM."
+  - **Get Published Version:** "Nothing published yet" / "ChadChan3D hasn't published a version yet. Nothing was
+    changed."; "Published version already installed" / "Published animation-group version [version] is already
+    installed. Nothing was changed."; "Published version available" / "A published animation-group TXT and matching
+    Character Tools data are available to install." Discovery is unchanged, and there is no "latest" claim.
+  - **Replacement confirmation:** "Replace your animation groups?" / "This will replace SFM's animation-group TXT
+    with your chosen file and build matching Character Tools data." / "Your current animation-group TXT will be
+    saved in the Backups folder." plus the actual folder, with Replace Groups / Cancel.
+  - **Replacement success:** "Animation groups updated" / "Your chosen animation-group TXT and matching Character
+    Tools data are installed." / "Your previous animation-group TXT was saved in the Backups folder." plus the
+    verified file, with Open Backup Folder.
+  - **About:** "About SFM Control Group Updater" (title and heading), the approved three paragraphs, then
+    "Version:" (running version) and "Author: ChadChan3D", with Close at bottom right. The window is centered over
+    the main window, and Copy Diagnostic Information is removed.
+  - **Main window:** About at bottom left and Close at bottom right. Close exits when idle and keeps the safe-close
+    confirmation during an operation.
+  - Only the title, the primary buttons and the active result or confirmation heading are bold.
+- **Proposed, not owner-approved verbatim:** the remaining outcome texts, and the published-version replacement
+  lead "This will replace SFM's animation-group TXT with published version X and build matching Character Tools
+  data."
+- **Diagnostics:** the worker results are kept internally (`App.diagnostics`). The shortcut Ctrl+Shift+D copies them
+  to the clipboard for support; it is not shown in the interface. It was disclosed at review, and the owner accepted
+  the GUI with no further changes.
+- **Source:** only `gui/app.py` changed in this polish (`8f6881a0…`), with the tests (`run_l1.py` `312983b5…`,
+  `support/gui_driver.py` `05506979…`). `user_backup.py`, `worker.py` and `messages.py` are unchanged from the
+  refinement. `backend`, `candidate`, `recovery`, `journal`, `w32`, `layout`, `legacy_lock`, `process_gate`,
+  `official`, `hooks`, `discovery`, `staging`, `supervisor` and the release producer are byte-identical to `7b95628`.
+- **Result:** group U **25/25 PASS** (`final_polish`, 2026-10-18 05:05–05:13Z), on sources frozen before the run and
+  unchanged after it.
+  - **New cases:** U21 (the startup line, layout, font weights, title, About text/order/centering/Close, no Copy
+    Diagnostic Information, internal diagnostics, Close when idle) and U21b (Close during an update: declined keeps
+    it running; confirmed stops it; recovered).
+  - U1 now asserts one stable message and progress bar; all approved strings are asserted exactly.
+  - No worker or backend behavior changed, so the worker regressions of the refinement (M, O, W, W3, W4) were not
+    rerun.
+  - The real process status was CLEAR. The live installation was identical before and after the run, with its
+    authority equal to the G1 pins.
+- **Owner acceptance:** visual review completed and approved (2026-10-18). `updater/SHA256SUMS.txt` is regenerated
+  at this checkpoint.
+- **L-5:** NOT STARTED / REQUIRES AUTHORIZATION. **L-6:** NOT STARTED.
+
+Refinement record (2026-10-18; superseded by the final polish above where the wording differs; its open review
+items are resolved by the owner acceptance above):
+**L-4 usability refinement (owner-approved, 2026-10-18): IMPLEMENTED; accepted with the final polish.**
+Assigned by the owner after the L-4 window review, with an exact-wording addendum. Base: `7b95628…`. Private evidence:
+`L4R_IMPLEMENTATION_REPORT.md` and its evidence manifest (see the report's return for hashes).
+- **Approved amendment (recorded here; frozen documents unchanged):** the owner approved replacing the card's
+  exact primary-button labels. The window is now **SFM Animation Group Manager**, and its three equally prominent
+  buttons are:
+  - **Get Published Version**: "Download the flex and bone organization maintained by ChadChan3D."
+  - **Update From My TXT**: "Update Character Tools using your current animation-group TXT, including any changes
+    you've made."
+  - **Choose Another Group File**: "Select a different animation-group TXT to use in SFM."
+
+  Their functions are unchanged: an authenticated published data release; a rebuild from the installed TXT, which
+  is never rewritten; and a replacement of the installed TXT with a chosen file and its matching data. The L card,
+  Amendment and R2 keep their original wording.
+- **Window (approved strings verbatim):**
+  - "Choose an action." before the buttons; "Save your work and close SFM before installing data." after them. The
+    sentence about preparing while SFM is open was removed.
+  - "SFM folder:" selector (shows the SourceFilmmaker folder; Steam discovery plus Change Folder).
+  - About ("About SFM Character Tools", the approved two paragraphs, "Created by ChadChan3D", the running version)
+    replaces Show Details. Copy Diagnostic Information copies the session's worker results to the clipboard; no raw
+    JSON is shown.
+  - Startup shows "Checking animation-group data…" as a text line with no progress bar, then the local match state.
+    The local TXT/data match is shown separately from published-version status.
+- **Flows:**
+  - **Update From My TXT:** with SFM confirmed closed, one click prepares and installs. With SFM open or its state
+    unknown, it prepares privately and shows "Close SFM to finish" with Finish Update. A verified NOOP shows "Your
+    data already matches" / "Your animation groups and Character Tools data are already in sync. No changes
+    needed."
+  - **Choose Another Group File:** a file picker, then one confirmation, "Replace your animation groups?" (approved
+    text, the actual Backups folder, Replace Groups / Cancel). It replaces the checkbox and disabled Install button.
+    Consent stays bound to the observed TXT (`--confirm-sha`) and to the chosen file's re-check. Success shows
+    "Animation groups updated", the approved text, the saved backup's name and location, and Open Backup Folder.
+  - **Get Published Version:** distinct outcomes for nothing published, available (Download and Install), installed
+    ("Published version X is installed", not "latest"), needs a newer program, check or download failed, and
+    rejected.
+  - Other outcome wording follows the owner's principles. It is **proposed, not owner-approved verbatim**.
+- **User TXT backups (`user_backup.py`, worker `install --backup-txt`, used by the GUI):**
+  - Before an install that replaces the installed TXT, with SFM confirmed closed, a verified copy is saved in
+    `usermod\cfg\sfm_character_tools_backups\` as `sfm_defaultanimationgroups_backup_<date-time>[_n].txt`.
+  - The copy is checked to hash to `--confirm-sha`. The backend refuses any replacement whose installed TXT no
+    longer has that identity, so a completed replacement replaced exactly the saved TXT.
+  - Files are created new and never overwritten; an identical earlier backup is reused.
+  - If the backup cannot be made and verified, the replacement is refused ("Nothing was replaced").
+  - A backup is claimed only when the install completed as a replacement.
+  - **Unchanged protocol:** the backup runs before, and outside, the protected install. Internal snapshots,
+    retired files, journaling and recovery are unchanged, and without the flag the worker behaves exactly as at L-4.
+- **Source:**
+  - **New:** `user_backup.py`.
+  - **Changed:** `gui/app.py` (rewritten), `worker.py` (opt-in `--backup-txt`), `messages.py` (BACKUP_FAILED), and
+    the tests (group U rewritten; `support/gui_driver.py`).
+  - **Unchanged since `7b95628`:** `backend`, `candidate`, `recovery`, `journal`, `w32`, `layout`, `legacy_lock`,
+    `process_gate`, `official`, `hooks`, `discovery`, `staging`, `supervisor` and the release producer.
+    `updater/SHA256SUMS.txt` is not yet regenerated (checkpoint step).
+- **Result (targeted, not a new campaign):** 80/80 PASS (2026-10-18 03:12–03:25Z): the refined group U 24/24, plus M
+  11/11, O 36/36, W 2/2, W3 1/1 and W4 6/6 as regression of the worker's install, import, official and entry
+  paths.
+  - **Group U covers:**
+    - one-click update and the matching-data result;
+    - replacement with confirmation, backup and Open Backup Folder; Cancel;
+    - consent invalidated by a destination change (refused before any backup or install) and by a source change
+      (no backup claimed);
+    - an unusable file and a cancelled picker;
+    - published-version outcomes and installation (test key);
+    - SFM RUNNING and UNKNOWN waits; replacement refused while SFM runs (no backup made);
+    - recovery shown, executed and refused while SFM runs;
+    - worker killed; the memory ceiling; window closed and GUI process killed (recoverable);
+    - backup rules (never overwritten, identical reuse, wrong identity refused, unusable Backups location refused);
+    - staging cleanup scope;
+    - startup text, About and diagnostics;
+    - shipping worker and the production ceiling (highest peak 329 MiB of 2 GiB);
+    - the product surface (approved strings asserted exactly).
+  - The real process status was CLEAR throughout. The live installation was identical before and after the final
+    run, and the sources were unchanged during it.
+- **Not yet done:** the owner's hands-on review of the revised window (five scratch screenshots are in the evidence),
+  designer review, and the checkpoint commit.
+- **L-5:** NOT STARTED / REQUIRES AUTHORIZATION. **L-6:** NOT STARTED.
+- **Live installation observation (not caused by this work, not verified by it):** after the L-4 checkpoint the
+  live `usermod\cfg` gained `sfm_character_tools_updater\` with one transaction completed by the updater at
+  2026-10-18 01:52Z (journal VERIFIED → COMPLETE). At 03:02Z the live Master, sidecar and manifest were
+  `f85fab80…`, `063a5e0c…` and `126c8307…`. By 03:10Z the authority files were again exact G1 (`ac45e5c1…`,
+  `bcd97641…`, `d810d648…`), with no updater transaction recording that restoration. Owner-made copies named
+  `… - 17octbackup` and `sfm_shared_authority.zip` are also present. This session made only read-only fingerprints
+  of the live installation. Restoring files by hand outside the updater leaves its transaction record describing a
+  replaced state; `status` treats the completed transaction as terminal.
+
+Previous milestone: **L-4 — SFM Character Tools Updater GUI and bounded worker: COMPLETE / PASS (bounded), 2026-10-17.**
 Authorized by the owner under the L card §5. The designer accepted the report provisionally (private evidence,
 `L4_IMPLEMENTATION_REPORT.md` `78d1d47a…`; evidence manifest `e61a7963…`, 51 entries). Base: `59e5254…`.
 - **Source (GitHub, `updater/`; digests in `updater/SHA256SUMS.txt`):**
@@ -84,7 +242,7 @@ Authorized by the owner under the L card §5. The designer accepted the report p
     outcome matched. The check now reads `VERSION`, and Q was rerun.
   - **GUI layout:** after `final`, the consent box moved above Install (only `gui/app.py` changed), and U was rerun.
 - **Not yet done:** a hands-on owner review of the window. Layout was checked only by two screenshots and
-  programmatically.
+  programmatically. (Since then the owner reviewed it and approved the usability refinement above.)
 - **Scope of the PASS:** a headless-driven GUI on scratch installations with test keys and a loopback GitHub
   stand-in, plus the shipping worker on a scratch installation. It does not cover packaging (L-5), native SFM, a
   real official release, production trust or release eligibility.
@@ -826,7 +984,9 @@ changed only files under `updater/` (adding `discovery.py` and two test-support 
 local only. No release, tag or key exists. The L-4 checkpoint (2026-10-17) changed only files under `updater/`
 (adding `gui/`, `supervisor.py`, `staging.py` and one test-support file, regenerating `updater/SHA256SUMS.txt`) and
 this Ledger. Its scratch run, screenshots and evidence are local only. The local git remote now uses the renamed
-repository URL.
+repository URL. The L-4R checkpoint (2026-10-18) changed only files under `updater/` (rewriting `gui/app.py`, adding
+`user_backup.py`, the opt-in `--backup-txt` in `worker.py` and one message, updating the tests, regenerating
+`updater/SHA256SUMS.txt`) and this Ledger. Its scratch runs, screenshots and evidence are local only.
 
 **References for transfer:**
 - Authoritative R15 design: `cpm/qualification/R15_IMPLEMENTATION_BLUEPRINT.md`, frozen from
@@ -1074,7 +1234,8 @@ Evidence:
   - **Untested until later:** real GitHub asset-redirect hosts (untestable until a release exists);
     proxies (untested); the TLS certificate store (an L-5 packaging decision).
 - **L-4 items (later L stages or owner review; not L-4 prerequisites):**
-  - **Owner review:** a hands-on visual review of the window has not yet occurred.
+  - **Owner review:** done for the L-4 window; it led to the L-4R refinement and final polish (Current
+    milestone), which the owner reviewed and accepted on 2026-10-18.
   - **Older releases:** explicit older official installation exists in the worker (`--allow-older`) but not in
     the GUI. OLDER_ONLY is reported, not offered.
   - **Cleanup race:** cleanup removes by path after re-checking shape. A folder swapped for a link between the
@@ -1133,8 +1294,9 @@ Evidence:
   **Pre-K complete. `4e35f292…` is the exact CPM candidate eligible to enter K.**
   - **K — COMPLETE / PASS** (K1A2 + K2A1, 2026-10-10).
 
-  L: L-1 to L-4 COMPLETE / PASS (bounded), 2026-10-17. L-5 NOT STARTED / REQUIRES AUTHORIZATION. The
-  final packaging layout is decided in L-5.
+  L: L-1 to L-4 COMPLETE / PASS (bounded), 2026-10-17; L-4R COMPLETE (owner-accepted), 2026-10-18. L-5 NOT
+  STARTED / REQUIRES AUTHORIZATION. The final packaging layout and the updater's public version (target v0.1.0)
+  are decided in L-5.
 - **Session 4 notes (not failures; carried to K; unchanged by items 7–8):**
   - Fit's exception path releases the stage with a bare `release()` (no
     `PROD_CPM_FIT_STAGE_RELEASED` line; result discarded); a raising success-path release could in
@@ -1146,19 +1308,21 @@ Evidence:
   R15 suite PASS.
 
 ## Next
-Stop. This is the L-4 GitHub checkpoint (2026-10-17).
-- **Next action:** a hands-on owner review of the L-4 window, then an owner decision on authorizing **L-5**
-  (compatibility profile, signed inventory and one-folder packaging, card §5). L-5 is NOT STARTED / REQUIRES
+Stop. This is the L-4R GitHub checkpoint (2026-10-18): the owner-accepted GUI.
+- **Next action:** an owner decision on authorizing **L-5** (compatibility profile, signed inventory, one-folder
+  packaging, and assigning the updater's public version v0.1.0, card §5). L-5 is NOT STARTED / REQUIRES
   AUTHORIZATION.
+- **Live installation:** see the observation in Current milestone. The authority files are exact G1 again, and the
+  updater folder holds one completed owner-run transaction.
 - **Outstanding release dependencies:** the production signing key, the signed compatibility profile and
   inventory (L-5), `published_at` and the final signed `data-v1.0.0` package (see Current milestone). No official
   data release has been published.
 - **Not authorized by this checkpoint:** L-5 or any later increment; signing, tagging or publishing a release;
   any native SFM run; WPR/ETW work; or a live installation write.
 
-L-1 to L-4 are COMPLETE / PASS (bounded). K is COMPLETE / PASS. U0A is PASS (bounded). U0B is closed for v1 at the P1
+L-1 to L-4 are COMPLETE / PASS (bounded); L-4R is COMPLETE (owner-accepted). K is COMPLETE / PASS. U0A is PASS (bounded). U0B is closed for v1 at the P1
 evidence boundary. `4e35f292…`, the
-production Normalizer `1f4ec5a2…` and exact G1 authority remain installed.
+production Normalizer `1f4ec5a2…` and exact G1 authority files remain installed (see the live installation observation).
 
 ## Checkpoints
 Update this Ledger and output its complete, concise contents when:

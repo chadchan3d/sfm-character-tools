@@ -13,7 +13,7 @@
   python -m sfm_character_tools_updater.worker discard-prepared --installation CFG --result OUT --prepared ID
   python -m sfm_character_tools_updater.worker install          --installation CFG --result OUT
                                                                 --prepared ID --confirm-sha SHA
-                                                                [--accept-replacement]
+                                                                [--accept-replacement] [--backup-txt]
   python -m sfm_character_tools_updater.worker recover          --installation CFG --result OUT
                                                                 [--policy resume|rollback]
 
@@ -29,7 +29,11 @@ explicit user action (Get Official Data).
 
 Staging cleanup (L-4): after an install that completes or finds the data already installed, the
 consumed preparation and stale updater staging folders are removed (staging.py); discard-prepared
-removes a preparation the user cancelled. Neither touches transactions or recovery data. check-official writes nothing; download-official takes
+removes a preparation the user cancelled. Neither touches transactions or recovery data.
+
+`--backup-txt` (used by the GUI): before an install that replaces the installed TXT, a verified copy
+of that TXT (the one `--confirm-sha` names) is saved in `sfm_character_tools_backups` (user_backup.py),
+and the replacement is refused if the copy cannot be made. The protected install itself is unchanged. check-official writes nothing; download-official takes
 the release the check reported (`--release-tag`, `--descriptor-sha`), downloads it into
 updater-private staging and prepares it exactly as prepare-official does.
 
@@ -40,12 +44,14 @@ This is the backend's own entry point (R2 C5), not an alternate publisher.
 """
 import argparse
 import json
+import os
 import sys
 import traceback
 
-from . import VERSION, backend, recovery, staging
+from . import VERSION, backend, recovery, staging, user_backup
 from .layout import Layout, resolve_installation
 from .messages import MESSAGES, Stop
+from .process_gate import process_status
 
 COMMANDS = ("status", "prepare-rebuild", "prepare-import", "prepare-official", "check-official",
             "download-official", "discard-prepared", "install", "recover")
@@ -65,7 +71,23 @@ def build_parser(commands=COMMANDS):
     p.add_argument("--release-tag")
     p.add_argument("--descriptor-sha")
     p.add_argument("--accept-replacement", action="store_true")
+    p.add_argument("--backup-txt", action="store_true")
     return p
+
+
+def _backup_before_replace(layout, args):
+    """The user backup for an install that will replace the installed TXT; None when the install
+    replaces nothing, when SFM is not confirmed closed (the backend refuses before any change) or
+    when the preparation is unreadable (the backend reports it)."""
+    try:
+        rec = json.loads(open(os.path.join(layout.prepdir(args.prepared), "prepared.json"), "rb").read().decode("utf-8"))
+        replaces = (rec["kind"] == "replace" and rec["source"]["sha256"] != args.confirm_sha
+                    and (args.accept_replacement or not rec["consent_required"]))
+    except Exception:
+        return None
+    if not replaces or process_status()[0] != "CLEAR":
+        return None
+    return user_backup.save_previous_txt(layout, args.confirm_sha)
 
 
 def dispatch(args, extra=None):
@@ -98,7 +120,11 @@ def dispatch(args, extra=None):
     if args.command == "install":
         if not args.prepared or not args.confirm_sha:
             raise Stop("REFUSED", "NOTHING", reason="install requires --prepared and --confirm-sha")
+        backup = _backup_before_replace(layout, args) if args.backup_txt else None
         res = backend.install(layout, args.prepared, args.confirm_sha, args.accept_replacement)
+        if backup:
+            backup["previous_txt_replaced"] = res.get("outcome") == "COMPLETE" and res.get("kind") == "replace"
+            res["user_backup"] = backup
         if res.get("outcome") in ("COMPLETE", "NOOP"):
             res["staging_cleanup"] = staging.cleanup(layout, consumed=(args.prepared,))
         return res

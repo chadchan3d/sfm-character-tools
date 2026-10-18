@@ -16,8 +16,9 @@ Groups: A B C D E F G H I J K N X W (L-1, rerun as L-2/L-3 regression), M O W3 (
 TXT and Get Official Data from a local signed package; rerun as L-3 regression) and Q W4 (L-3: Get
 Official Data online -- explicit check and bounded download against a loopback GitHub stand-in, and
 the shipping worker's network boundary including one explicit query of the real, empty official
-release list) and U (L-4: the GUI's three actions end-to-end, consent, recovery, worker containment
-and staging cleanup, driving the real Tkinter App with its bounded worker). Run with a Python that provides the `cryptography` package (the isolated
+release list) and U (L-4 with its usability refinement: the GUI's three actions end-to-end, the
+replacement confirmation, user backups, recovery, worker containment and staging cleanup, driving the
+real Tkinter App with its bounded worker). Run with a Python that provides the `cryptography` package (the isolated
 qualification environment).
 Results: RUN\\LABEL\\results\\cases\\<case>.json and RUN\\LABEL\\results\\matrix_<group>.json
 """
@@ -2929,10 +2930,11 @@ def test_worker_argv(inject=None, trust=False, net=False, hold=None, marker=None
 
 
 class Gui(object):
-    """The real L-4 App (withdrawn window) driven in this process: buttons are invoked exactly as
-    a click would, the file picker and the close confirmation are answered by the case."""
+    """The real App (withdrawn window) driven in this process: buttons are invoked exactly as a
+    click would; the file picker, the close confirmation and Open Backup Folder are answered or
+    recorded by the case."""
 
-    def __init__(self, cfg, worker_argv="test", memory_limit=None, pick=None, confirm_close=True, **kw):
+    def __init__(self, cfg, worker_argv="test", memory_limit=None, pick=None, confirm_close=True, settle=True, **kw):
         import tkinter as tk
         import tempfile
         from sfm_character_tools_updater.gui import app as gapp
@@ -2948,12 +2950,16 @@ class Gui(object):
         self.root.withdraw()
         self.pick = pick
         self.close_texts = []
+        self.opened = []
+        self.busy_trace = []
         self.confirm = confirm_close
         argv = test_worker_argv(**kw) if worker_argv == "test" else worker_argv
         self.app = gapp.App(self.root, installations=[cfg], worker_argv=argv, memory_limit=memory_limit, env=ENV,
                             pick_file=lambda: self.pick or "", pick_folder=lambda: "",
-                            confirm_close=lambda t: (self.close_texts.append(t), self.confirm)[1])
-        self.settle()
+                            confirm_close=lambda t: (self.close_texts.append(t), self.confirm)[1],
+                            open_folder=self.opened.append)
+        if settle:
+            self.settle()
 
     def pump(self, cond, timeout=900):
         t0 = time.time()
@@ -2961,12 +2967,14 @@ class Gui(object):
             if self.app.closed or time.time() - t0 > timeout:
                 return False
             self.tk.update()
+            if self.app.screen == "busy":
+                self.busy_trace.append((self.app.panel_heading, str(getattr(self.app, "busy_bar", ""))))
             time.sleep(0.03)
         self.tk.update()
         return True
 
     def settle(self, timeout=900):
-        return self.pump(lambda: self.app.run is None and self.app.screen != "busy", timeout)
+        return self.pump(lambda: self.app.run is None and self.app.screen not in ("busy", "checking"), timeout)
 
     def click(self, key):
         self.app.buttons[key].invoke()
@@ -2976,21 +2984,14 @@ class Gui(object):
         self.app.panel_buttons[key].invoke()
         return self.settle()
 
-    def consent(self):
-        import tkinter.ttk as ttk
-        for w in self.app.panel.winfo_children():
-            if isinstance(w, ttk.Checkbutton):
-                w.invoke()
-                return True
-        return False
-
     def view(self):
         a = self.app
-        return {"screen": a.screen, "kind": getattr(a, "panel_kind", None), "text": getattr(a, "panel_text", ""),
+        return {"screen": a.screen, "kind": getattr(a, "panel_kind", None), "heading": getattr(a, "panel_heading", ""),
+                "text": getattr(a, "panel_text", ""),
                 "panel_buttons": sorted(k for k in a.panel_buttons if k != "row"),
+                "panel_labels": {k: str(b.cget("text")) for k, b in a.panel_buttons.items() if k != "row"},
                 "actions": {k: str(b.cget("state")) for k, b in a.buttons.items()},
-                "state_label": str(a.state_label.cget("text")),
-                "install_state": str(a.panel_buttons["install"].cget("state")) if "install" in a.panel_buttons else None}
+                "state_label": str(a.state_label.cget("text")), "alert": str(a.alert_label.cget("text"))}
 
     def commands(self):
         return [h["step"] for h in self.app.history]
@@ -2998,12 +2999,12 @@ class Gui(object):
     def results(self):
         return [{"step": h["step"], "outcome": h["result"].get("outcome"), "message": h["result"].get("message"),
                  "worker": {k: v for k, v in (h["result"].get("worker") or {}).items() if k != "worker_result"},
-                 "details": h["result"].get("details"), "staging_cleanup": h["result"].get("staging_cleanup")}
-                for h in self.app.history]
+                 "details": h["result"].get("details"), "staging_cleanup": h["result"].get("staging_cleanup"),
+                 "user_backup": h["result"].get("user_backup")} for h in self.app.history]
 
     def close(self):
         import gc
-        if not self.app.closed:
+        if self.app is not None and not self.app.closed:
             self.app.on_close()
         try:
             self.root.destroy()
@@ -3026,8 +3027,24 @@ def staging_entries(cfg):
     return sorted(os.listdir(p)) if os.path.isdir(p) else []
 
 
+def backups(cfg):
+    p = os.path.join(cfg, "sfm_character_tools_backups")
+    return {n: sha_file(os.path.join(p, n)) for n in sorted(os.listdir(p))} if os.path.isdir(p) else None
+
+
 PEAKS = []
 TK_ROOT = None
+ACTIONS_DESC = ("Download the flex and bone organization maintained by ChadChan3D.",)
+EXACT = {
+    "match": "Character Tools data already matches the animation-group TXT in SFM. Nothing was changed.",
+    "replace_lead": "This will replace SFM's animation-group TXT with your chosen file and build matching Character "
+                    "Tools data.",
+    "replace_backup": "Your current animation-group TXT will be saved in the Backups folder.",
+    "updated": "Your chosen animation-group TXT and matching Character Tools data are installed.",
+    "saved": "Your previous animation-group TXT was saved in the Backups folder.",
+    "status": "Installed animation-group TXT and Character Tools data match.",
+    "rebuilt": "Character Tools data now matches the animation-group TXT in SFM.",
+}
 
 
 def gui_case(nm, cfg, g, v, why, views, extra=None):
@@ -3035,86 +3052,110 @@ def gui_case(nm, cfg, g, v, why, views, extra=None):
         if r["worker"].get("peak_job_memory"):
             PEAKS.append({"case": nm, "command": r["step"], "peak": r["worker"]["peak_job_memory"],
                           "limit": r["worker"]["memory_limit"], "outcome": r["outcome"]})
-    rec = {"views": views, "commands": g.commands(), "results": g.results()}
+    rec = {"views": views, "commands": g.commands(), "results": g.results(), "opened": list(g.opened)}
     rec.update(extra or {})
     g.close()
     return finalize_case(nm, cfg, [], "PASS" if v else "FAIL", why if v else "unexpected: %s" % json.dumps(
-        {"views": views, "commands": rec["commands"]}, default=str)[:600], rec)
+        {"views": views, "commands": rec["commands"]}, default=str)[:700], rec)
 
 
 def group_U():
-    """L-4: the GUI's three actions end-to-end, consent, official outcomes, SFM gates, recovery,
-    worker containment (killed, memory ceiling, window closed or killed) and staging cleanup."""
+    """L-4 GUI (usability refinement): the three actions end-to-end with the approved wording, one
+    explicit replacement confirmation bound to the observed TXT, user backups, published-version
+    outcomes, SFM gates, recovery, worker containment and staging cleanup."""
     R = []
-    from sfm_character_tools_updater import supervisor
+    from sfm_character_tools_updater import supervisor, user_backup, layout as lay
+    from sfm_character_tools_updater.gui import app as gapp
     start_fake()
     ensure_l3_packages()
     S1 = pkg_files("L3_s1")
-    S1_SHA = sha(S1["release.json"])
+    bdir_of = lambda cfg: os.path.join(cfg, "sfm_character_tools_backups")
 
-    # U1 Rebuild My Data end-to-end
-    nm = "U1_rebuild_end_to_end"
+    # U1 Update Using SFM's TXT: one click installs while SFM is closed
+    nm = "U1_update_from_my_txt_one_click"
     cfg = make_install(nm, master="G3", gens=("g1",))
     g = Gui(cfg)
-    views = [g.view()]
+    v0 = g.view()
     g.click("rebuild")
-    views.append(g.view())
-    g.panel("install")
-    views.append(g.view())
+    v1 = g.view()
     ok, d = final_is(cfg, ("G3", "g3"))
-    v = (views[0]["screen"] == "home" and "doesn't match" in views[0]["state_label"] and actions_on(views[0])
-         and views[1]["screen"] == "confirm" and views[1]["install_state"] == "normal" and actions_off(views[1])
-         and views[2]["kind"] == "success" and "Your data was rebuilt from your current TXT" in views[2]["text"]
-         and ok and sha_file(os.path.join(cfg, "sfm_defaultanimationgroups.txt")) == SHA["G3"]
-         and g.commands() == ["status", "prepare-rebuild", "install"] and staging_entries(cfg) == [])
-    R.append(gui_case(nm, cfg, g, v, "status -> prepare-rebuild -> confirm -> install: 'Your data was rebuilt from "
-                                     "your current TXT'; exact G3 set; TXT unchanged; staging cleaned", views))
+    v = (v0["screen"] == "home" and "doesn't match" in v0["alert"] and v0["state_label"] == "" and actions_on(v0)
+         and v1["kind"] == "success" and v1["heading"] == "Character Tools data updated" and v1["text"] == EXACT["rebuilt"]
+         and v1["state_label"] == EXACT["status"] and v1["alert"] == ""
+         and {t for t, b in g.busy_trace} == {"Updating Character Tools data\u2026"}
+         and len({b for t, b in g.busy_trace}) == 1 and ok
+         and sha_file(os.path.join(cfg, "sfm_defaultanimationgroups.txt")) == SHA["G3"]
+         and g.commands() == ["status", "prepare-rebuild", "install"] and staging_entries(cfg) == []
+         and backups(cfg) is None)
+    R.append(gui_case(nm, cfg, g, v, "one click: prepare-rebuild then install under one stable 'Updating Character "
+                                     "Tools data…' message and one progress bar; 'Character Tools data updated'; exact "
+                                     "G3 set; TXT unchanged; no backup; status refreshed", [v0, v1],
+                      {"busy_trace": sorted(set(g.busy_trace))}))
 
-    # U2 Use Another TXT, consent accepted
-    nm = "U2_import_consent_accepted"
+    # U2 matching data -> the approved NOOP wording
+    nm = "U2_update_from_my_txt_already_matches"
     cfg = make_install(nm)
-    src = os.path.join(WORK, "ext", "U2", "chosen.txt")
+    before = active_set(tree(cfg))
+    g = Gui(cfg)
+    v0 = g.view()
+    g.click("rebuild")
+    v1 = g.view()
+    v = (v0["state_label"] == EXACT["status"] and v0["alert"] == ""
+         and v1["heading"] == "Your data already matches" and v1["text"] == EXACT["match"]
+         and active_set(tree(cfg)) == before and g.commands() == ["status", "prepare-rebuild", "install"])
+    R.append(gui_case(nm, cfg, g, v, "'Your data already matches' / exact sync text from the backend's verified "
+                                     "NOOP; nothing changed", [v0, v1]))
+
+    # U3 Choose Another TXT File: confirmation, replacement, user backup, Open Backup Folder
+    nm = "U3_choose_another_file_replace"
+    cfg = make_install(nm)
+    src = os.path.join(WORK, "ext", nm, "chosen.txt")
     wcopy(G3_TXT, src)
     g = Gui(cfg, pick=src)
     g.click("import")
     v1 = g.view()
-    consent = g.consent()
+    act_mid = active_set(tree(cfg))
+    g.panel("replace")
     v2 = g.view()
-    g.panel("install")
-    v3 = g.view()
+    bk = backups(cfg) or {}
     ok, d = final_is(cfg, ("G3", "g3"))
-    views = [v1, v2, v3]
-    v = (v1["screen"] == "confirm" and v1["install_state"] == "disabled" and "File: %s" % src in v1["text"]
-         and "kept as a backup" in v1["text"] and "Installs into: %s" % cfg in v1["text"] and consent
-         and v2["install_state"] == "normal" and v3["kind"] == "success"
-         and "The TXT you chose is installed. Your previous TXT was kept as a backup." in v3["text"] and ok
-         and sha_file(src) == SHA["G3"] and [sha_file(p) for p in retired_masters(cfg)] == [SHA["G1"]]
+    name = list(bk)[0] if len(bk) == 1 else ""
+    if "open_backup" in g.app.panel_buttons:
+        g.app.panel_buttons["open_backup"].invoke()
+    v = (v1["screen"] == "confirm" and v1["heading"] == "Replace your animation groups?"
+         and v1["text"] == "%s\n\n%s\n%s" % (EXACT["replace_lead"], EXACT["replace_backup"], bdir_of(cfg))
+         and v1["panel_labels"] == {"replace": "Replace Groups", "cancel": "Cancel"}
+         and act_mid == expected_active("G1", "g1")
+         and v2["heading"] == "Animation groups updated"
+         and v2["text"] == "%s\n\n%s\n%s" % (EXACT["updated"], EXACT["saved"], os.path.join(bdir_of(cfg), name))
+         and v2["panel_labels"] == {"open_backup": "Open Backup Folder"} and ok
+         and list(bk.values()) == [SHA["G1"]] and user_backup.NAME_RE.match(name)
+         and g.opened == [os.path.join(bdir_of(cfg), name)]
+         and [sha_file(p) for p in retired_masters(cfg)] == [SHA["G1"]] and sha_file(src) == SHA["G3"]
          and g.commands() == ["status", "prepare-import", "install"])
-    R.append(gui_case(nm, cfg, g, v, "file picked -> preview (file, destination, backup note); Install disabled "
-                                     "until consent; installed exact G3; chosen file unchanged; previous TXT "
-                                     "retained", views))
+    R.append(gui_case(nm, cfg, g, v, "exact confirmation text with the backup folder; nothing installed until "
+                                     "Replace Groups; exact G3 set; verified backup of the previous TXT (G1) shown by "
+                                     "name and opened by Open Backup Folder; internal retired copy unchanged; "
+                                     "chosen file unchanged", [v1, v2]))
 
-    # U3 consent declined (Cancel)
-    nm = "U3_import_declined"
+    # U4 Cancel at the confirmation
+    nm = "U4_choose_another_file_cancel"
     cfg = make_install(nm)
-    src = os.path.join(WORK, "ext", "U3", "chosen.txt")
+    src = os.path.join(WORK, "ext", nm, "chosen.txt")
     wcopy(G3_TXT, src)
     before = tree(cfg)
     g = Gui(cfg, pick=src)
     g.click("import")
-    v1 = g.view()
     g.panel("cancel")
-    v2 = g.view()
-    v = (v1["screen"] == "confirm" and v2["screen"] == "home" and "Nothing was installed" in v2["text"]
-         and actions_on(v2) and tree(cfg) == before and staging_entries(cfg) == [] and sha_file(src) == SHA["G3"]
-         and g.commands() == ["status", "prepare-import", "discard-prepared"])
-    R.append(gui_case(nm, cfg, g, v, "Cancel at the preview: preparation discarded, nothing installed, chosen file "
-                                     "unchanged", [v1, v2]))
+    v1 = g.view()
+    v = (v1["heading"] == "Nothing was changed" and tree(cfg) == before and staging_entries(cfg) == []
+         and backups(cfg) is None and g.commands() == ["status", "prepare-import", "discard-prepared"])
+    R.append(gui_case(nm, cfg, g, v, "Cancel: preparation discarded; nothing installed; no backup", [v1]))
 
-    # U4 consent invalidated by a destination change
-    nm = "U4_import_destination_changed"
+    # U5 consent invalidated: installed TXT edited after the confirmation was shown
+    nm = "U5_destination_changed_after_confirmation"
     cfg = make_install(nm)
-    src = os.path.join(WORK, "ext", "U4", "chosen.txt")
+    src = os.path.join(WORK, "ext", nm, "chosen.txt")
     wcopy(G3_TXT, src)
     g = Gui(cfg, pick=src)
     g.click("import")
@@ -3122,51 +3163,80 @@ def group_U():
     wbytes(master + ".edit", open(G2_TXT, "rb").read())
     os.replace(master + ".edit", master)
     act0 = active_set(tree(cfg))
-    g.consent()
-    g.panel("install")
+    g.panel("replace")
     v1 = g.view()
-    v = (v1["kind"] == "warning" and "changed after it was checked" in v1["text"] and active_set(tree(cfg)) == act0
-         and sha_file(master) == SHA["G2"] and g.commands() == ["status", "prepare-import", "install"])
-    R.append(gui_case(nm, cfg, g, v, "TXT edited after the preview: consent no longer applies -> 'changed after it "
-                                     "was checked', nothing replaced", [v1]))
+    v = (v1["heading"] == "Your animation groups changed" and active_set(tree(cfg)) == act0
+         and sha_file(master) == SHA["G2"] and backups(cfg) is None and not txdirs(cfg))
+    R.append(gui_case(nm, cfg, g, v, "TXT changed after the confirmation: refused before any backup or install "
+                                     "('Your animation groups changed'); nothing replaced", [v1]))
 
-    # U5 file picker cancelled
-    nm = "U5_file_picker_cancelled"
+    # U6 consent invalidated: chosen file changed after the confirmation was shown
+    nm = "U6_source_changed_after_confirmation"
     cfg = make_install(nm)
+    src = os.path.join(WORK, "ext", nm, "chosen.txt")
+    wcopy(G3_TXT, src)
+    g = Gui(cfg, pick=src)
+    g.click("import")
+    wbytes(src + ".edit", open(G2_TXT, "rb").read())
+    os.replace(src + ".edit", src)
+    act0 = active_set(tree(cfg))
+    g.panel("replace")
+    v1 = g.view()
+    bk = backups(cfg) or {}
+    v = (v1["heading"] == "The file you chose changed" and active_set(tree(cfg)) == act0
+         and "Backups" not in v1["text"] and all(h == SHA["G1"] for h in bk.values())
+         and (g.results()[-1]["user_backup"] or {}).get("previous_txt_replaced") is False)
+    R.append(gui_case(nm, cfg, g, v, "chosen file changed after the confirmation: 'The file you chose changed', "
+                                     "nothing replaced, no backup claimed (a verified copy of the still-installed "
+                                     "TXT may remain)", [v1], {"backups": bk}))
+
+    # U7 unusable file and cancelled picker
+    nm = "U7_unusable_file_and_cancelled_picker"
+    cfg = make_install(nm)
+    bad = os.path.join(WORK, "ext", nm, "notes.txt")
+    wbytes(bad, b"this is not an animation group file\n")
+    before = tree(cfg)
     g = Gui(cfg, pick="")
     g.click("import")
+    v0 = g.view()
+    g.pick = bad
+    g.click("import")
     v1 = g.view()
-    v = v1["screen"] == "home" and g.commands() == ["status"] and actions_on(v1)
-    R.append(gui_case(nm, cfg, g, v, "no file chosen: no worker started, home screen unchanged", [v1]))
+    v = (v0["screen"] == "home" and g.commands()[:1] == ["status"] and v1["heading"] == "This file can't be used"
+         and "flex and bone group definitions" in v1["text"] and tree(cfg) == before
+         and g.commands() == ["status", "prepare-import"])
+    R.append(gui_case(nm, cfg, g, v, "no file chosen: nothing runs; an unusable file: 'This file can't be used' "
+                                     "with the flex/bone explanation; nothing changed", [v0, v1]))
 
-    # U6 no official release published
-    nm = "U6_official_none_published"
+    # U8 Get Published Version outcomes
+    nm = "U8_published_version_outcomes"
     cfg = make_install(nm)
+    steps = []
     serve([])
-    before = tree(cfg, include_staging=True)
     g = Gui(cfg, net=True, trust=True)
     g.click("official")
-    v1 = g.view()
-    v = (v1["kind"] == "info" and "No official data has been published yet." in v1["text"]
-         and "download" not in v1["panel_buttons"] and tree(cfg, include_staging=True) == before
-         and g.commands() == ["status", "check-official"])
-    R.append(gui_case(nm, cfg, g, v, "empty release list -> 'No official data has been published yet.'; nothing "
-                                     "offered or written", [v1]))
-
-    # U7 unauthenticated official data is not offered
-    nm = "U7_official_unverified_refused"
-    cfg = make_install(nm)
+    steps.append(g.view())
+    g.close()
     serve([(10, "data-v1.0.0", S1, {})])
     g = Gui(cfg, net=True, trust=False)
     g.click("official")
-    v1 = g.view()
-    v = (v1["kind"] == "warning" and "couldn't be verified" in v1["text"] and "download" not in v1["panel_buttons"]
-         and g.commands() == ["status", "check-official"])
-    R.append(gui_case(nm, cfg, g, v, "test-signed release without trust: 'couldn't be verified', no Download "
-                                     "offered", [v1]))
+    steps.append(g.view())
+    g.close()
+    serve([])
+    FAKE.pages = {1: {"status": 500, "json": {}}}
+    g = Gui(cfg, net=True, trust=True)
+    g.click("official")
+    steps.append(g.view())
+    v = (steps[0]["heading"] == "Nothing published yet" and "download" not in steps[0]["panel_buttons"]
+         and steps[1]["heading"] == "Published version rejected" and "download" not in steps[1]["panel_buttons"]
+         and steps[2]["heading"] == "Couldn't check for a published version"
+         and active_set(tree(cfg)) == expected_active("G1", "g1"))
+    R.append(gui_case(nm, cfg, g, v, "none published -> 'Nothing published yet'; unverified -> 'Published version "
+                                     "rejected'; failed check -> 'Couldn't check for a published version'; nothing "
+                                     "offered or changed", steps))
 
-    # U8 official data available (test trust): download, consent, install
-    nm = "U8_official_end_to_end"
+    # U9 published version installed over a customized TXT (test key), then reported as installed
+    nm = "U9_published_version_install"
     cfg = make_install(nm)
     serve([(10, "data-v1.0.0", S1, {})])
     g = Gui(cfg, net=True, trust=True)
@@ -3174,42 +3244,71 @@ def group_U():
     v1 = g.view()
     g.panel("download")
     v2 = g.view()
-    g.consent()
-    g.panel("install")
+    g.panel("replace")
     v3 = g.view()
     ok, d = final_is(cfg, ("G3", "g3"))
-    v = (v1["screen"] == "confirm" and "Official data 1.0.0 is available." in v1["text"]
-         and "download" in v1["panel_buttons"] and v2["screen"] == "confirm" and v2["install_state"] == "disabled"
-         and "doesn't match official data" in v2["text"] and v3["kind"] == "success"
-         and "Official data 1.0.0 is installed" in v3["text"] and ok and staging_entries(cfg) == []
-         and g.commands() == ["status", "check-official", "download-official", "install"])
-    R.append(gui_case(nm, cfg, g, v, "check -> 'Official data 1.0.0 is available.' -> Download -> preview with "
-                                     "consent -> 'Official data 1.0.0 is installed'; download folder and "
-                                     "preparation cleaned", [v1, v2, v3]))
+    bk = backups(cfg) or {}
+    g.click("official")
+    v4 = g.view()
+    v = (v1["heading"] == "Published version available"
+         and v1["text"] == "A published animation-group TXT and matching Character Tools data are available to install."
+         and v1["panel_labels"]["download"] == "Download and Install" and v2["heading"] == "Replace your animation groups?"
+         and EXACT["replace_backup"] in v2["text"] and v3["heading"] == "Published version 1.0.0 installed"
+         and EXACT["saved"] in v3["text"] and ok and list(bk.values()) == [SHA["G1"]]
+         and v4["heading"] == "Published version already installed"
+         and v4["text"] == "Published animation-group version 1.0.0 is already installed. Nothing was changed."
+         and staging_entries(cfg) == [])
+    R.append(gui_case(nm, cfg, g, v, "available -> Download and Install -> replacement confirmation (customized TXT) "
+                                     "-> installed with the previous TXT backed up -> next check 'Published version "
+                                     "already installed' (version 1.0.0)", [v1, v2, v3, v4]))
 
-    # U9 / U10 SFM RUNNING / UNKNOWN at install; retry after SFM closes
-    for nm, form in (("U9_install_refused_sfm_running", RUNNING), ("U10_install_refused_state_unknown", "raise")):
+    # U10 / U11 SFM RUNNING or UNKNOWN: Update Using SFM's TXT prepares, asks to close SFM, then finishes
+    for nm, form in (("U10_update_waits_for_sfm_running", RUNNING), ("U11_update_waits_for_state_unknown", "raise")):
         cfg = make_install(nm, master="G3", gens=("g1",))
         g = Gui(cfg)
-        g.click("rebuild")
         g.app.worker_argv = test_worker_argv(inject={"process": form})
         act0 = active_set(tree(cfg))
-        g.panel("install")
+        g.click("rebuild")
         v1 = g.view()
         unchanged = active_set(tree(cfg)) == act0
-        g.app.worker_argv = test_worker_argv()
-        g.panel("retry")
+        g.app.panel_buttons["finish"].invoke()
+        g.settle()
         v2 = g.view()
+        still = active_set(tree(cfg)) == act0
+        g.app.worker_argv = test_worker_argv()
+        g.panel("finish")
+        v3 = g.view()
         ok, d = final_is(cfg, ("G3", "g3"))
-        v = (v1["kind"] == "warning" and "Close SFM, then try again." in v1["text"] and "retry" in v1["panel_buttons"]
-             and actions_off(v1) and unchanged and v2["kind"] == "success" and ok
+        v = (v1["screen"] == "wait" and v1["heading"] == "Close SFM to finish"
+             and v1["panel_labels"] == {"finish": "Finish Update", "cancel": "Cancel"} and unchanged
+             and v2["screen"] == "wait" and still and v3["heading"] == "Character Tools data updated" and ok
              and g.commands() == ["status", "prepare-rebuild", "install", "install"])
-        R.append(gui_case(nm, cfg, g, v, "install with SFM %s -> 'Close SFM, then try again.', nothing changed; "
-                                         "Try Again after SFM closed -> installed" % (
-                                             "RUNNING" if form == RUNNING else "state UNKNOWN"), [v1, v2]))
+        R.append(gui_case(nm, cfg, g, v, "SFM %s: prepared privately, no install, 'Close SFM to finish'; Finish Update "
+                                         "refused while open; Finish Update after SFM closed -> installed" % (
+                                             "RUNNING" if form == RUNNING else "state UNKNOWN"), [v1, v2, v3]))
 
-    # U11 recovery presented and executed; U12 recovery refused while SFM runs
-    for nm, form in (("U11_recovery_presented_and_executed", None), ("U12_recovery_refused_sfm_running", RUNNING)):
+    # U12 replacement refused while SFM runs: no backup, then completes after SFM closes
+    nm = "U12_replace_waits_for_sfm"
+    cfg = make_install(nm)
+    src = os.path.join(WORK, "ext", nm, "chosen.txt")
+    wcopy(G3_TXT, src)
+    g = Gui(cfg, pick=src)
+    g.click("import")
+    g.app.worker_argv = test_worker_argv(inject={"process": RUNNING})
+    g.panel("replace")
+    v1 = g.view()
+    no_backup = backups(cfg) is None and active_set(tree(cfg)) == expected_active("G1", "g1")
+    g.app.worker_argv = test_worker_argv()
+    g.panel("finish")
+    v2 = g.view()
+    ok, d = final_is(cfg, ("G3", "g3"))
+    v = (v1["screen"] == "wait" and v1["panel_labels"].get("finish") == "Replace Groups" and no_backup
+         and v2["heading"] == "Animation groups updated" and ok and list((backups(cfg) or {}).values()) == [SHA["G1"]])
+    R.append(gui_case(nm, cfg, g, v, "Replace Groups with SFM open: refused, no backup made; Replace Groups after "
+                                     "SFM closed -> replaced with one verified backup", [v1, v2]))
+
+    # U13 recovery presented and executed; U14 recovery refused while SFM runs
+    for nm, form in (("U13_recovery_presented_and_executed", None), ("U14_recovery_refused_sfm_running", RUNNING)):
         cfg = make_install(nm, master="G3", gens=("g1",))
         st = activate(nm, "interrupt", cfg, "rebuild", SHA["G3"], stop_at="act_moved_forward_0", action="kill")
         g = Gui(cfg, **({"inject": {"process": form}} if form else {}))
@@ -3219,25 +3318,22 @@ def group_U():
         if form is None:
             ok, d = final_is(cfg, ("G3", "g3"))
             v = (st["killed"] and v1["screen"] == "recovery" and actions_off(v1) and "choose Recover" in v1["text"]
-                 and v2["kind"] == "success" and "Installation recovered." in v2["text"] and actions_on(v2) and ok
+                 and v2["heading"] == "Recovered" and actions_on(v2) and ok
                  and g.commands() == ["status", "recover", "status"])
-            why = ("interrupted install detected -> recovery screen (actions unavailable) -> Recover -> 'Installation "
-                   "recovered.' exact new set; actions available again")
+            why = "interrupted update -> recovery screen (actions unavailable) -> Recover -> 'Recovered'; exact set"
         else:
             v = (st["killed"] and v1["screen"] == "recovery" and v2["screen"] == "recovery"
-                 and "Close SFM, then choose Recover." in v2["text"] and txdirs(cfg)
-                 and g.commands() == ["status", "recover"])
-            why = "recovery with SFM running -> stays in recovery mode with 'Close SFM, then choose Recover.'"
+                 and "Close SFM, then choose Recover." in v2["text"] and txdirs(cfg))
+            why = "Recover with SFM open -> stays in recovery with 'Close SFM, then choose Recover.'"
         R.append(gui_case(nm, cfg, g, v, why, [v1, v2]))
 
-    # U13 worker killed during installation -> reported, recoverable
-    nm = "U13_worker_killed_during_install"
+    # U15 worker killed during the update -> recovery, never success
+    nm = "U15_worker_killed_during_update"
     cfg = make_install(nm, master="G3", gens=("g1",))
     marker = os.path.join(WORK, "markers", nm)
     os.makedirs(os.path.dirname(marker), exist_ok=True)
     g = Gui(cfg, hold="act_moved_forward_0", marker=marker)
-    g.click("rebuild")
-    g.app.panel_buttons["install"].invoke()
+    g.app.buttons["rebuild"].invoke()
     g.pump(lambda: os.path.exists(marker), 300)
     pid = g.app.run.pid
     subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
@@ -3247,51 +3343,30 @@ def group_U():
     g.panel("recover")
     v2 = g.view()
     ok, d = final_is(cfg, ("G3", "g3"))
-    res = g.results()
-    v = (res[2]["outcome"] == "WORKER_FAILED" and v1["screen"] == "recovery"
-         and "The updater stopped unexpectedly. Nothing was reported as installed." in v1["text"]
-         and "The update was interrupted. Close SFM, then choose Recover." in v1["text"] and not alive(pid)
-         and v2["kind"] == "success" and ok)
-    R.append(gui_case(nm, cfg, g, v, "worker killed mid-install -> 'stopped unexpectedly ... interrupted. Close SFM, "
-                                     "then choose Recover.' (no success) -> Recover -> exact new set", [v1, v2]))
+    v = (v1["screen"] == "recovery" and "The update stopped unexpectedly" in v1["text"]
+         and "Close SFM, then choose Recover." in v1["text"] and not alive(pid) and v2["heading"] == "Recovered" and ok)
+    R.append(gui_case(nm, cfg, g, v, "worker killed mid-update -> 'The update stopped unexpectedly ... choose "
+                                     "Recover' (no success) -> Recover -> exact set", [v1, v2]))
 
-    # U14 worker killed during preparation
-    nm = "U14_worker_killed_during_preparation"
-    cfg = make_install(nm, master="G3", gens=("g1",))
-    before = tree(cfg)
-    g = Gui(cfg)
-    g.app.buttons["rebuild"].invoke()
-    g.pump(lambda: g.app.run is not None and g.app.run.proc is not None, 60)
-    pid = g.app.run.pid
-    subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
-    g.settle()
-    v1 = g.view()
-    v = (v1["kind"] == "warning" and "The updater stopped unexpectedly. Nothing was reported as installed." in v1["text"]
-         and tree(cfg) == before and actions_on(v1) and not alive(pid))
-    R.append(gui_case(nm, cfg, g, v, "worker killed while preparing -> 'stopped unexpectedly', nothing installed",
-                      [v1]))
-
-    # U15 memory ceiling reached
-    nm = "U15_worker_memory_ceiling"
+    # U16 memory ceiling
+    nm = "U16_worker_memory_ceiling"
     cfg = make_install(nm, master="G3", gens=("g1",))
     before = tree(cfg, include_staging=True)
     g = Gui(cfg)
     g.app.memory_limit = 64 * 1024 * 1024
     g.click("rebuild")
     v1 = g.view()
-    res = g.results()
-    v = (res[-1]["outcome"] == "WORKER_MEMORY_LIMIT" and v1["kind"] == "warning"
-         and "needed more memory than it is allowed to use" in v1["text"] and tree(cfg) == before)
-    R.append(gui_case(nm, cfg, g, v, "64 MiB ceiling (test) on a normal rebuild -> 'needed more memory than it is "
-                                     "allowed to use', nothing installed", [v1]))
+    v = (g.results()[-1]["outcome"] == "WORKER_MEMORY_LIMIT" and v1["heading"] == "The update was stopped"
+         and "more memory" in v1["text"] and tree(cfg) == before)
+    R.append(gui_case(nm, cfg, g, v, "64 MiB ceiling (test) -> 'The update was stopped ... more memory'; nothing "
+                                     "installed", [v1]))
 
-    # U16 window closed during installation (confirmed) -> worker stopped -> recoverable
-    nm = "U16_window_closed_during_install"
+    # U17 window closed during the update (confirmed) -> worker stopped -> recoverable
+    nm = "U17_window_closed_during_update"
     cfg = make_install(nm, master="G3", gens=("g1",))
     marker = os.path.join(WORK, "markers", nm)
     g = Gui(cfg, hold="act_moved_forward_0", marker=marker)
-    g.click("rebuild")
-    g.app.panel_buttons["install"].invoke()
+    g.app.buttons["rebuild"].invoke()
     g.pump(lambda: os.path.exists(marker), 300)
     pid = g.app.run.pid
     g.app.on_close()
@@ -3303,26 +3378,12 @@ def group_U():
     g2.panel("recover")
     v2 = g2.view()
     ok, d = final_is(cfg, ("G3", "g3"))
-    v = (closed and texts and "you will need to choose Recover" in texts[0] and gone
-         and v1["screen"] == "recovery" and v2["kind"] == "success" and ok)
-    R.append(gui_case(nm, cfg, g2, v, "close during install: warned, confirmed; worker stopped with the window; next "
-                                      "start shows recovery; Recover -> exact new set", [v1, v2],
-                      {"close_texts": texts}))
+    v = closed and texts and "choose Recover" in texts[0] and gone and v1["screen"] == "recovery" and ok
+    R.append(gui_case(nm, cfg, g2, v, "close during the update: warned, confirmed; worker stopped; next start shows "
+                                      "recovery; Recover -> exact set", [v1, v2], {"close_texts": texts}))
 
-    # U17 close declined: the operation continues
-    nm = "U17_close_declined_operation_continues"
-    cfg = make_install(nm, master="G3", gens=("g1",))
-    g = Gui(cfg, confirm_close=False)
-    g.app.buttons["rebuild"].invoke()
-    g.app.on_close()
-    texts = list(g.close_texts)
-    g.settle()
-    v1 = g.view()
-    v = (not g.app.closed and texts and "Closing stops it" in texts[0] and v1["screen"] == "confirm")
-    R.append(gui_case(nm, cfg, g, v, "close declined during preparation: window stays, preparation completes", [v1]))
-
-    # U18 GUI process killed during installation -> job kills the worker -> recoverable
-    nm = "U18_gui_process_killed_during_install"
+    # U18 GUI process killed during the update -> the job ends the worker -> recoverable
+    nm = "U18_gui_process_killed_during_update"
     cfg = make_install(nm, master="G3", gens=("g1",))
     marker = os.path.join(WORK, "markers", nm)
     pidfile = os.path.join(WORK, "markers", nm + ".pids")
@@ -3342,111 +3403,232 @@ def group_U():
     gone = worker_pid and not alive(worker_pid)
     steps = [status(nm, "status_after", cfg), recover(nm, "recover", cfg)]
     ok, d = final_is(cfg, ("G3", "g3"))
-    v = (alive_before and gone and steps[0].get("recovery_needed") is True and steps[1]["outcome"] == "OK" and ok)
+    v = alive_before and gone and steps[0].get("recovery_needed") is True and steps[1]["outcome"] == "OK" and ok
     R.append(finalize_case(nm, cfg, steps, "PASS" if v else "FAIL",
-                           "GUI process killed mid-install: its worker ended with it (job kill-on-close); the "
-                           "installation reports recovery needed; recovery -> exact new set" if v else
-                           "alive_before=%s gone=%s %s" % (alive_before, gone, outcomes(steps)),
+                           "GUI process killed mid-update: its worker ended with it; recovery needed; recovered" if v
+                           else "alive_before=%s gone=%s %s" % (alive_before, gone, outcomes(steps)),
                            {"gui_pid": gui_pid, "worker_pid": worker_pid}))
 
-    # U19 staging cleanup removes only safe updater artifacts
-    nm = "U19_staging_cleanup_scope"
+    # U19 user backups: never overwritten, identical copy reused, collision-safe, failure refuses
+    nm = "U19_user_backup_rules"
+    cfg = make_install(nm)
+    L = lay.Layout(cfg)
+    bdir = bdir_of(cfg)
+    fixed = time.mktime((2026, 10, 18, 12, 0, 0, 0, 0, -1))
+    other = os.path.join(bdir, "sfm_defaultanimationgroups_backup_20261018-120000.txt")
+    wbytes(other, b"an earlier, different backup\n")
+    other_sha = sha_file(other)
+    unrelated = os.path.join(bdir, "my_notes.txt")
+    wbytes(unrelated, b"user file\n")
+    b1 = user_backup.save_previous_txt(L, SHA["G1"], now=fixed)
+    b2 = user_backup.save_previous_txt(L, SHA["G1"], now=fixed + 60)
+    try:
+        user_backup.save_previous_txt(L, SHA["G3"], now=fixed)
+        mism = None
+    except Exception as e:
+        mism = getattr(e, "message_key", str(e))
+    rules_ok = (b1["name"] == "sfm_defaultanimationgroups_backup_20261018-120000_2.txt" and not b1["reused"]
+                and sha_file(os.path.join(bdir, b1["name"])) == SHA["G1"] and sha_file(other) == other_sha
+                and b2["reused"] and b2["name"] == b1["name"] and sha_file(unrelated) == sha(b"user file\n")
+                and mism == "DESTINATION_CHANGED" and len(os.listdir(bdir)) == 3)
+    # failure: the Backups location is a file -> the replacement is refused and nothing changes
+    nm2 = cfg
+    cfg = make_install(nm + "_fail")
+    wbytes(bdir_of(cfg), b"not a folder")
+    src = os.path.join(WORK, "ext", nm, "chosen.txt")
+    wcopy(G3_TXT, src)
+    before = active_set(tree(cfg))
+    g = Gui(cfg, pick=src)
+    g.click("import")
+    g.panel("replace")
+    v1 = g.view()
+    v = (rules_ok and v1["heading"] == "Nothing was replaced" and active_set(tree(cfg)) == before and not txdirs(cfg)
+         and "saved in the Backups folder." not in v1["text"])
+    R.append(gui_case(nm, cfg, g, v, "existing backup with the same name kept (new name _2); identical backup reused; "
+                                     "unrelated files untouched; wrong TXT identity refused; Backups location "
+                                     "unusable -> 'Nothing was replaced', nothing changed", [v1],
+                      {"b1": b1, "b2": b2, "rules_cfg": nm2}))
+
+    # U20 staging cleanup scope (consumed, stale, unexpected, unfamiliar, recent)
+    nm = "U20_staging_cleanup_scope"
     cfg = make_install(nm, master="G3", gens=("g1",))
-    st0 = run_op(nm, "seed_interrupted", ["prepare-rebuild"], cfg)
+    st0 = run_op(nm, "seed_prep", ["prepare-rebuild"], cfg)
     stg = os.path.join(cfg, "sfm_character_tools_updater", "staging")
     old = time.time() - 3 * 24 * 3600
     stale_prep = st0["prepid"]
-    for p_ in [os.path.join(stg, stale_prep)] + [os.path.join(stg, stale_prep, n) for n in os.listdir(os.path.join(stg, stale_prep))]:
+    for p_ in [os.path.join(stg, stale_prep)] + [os.path.join(stg, stale_prep, n) for n in
+                                                 os.listdir(os.path.join(stg, stale_prep))]:
         os.utime(p_, (old, old))
     seeds = {"download-" + "a" * 32: [("release.json", b"{}"), ("release.sig", b"x" * 64)],
              "b" * 32: [("prepared.json", b"{}"), ("unexpected.bin", b"x")],
-             "notes": [("readme.txt", b"x")],
-             "c" * 32: [("prepared.json", b"{}")]}
+             "notes": [("readme.txt", b"x")], "c" * 32: [("prepared.json", b"{}")]}
     for d_, files in seeds.items():
         for n, data in files:
             wbytes(os.path.join(stg, d_, n), data)
-        for n, _ in files:
             os.utime(os.path.join(stg, d_, n), (old, old))
         os.utime(os.path.join(stg, d_), (old, old))
     recent = "d" * 32
     wbytes(os.path.join(stg, recent, "prepared.json"), b"{}")
-    kill_st = activate(nm, "interrupted_tx", cfg, "rebuild", SHA["G3"], stop_at="act_moved_forward_0", action="kill")
-    rec = recover(nm, "recover_first", cfg)
-    tx_before = tx_files(cfg)
-    log_before = os.path.exists(os.path.join(cfg, "sfm_character_tools_updater", "official_releases.log"))
     g = Gui(cfg)
     g.click("rebuild")
-    g.panel("install")
     v1 = g.view()
     cl = g.results()[-1]["staging_cleanup"] or {}
     left = staging_entries(cfg)
-    tx_after = tx_files(cfg)
-    v = (v1["kind"] in ("success", "info") and set(cl.get("removed", [])) >= {stale_prep, "download-" + "a" * 32,
-                                                                                 "c" * 32}
-         and {"b" * 32, "notes", recent} <= set(left) and all(tx_after.get(k) == h for k, h in tx_before.items())
-         and kill_st["killed"] and rec["outcome"] == "OK" and not log_before)
-    R.append(gui_case(nm, cfg, g, v, "after an install: consumed and stale updater folders removed; unexpected "
-                                     "content, unfamiliar names and recent folders kept; transaction records "
-                                     "unchanged", [v1], {"cleanup": cl, "left": left}))
-    # A link inside staging makes every worker command refuse (L-1 reparse rule), so the cleanup
-    # function is exercised directly here on a scratch layout.
-    nm = "U19b_staging_cleanup_keeps_links"
-    from sfm_character_tools_updater import layout as lay, staging as stg_mod
-    cfg = make_install(nm)
-    stg = os.path.join(cfg, "sfm_character_tools_updater", "staging")
-    target = os.path.join(WORK, "ext", nm, "outside")
-    wbytes(os.path.join(target, "prepared.json"), b"{}")
-    wmkdirs(stg)
-    jok = junction(os.path.join(stg, "e" * 32), target)
-    out = stg_mod.cleanup(lay.Layout(cfg), consumed=("e" * 32,), now=time.time() + 10 * 24 * 3600)
-    v = (jok and out["removed"] == [] and [k["name"] for k in out["kept"]] == ["e" * 32]
-         and os.path.exists(os.path.join(target, "prepared.json")))
-    R.append(finalize_case(nm, cfg, [out], "PASS" if v else "FAIL",
-                           "a linked folder in staging, even when named as consumed and stale, is kept and its "
-                           "target untouched" if v else "unexpected %s" % out))
+    v = (v1["kind"] == "success" and set(cl.get("removed", [])) >= {stale_prep, "download-" + "a" * 32, "c" * 32}
+         and {"b" * 32, "notes", recent} <= set(left))
+    R.append(gui_case(nm, cfg, g, v, "after an update: consumed and stale updater folders removed; unexpected, "
+                                     "unfamiliar and recent folders kept", [v1], {"cleanup": cl, "left": left}))
 
-    # U20 shipping configuration: the real worker command and the production ceiling
-    nm = "U20_shipping_worker_rebuild"
+    # U21 startup line, final layout, About window, Close buttons, diagnostics kept out of the interface
+    nm = "U21_startup_layout_about_close"
+    cfg = make_install(nm)
+    g = Gui(cfg, settle=False)
+    import tkinter.ttk as ttk_
+    first = {"screen": g.app.screen, "label": str(g.app.state_label.cget("text")),
+             "bars": sum(isinstance(w, ttk_.Progressbar) for w in g.app.panel.winfo_children())}
+    g.settle()
+    after = g.view()
+
+    def widgets(w, out):
+        for c in w.winfo_children():
+            out.append(c)
+            widgets(c, out)
+        return out
+
+    def text_of(c):
+        try:
+            return str(c.cget("text"))
+        except Exception:
+            return None
+
+    def font_of(c):
+        try:
+            f = str(c.cget("font"))
+        except Exception:
+            return ""
+        if not f:
+            try:
+                f = str(ttk_.Style(c).lookup(c.cget("style") or c.winfo_class(), "font"))
+            except Exception:
+                f = ""
+        return f
+    main_w = widgets(g.app.root, [])
+    main_texts = [t for t in (text_of(c) for c in main_w) if t]
+    by_text = {text_of(c): c for c in main_w if text_of(c)}
+    g.root.deiconify()
+    g.root.geometry("800x560+100+100")
+    g.tk.update()
+    g.app.show_about()
+    g.tk.update()
+    about = g.app.about
+    about_w = widgets(about, [])
+    about_texts = [t for t in (text_of(c) for c in about_w) if t]
+    title = about.title()
+    cx = about.winfo_rootx() + about.winfo_width() // 2
+    cy = about.winfo_rooty() + about.winfo_height() // 2
+    mx = g.root.winfo_rootx() + g.root.winfo_width() // 2
+    my = g.root.winfo_rooty() + g.root.winfo_height() // 2
+    centered = abs(cx - mx) <= 40 and abs(cy - my) <= 40
+    close_btn = [c for c in about_w if text_of(c) == "Close"]
+    close_right = bool(close_btn) and close_btn[0].winfo_rootx() + close_btn[0].winfo_width() > \
+        about.winfo_rootx() + about.winfo_width() * 0.6
+    order = [t for t in about_texts if t in ("Version:", "Author:")]
+    close_btn[0].invoke() if close_btn else None
+    g.tk.update()
+    about_closed = g.app.about is None
+    g.root.withdraw()
+    diag = json.loads(g.app.diagnostics())
+    bold = {t: "bold" in font_of(by_text[t]) for t in (gapp.REMINDER, "SFM folder:", ACTIONS_DESC[0])
+            if t in by_text}
+    main_close = by_text.get("Close")
+    v = (first["screen"] == "checking" and first["label"] == "Checking animation-group data\u2026" and first["bars"] == 0
+         and after["state_label"] == EXACT["status"] and after["alert"] == ""
+         and g.app.root.title() == "SFM Control Group Updater" and "SFM Control Group Updater" in main_texts
+         and "Choose an action." not in main_texts and "Show Details" not in main_texts
+         and "About" in main_texts and main_close is not None and gapp.REMINDER in main_texts
+         and not any(bold.values()) and len(bold) == 3
+         and title == "About SFM Control Group Updater" and "About SFM Control Group Updater" in about_texts
+         and gapp.ABOUT in about_texts and order == ["Version:", "Author:"]
+         and PRODUCT_VERSION() in about_texts and "ChadChan3D" in about_texts
+         and "Copy Diagnostic Information" not in about_texts and centered and close_right and about_closed
+         and diag.get("version") == PRODUCT_VERSION() and diag.get("results")
+         and not any(t.lstrip().startswith("{") for t in main_texts + about_texts))
+    idle_close_ok = None
+    if v:
+        main_close.invoke()
+        idle_close_ok = g.app.closed is True and g.close_texts == []
+        v = idle_close_ok
+    R.append(gui_case(nm, cfg, g, v, "startup 'Checking animation-group data…' with no bar, then the subtle match "
+                                     "status; final title; no 'Choose an action.'; regular-weight reminder, folder "
+                                     "label and descriptions; About titled 'About SFM Control Group Updater' with the "
+                                     "approved text, Version then Author, centered, Close at bottom right, no Copy "
+                                     "Diagnostic Information; diagnostics kept internally; main Close exits when idle",
+                      [first, after], {"about_texts": about_texts, "bold": bold, "centered": centered,
+                                       "close_right": close_right, "idle_close_ok": idle_close_ok}))
+
+    # U21b main-window Close during an update keeps the safe-close behavior
+    nm = "U21b_close_button_during_update"
+    cfg = make_install(nm, master="G3", gens=("g1",))
+    marker = os.path.join(WORK, "markers", nm)
+    os.makedirs(os.path.dirname(marker), exist_ok=True)
+    g = Gui(cfg, hold="act_moved_forward_0", marker=marker, confirm_close=False)
+    g.app.buttons["rebuild"].invoke()
+    g.pump(lambda: os.path.exists(marker), 300)
+    pid = g.app.run.pid
+    close_btn = [c for c in widgets(g.app.root, []) if text_of(c) == "Close"][0]
+    close_btn.invoke()
+    declined = (not g.app.closed) and g.close_texts and "choose Recover" in g.close_texts[0] and alive(pid)
+    g.confirm = True
+    close_btn.invoke()
+    time.sleep(1)
+    stopped = g.app.closed and not alive(pid)
+    g2 = Gui(cfg)
+    v1 = g2.view()
+    g2.panel("recover")
+    v2 = g2.view()
+    ok, d = final_is(cfg, ("G3", "g3"))
+    v = declined and stopped and v1["screen"] == "recovery" and v2["heading"] == "Recovered" and ok
+    R.append(gui_case(nm, cfg, g2, v, "Close during an update asks first: declined -> the update keeps running; "
+                                      "confirmed -> worker stopped; next start shows recovery; Recover -> exact set",
+                      [v1, v2], {"close_texts": list(g.close_texts)}))
+
+    # U22 shipping worker command and production ceiling
+    nm = "U22_shipping_worker_update"
     cfg = make_install(nm, master="G3", gens=("g1",))
     real0 = PSTAT()
     g = Gui(cfg, worker_argv=None)
     g.click("rebuild")
-    g.panel("install")
     v1 = g.view()
     res = g.results()
     real1 = PSTAT()
     argv0 = supervisor.default_worker_argv()
     if real0[0] == real1[0] == "CLEAR":
         ok, d = final_is(cfg, ("G3", "g3"))
-        v = v1["kind"] == "success" and ok
+        v = v1["heading"] == "Character Tools data updated" and ok
     else:
-        v = v1["kind"] == "warning" and "Close SFM" in v1["text"]
+        v = v1["screen"] == "wait"
     v = v and (argv0[-2:] == ["-m", "sfm_character_tools_updater.worker"] and "test_worker" not in " ".join(argv0)
-               and all(r["worker"].get("memory_limit") == supervisor.MEMORY_LIMIT for r in res)
-               and all(r["outcome"] not in ("ERROR",) for r in res))
-    R.append(gui_case(nm, cfg, g, v, "default (shipping) worker command and 2 GiB ceiling, real process query %s: "
-                                     "rebuild %s" % (real0[0], "installed" if real0[0] == "CLEAR" else "refused"),
-                      [v1], {"default_worker_argv": argv0}))
+               and all(r["worker"].get("memory_limit") == supervisor.MEMORY_LIMIT for r in res))
+    R.append(gui_case(nm, cfg, g, v, "shipping worker and 2 GiB ceiling, real process query %s" % real0[0], [v1],
+                      {"default_worker_argv": argv0}))
 
-    # U21 supported workloads within the ceiling
-    nm = "U21_workloads_within_ceiling"
-    peaks = [p_ for p_ in PEAKS if p_["outcome"] not in ("WORKER_MEMORY_LIMIT",) and p_["limit"] == supervisor.MEMORY_LIMIT]
+    # U23 workloads within the ceiling
+    nm = "U23_workloads_within_ceiling"
+    peaks = [p_ for p_ in PEAKS if p_["outcome"] != "WORKER_MEMORY_LIMIT" and p_["limit"] == supervisor.MEMORY_LIMIT]
     top = max(p_["peak"] for p_ in peaks) if peaks else 0
     v = bool(peaks) and top < supervisor.MEMORY_LIMIT / 4
     R.append(finalize_case(nm, None, [], "PASS" if v else "FAIL",
                            "%d bounded worker runs at the production ceiling; highest peak %.0f MiB of %d MiB" % (
-                               len(peaks), top / 2 ** 20, supervisor.MEMORY_LIMIT // 2 ** 20),
-                           {"peaks": PEAKS}))
+                               len(peaks), top / 2 ** 20, supervisor.MEMORY_LIMIT // 2 ** 20), {"peaks": PEAKS}))
 
-    # U22 product surface: entry point, worker options, network and test isolation
-    nm = "U22_product_surface"
+    # U24 product surface: labels, entry point, imports, worker options
+    nm = "U24_product_surface"
     import ast
     pkg = os.path.join(UPDATER, "sfm_character_tools_updater")
-    src = open(os.path.join(pkg, "gui", "app.py"), encoding="utf-8").read()
-    main_src = src[src.index("def main():"):]
-    tree_ = ast.parse(src)
+    src_ = open(os.path.join(pkg, "gui", "app.py"), encoding="utf-8").read()
+    main_src = src_[src_.index("def main():"):]
     imports = set()
-    for node in ast.walk(tree_):
+    for node in ast.walk(ast.parse(src_)):
         if isinstance(node, ast.ImportFrom) and node.module:
             imports.add(("." * node.level) + node.module)
         elif isinstance(node, ast.Import):
@@ -3458,21 +3640,28 @@ def group_U():
                         capture_output=True, text=True, env=ENV, cwd=UPDATER, timeout=120)
     out = os.path.join(WORK, "results", "ops", nm + "__x.json")
     guard(out)
-    cps = [product_worker(["discard-prepared", "--installation", cfg, "--result", out] + a, UPDATER)
+    cfg24 = make_install(nm)
+    cps = [product_worker(["status", "--installation", cfg24, "--result", out] + a, UPDATER)
            for a in (["--hold-at", "x"], ["--hold-marker", "x"])]
-    found = __import__("sfm_character_tools_updater.gui.app", fromlist=["x"]).detect_installations()
-    v = ("App(root, installations=detect_installations())" in main_src and "worker_argv" not in main_src
-         and imports <= {"json", "os", "re", "tkinter", "..", "..messages", "ctypes", "winreg"}
-         and cp.stdout.strip() == "[]" and all(c.returncode == 2 for c in cps)
-         and os.path.normcase(os.path.join(A.game, "usermod", "cfg")) in [os.path.normcase(f) for f in found])
+    labels = [(k, l, d_) for k, l, d_ in gapp.ACTIONS]
+    v = (labels == [("official", "Get Published Version",
+                     "Download the flex and bone organization maintained by ChadChan3D."),
+                    ("rebuild", "Update Using SFM's TXT",
+                     "Build Character Tools data from the animation-group TXT already in your SFM folder."),
+                    ("import", "Choose Another TXT File", "Select a different animation-group TXT to use in SFM.")]
+         and gapp.TITLE == "SFM Control Group Updater"
+         and gapp.REMINDER == "Close SFM before updating its animation-group TXT or Character Tools data."
+         and gapp.FOLDER_PICKER_TITLE == "Select your SourceFilmmaker folder"
+         and "initialdir=sfm_folder(self.cfg)" in src_ and "including any changes" not in src_
+         and "App(root, installations=detect_installations())" in main_src and "worker_argv" not in main_src
+         and imports <= {"json", "os", "re", "subprocess", "tkinter", "..", "..messages", "ctypes", "winreg"}
+         and cp.stdout.strip() == "[]" and all(c.returncode == 2 for c in cps))
     R.append(finalize_case(nm, None, [{"imports": sorted(imports), "gui_import_modules": cp.stdout.strip(),
-                                       "worker_rc": [c.returncode for c in cps], "detected": len(found)}],
-                           "PASS" if v else "FAIL",
-                           "the shipping entry passes no test arguments; the GUI imports only the supervisor and "
-                           "messages (no network, discovery or seam module at import); the worker rejects "
-                           "--hold-at/--hold-marker; the selector finds the real installation (read-only)" if v else
-                           "unexpected imports=%s mods=%s rc=%s" % (sorted(imports), cp.stdout,
-                                                                     [c.returncode for c in cps])))
+                                       "worker_rc": [c.returncode for c in cps]}], "PASS" if v else "FAIL",
+                           "approved title, labels, descriptions and reminder; the shipping entry passes no test "
+                           "arguments; no network, discovery or seam module at GUI import; the worker rejects test "
+                           "options" if v else "unexpected imports=%s mods=%s rc=%s labels=%s" % (
+                               sorted(imports), cp.stdout, [c.returncode for c in cps], labels)))
     return R
 
 

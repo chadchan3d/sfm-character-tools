@@ -3,10 +3,10 @@
 
   gui_driver.py CFG PIDFILE WORKER_ARGV_JSON
 
-Opens the real GUI (withdrawn) on CFG with the given test worker, chooses Rebuild My Data, then
-Install. When the worker reports that it holds at its barrier (the test worker's --hold-marker
-file, named in WORKER_ARGV_JSON), writes "<gui pid> <worker pid>" to PIDFILE and keeps running
-until the controller kills this process.
+Opens the real GUI (withdrawn) on CFG with the given test worker and chooses Update Using SFM's
+TXT, which installs directly while SFM is closed. When the worker reports that it holds at its
+barrier (the test worker's --hold-marker file, named in WORKER_ARGV_JSON), writes
+"<gui pid> <worker pid>" to PIDFILE and keeps running until the controller kills this process.
 """
 import json
 import os
@@ -31,10 +31,7 @@ def main():
         if a.run is None and a.screen == "home" and stage["n"] == 0:
             stage["n"] = 1
             a.buttons["rebuild"].invoke()
-        elif a.run is None and a.screen == "confirm" and stage["n"] == 1:
-            stage["n"] = 2
-            a.panel_buttons["install"].invoke()
-        elif stage["n"] == 2 and os.path.exists(marker) and a.run is not None:
+        elif stage["n"] == 1 and a.phase == "install" and os.path.exists(marker) and a.run is not None:
             stage["n"] = 3
             with open(pidfile, "x", encoding="ascii") as f:
                 f.write("%d %d\n" % (os.getpid(), a.run.pid))

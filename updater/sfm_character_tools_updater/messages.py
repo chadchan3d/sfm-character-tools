@@ -99,6 +99,9 @@ MESSAGES = {
     "RECOVERY_NEEDED": "An earlier update was interrupted. Close SFM, then choose Recover. Other actions are "
                        "unavailable until it is recovered.",
     "CLOSE_NOTE": "Save your work and close SFM before installing data.",
+    # L-4 usability refinement
+    "BACKUP_FAILED": "Your current animation-group TXT couldn't be saved to the Backups folder, so nothing was "
+                     "replaced.",
 }
 
 
