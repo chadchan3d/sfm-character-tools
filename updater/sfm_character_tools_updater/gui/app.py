@@ -697,12 +697,24 @@ class App(object):
         self.root.destroy()
 
 
+def startup_installations(argv):
+    """Detected SFM folders; `--sfm-folder PATH` (as an SFM menu entry passes its own folder, L-6)
+    puts that folder first when it is an SFM installation. Nothing else is accepted."""
+    found = detect_installations()
+    if len(argv) == 2 and argv[0] == "--sfm-folder":
+        cfg = normalize_choice(argv[1])
+        if cfg:
+            found = [cfg] + [f for f in found if os.path.normcase(f) != os.path.normcase(cfg)]
+    return found
+
+
 def main():
     try:
         import ctypes
         ctypes.windll.shcore.SetProcessDpiAwareness(1)
     except Exception:
         pass
+    import sys
     root = tk.Tk()
-    App(root, installations=detect_installations())
+    App(root, installations=startup_installations(sys.argv[1:]))
     root.mainloop()

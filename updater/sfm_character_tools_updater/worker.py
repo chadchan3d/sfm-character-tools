@@ -10,6 +10,7 @@
   python -m sfm_character_tools_updater.worker download-official --installation CFG --result OUT
                                                                 --release-tag TAG --descriptor-sha SHA
                                                                 [--allow-older]
+  python -m sfm_character_tools_updater.worker runtime-check    --installation CFG --result OUT
   python -m sfm_character_tools_updater.worker discard-prepared --installation CFG --result OUT --prepared ID
   python -m sfm_character_tools_updater.worker install          --installation CFG --result OUT
                                                                 --prepared ID --confirm-sha SHA
@@ -49,12 +50,13 @@ import sys
 import traceback
 
 from . import VERSION, backend, recovery, staging, user_backup
+from .compat import inventory as software
 from .layout import Layout, resolve_installation
 from .messages import MESSAGES, Stop
 from .process_gate import process_status
 
 COMMANDS = ("status", "prepare-rebuild", "prepare-import", "prepare-official", "check-official",
-            "download-official", "discard-prepared", "install", "recover")
+            "download-official", "discard-prepared", "install", "recover", "runtime-check")
 
 
 def build_parser(commands=COMMANDS):
@@ -77,8 +79,9 @@ def build_parser(commands=COMMANDS):
 
 def _backup_before_replace(layout, args):
     """The user backup for an install that will replace the installed TXT; None when the install
-    replaces nothing, when SFM is not confirmed closed (the backend refuses before any change) or
-    when the preparation is unreadable (the backend reports it)."""
+    replaces nothing, when SFM is not confirmed closed, when the installed Character Tools cannot be
+    verified (the backend refuses those before any change, and no backup is written for a refused
+    installation) or when the preparation is unreadable (the backend reports it)."""
     try:
         rec = json.loads(open(os.path.join(layout.prepdir(args.prepared), "prepared.json"), "rb").read().decode("utf-8"))
         replaces = (rec["kind"] == "replace" and rec["source"]["sha256"] != args.confirm_sha
@@ -86,6 +89,10 @@ def _backup_before_replace(layout, args):
     except Exception:
         return None
     if not replaces or process_status()[0] != "CLEAR":
+        return None
+    try:
+        software.verify_installation(layout)
+    except Stop:
         return None
     return user_backup.save_previous_txt(layout, args.confirm_sha)
 
@@ -136,6 +143,9 @@ def dispatch(args, extra=None):
         return {"operation": "discard-prepared", "outcome": "DISCARDED", "message": MESSAGES["DISCARDED"]}
     if args.command == "recover":
         return recovery.recover(layout, args.policy)
+    if args.command == "runtime-check":
+        from . import runtime_check  # read-only diagnostics of the running application (L-5)
+        return runtime_check.run(layout)
     raise Stop("REFUSED", "NOTHING", reason="unknown command")
 
 

@@ -102,6 +102,16 @@ MESSAGES = {
     # L-4 usability refinement
     "BACKUP_FAILED": "Your current animation-group TXT couldn't be saved to the Backups folder, so nothing was "
                      "replaced.",
+    # L-5 (signed installed-software inventory; required before installing data of any workflow). Owner-approved
+    # wording; the refusals happen before any installation step, so the TXT is never changed.
+    "SOFTWARE_UNVERIFIED": "This updater couldn't verify the installed Character Tools. Install or repair a supported "
+                           "Character Tools release, then try again. Your animation-group TXT was not changed.",
+    "SOFTWARE_MODIFIED": "Some Character Tools program files differ from the supported release. Back up your program "
+                         "edits before restoring that release, then try again. Your animation-group TXT was not "
+                         "changed.",
+    # An inventory naming a profile, contract or runtime this updater does not implement: compatibility unknown.
+    "SOFTWARE_UNSUPPORTED": "This updater couldn't verify the installed Character Tools. Install or repair a supported "
+                            "Character Tools release, then try again. Your animation-group TXT was not changed.",
 }
 
 

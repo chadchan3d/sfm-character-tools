@@ -31,7 +31,8 @@ import threading
 MEMORY_LIMIT = 2 * 1024 * 1024 * 1024
 MEMORY_LIMIT_MARGIN = 16 * 1024 * 1024
 
-UPDATER_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+UPDATER_ROOT = (os.path.dirname(os.path.abspath(sys.executable)) if getattr(sys, "frozen", False)
+                else os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
@@ -92,8 +93,14 @@ class JobError(Exception):
     pass
 
 
+WORKER_EXE = "sct-updater-worker.exe"
+
+
 def default_worker_argv():
-    """The shipping worker: the unchanged backend entry point. (L-5 decides the packaged form.)"""
+    """The shipping worker: the unchanged backend entry point. In the packaged application it is the
+    bundle's worker executable beside the GUI executable (L-5)."""
+    if getattr(sys, "frozen", False):
+        return [os.path.join(os.path.dirname(os.path.abspath(sys.executable)), WORKER_EXE)]
     return [sys.executable, "-E", "-s", "-B", "-m", "sfm_character_tools_updater.worker"]
 
 

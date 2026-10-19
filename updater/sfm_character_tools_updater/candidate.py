@@ -4,7 +4,11 @@
 Dependencies are used unmodified and hash-pinned: the compiler, manifest, reader, writer and
 format modules of tools/sfm_master_sidecar, tools/sfm_master_core.py, and the FINAL R3-A2B
 validator/provider of the production authority package. A pin mismatch refuses before
-anything is compiled or written. (Where the shipping bundle carries them is decided in L-5.)
+anything is compiled or written.
+
+Location (L-5): in the development tree they are read from the repository (tools/ and the production
+authority package's qualified copy); in the packaged application (frozen) they are the same exact
+files carried in the bundle under `sct_deps/`. The pins are identical in both cases.
 """
 import hashlib
 import importlib.util
@@ -15,10 +19,17 @@ import sys
 from .layout import SIDECAR_RE
 from .messages import Stop
 
-_REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-TOOLS = os.path.join(_REPO, "tools")
-AUTH_PKG = os.path.join(_REPO, "tests", "sidecar", "qualification", "candidate_b2c_correction6",
-                        "sfm_master_authority_productionized")
+FROZEN = bool(getattr(sys, "frozen", False))
+if FROZEN:
+    _REPO = os.path.join(getattr(sys, "_MEIPASS", os.path.dirname(sys.executable)), "sct_deps")
+    TOOLS = _REPO
+    AUTH_PKG = os.path.join(_REPO, "authority")
+    sys.dont_write_bytecode = True  # never write into the application folder
+else:
+    _REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    TOOLS = os.path.join(_REPO, "tools")
+    AUTH_PKG = os.path.join(_REPO, "tests", "sidecar", "qualification", "candidate_b2c_correction6",
+                            "sfm_master_authority_productionized")
 
 PINS = {
     os.path.join(TOOLS, "sfm_master_sidecar", "__init__.py"):

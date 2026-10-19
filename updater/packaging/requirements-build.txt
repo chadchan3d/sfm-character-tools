@@ -1,0 +1,15 @@
+# Build environment for the packaged SFM Control Group Updater (L-5). Install with:
+#   python -m pip install --no-index --find-links WHEELS --require-hashes -r requirements-build.txt
+# Base interpreter: CPython 3.10.6 x64 (python.org). Runtime dependencies (bundled):
+cryptography==50.0.2 --hash=sha256:4e81d95e5bafc2d6e34e4bed780e53e4d5b9a2f928573428aa4d35fbec1eb0de
+cffi==2.1.1 --hash=sha256:a48d62ab9d6f4f98c983223a547af44be6ca3691074c31cecced6facd3ba2dc1
+pycparser==3.11 --hash=sha256:51d5a8ba2be0bbe440b99d2112604c95bbbc3c2748a64260186c541e1729cd80
+typing_extensions==4.16.0 --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8
+# Build tool (not bundled as application code):
+pyinstaller==6.11.1 --hash=sha256:7ac83c0dc0e04357dab98c487e74ad2adb30e7eb186b58157a8faf46f1fa796f
+pyinstaller-hooks-contrib==2024.10 --hash=sha256:ad47db0e153683b4151e10d231cb91f2d93c85079e78d76d9e0f57ac6c8a5e10
+altgraph==0.17.4 --hash=sha256:642743b4750de17e655e6711601b077bc6598dbfa3ba5fa2b2a35ce12b508dff
+pefile==2023.2.7 --hash=sha256:da185cd2af68c08a6cd4481f7325ed600a88f6a813bad9dea07ab3ef73d8d8d6
+pywin32-ctypes==0.2.3 --hash=sha256:8a1513379d709975552d202d942d9837758905c8d01eb82b8bcc30918929e7b8
+packaging==24.2 --hash=sha256:09abb1bccd265c01f4a3aa3f7a7db064b36514d2cba19a2f694fe6150451a759
+setuptools==75.3.0 --hash=sha256:f2504966861356aa38616760c0f66568e535562374995367b4e69c7143cf6bcd

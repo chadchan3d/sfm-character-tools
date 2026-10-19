@@ -8,7 +8,124 @@ Blueprint, or expands scope, report the conflict before dependent edits.
 Otherwise proceed with the assigned milestone.
 
 ## Current milestone
-**L-4R — GUI usability refinement and final polish: COMPLETE, owner-accepted, 2026-10-18.**
+**L-5 — Compatibility and packaging: COMPLETE / PASS (bounded), 2026-10-19. Designer-reviewed and owner-accepted,
+including the owner-approved compatibility correction.** Committed at the L-5 GitHub checkpoint.
+Authorized by the owner under the L card §5. Base: `0010395…`.
+- **Private evidence (local only):**
+  - L-5: `L5_IMPLEMENTATION_REPORT.md` `83ec2f22…`, manifest `1f4ac03a…` (46 entries);
+  - compatibility correction: `L5_CORRECTION_REPORT.md` `7ea88cd7…`, manifest `4495d90f…` (52 entries).
+- **Accepted result:** 303/303 PASS (the correction runs `c_final` and `c_final2`; see below). The candidate
+  `l5-candidate-20261019T1435Z` (identity `cf792970…`) is a scratch build, not committed and not deployed.
+- **Application version:** SFM Control Group Updater **0.1.0** (`VERSION`; About shows it dynamically).
+  Animation-group data stays separately versioned (`data-v1.0.0`).
+- **Authority profile (`compat/profile.py`):** `sct-authority-profile-1` is now a defined contract, identified by
+  its canonical-JSON SHA-256 `2bbd93d0…`. It binds:
+  - layout and Master path resolution;
+  - sidecar format/semantics 0;
+  - the 7 compiler and 2 validator/provider hashes, equal to `candidate.PINS`;
+  - runtime API `1.0.0-b2a` and build `package-boundary-corrected-2026-09-22`;
+  - the CPM (`sfm-character-semantic-provider-v1`, `cpm-compat-v1`) and Normalizer consumer contracts;
+  - static admission limits;
+  - the `sct-updater-tx-1` publication protocol;
+  - the deployment policy (source authoritative; `.pyc` derived, not inventoried).
+- **Signed installed-software inventory (`compat/inventory.py`):**
+  - **Location:** `usermod\scripts\sfm\mainmenu\ChadChan3D\sfm_character_tools_inventory.json/.sig`.
+  - **Signature:** Ed25519 over the exact bytes, under the same trust as official data.
+  - **Content:** the 31 immutable K-qualified software files (CPM app and launcher, Normalizer, CPM adapter and
+    projection, authority package, sidecar reader), with role, length and SHA-256; the profile ID and its exact
+    contract hash; the runtime identity.
+  - **Producer:** `release_tools/make_software_inventory.py` with `release_tools/character_tools_software_v1.json`,
+    which records the qualified identities and refuses others. Mutable data is never listed.
+- **Enforcement (owner-approved Astra adjudication, 2026-10-18; corrected 2026-10-19):** all three actions — Get
+  Published Version, Update Using SFM's TXT and Choose Another TXT File — require a verified, supported Character
+  Tools installation before installing data.
+  - **Where:** at the common installation admission boundary in `backend.install`, re-verified immediately before
+    installation even when preparation was earlier. Published data is also checked before it is prepared.
+  - **Preparation:** compiling and validating a TXT stay available without verification. Custom TXT files remain
+    supported and need no signature: TXT validation shows the data is valid; the software check shows the installed
+    Character Tools can consume it.
+  - **Not gated:** recovery of an already-started transaction.
+  - **No repair:** modified programs are never overwritten or repaired. An inventory mismatch means unknown
+    compatibility, not necessarily defective software.
+  - **Refusals (owner-approved text):** missing or unsupported identification gives "This updater couldn't verify
+    the installed Character Tools. Install or repair a supported Character Tools release, then try again. Your
+    animation-group TXT was not changed." Modified software gives "Some Character Tools program files differ from
+    the supported release. Back up your program edits before restoring that release, then try again. Your
+    animation-group TXT was not changed." Both happen before any installation step, so the TXT claim holds.
+  - **Backend change:** a 10-line admission check (official at preparation and installation; all workflows at
+    installation). `recovery`, `journal`, `w32`, `layout`, `legacy_lock`, `process_gate`, `official`, `hooks`,
+    `discovery`, `staging` and `user_backup` are byte-identical to `0010395`, and activation is unchanged.
+  - **Superseded:** the first L-5 implementation's official-only scope (2026-10-18) and its P6 case, which allowed
+    unverified local installation.
+- **Package (`updater/packaging/`):** PyInstaller 6.11.1 one-folder build of CPython 3.10.6 x64.
+  - **Executables:** `SFM Control Group Updater.exe` (GUI) and `sct-updater-worker.exe` (worker, started inside the
+    unchanged Job Object, 2 GiB, kill-on-close).
+  - **Pinned sources:** the nine pinned compiler/validator/provider sources are carried byte-exact in
+    `_internal\sct_deps` and verified by `candidate.PINS`. There is no import from repository paths and no
+    duplicate authority package.
+  - **Recipe:** `requirements-build.txt` (hash-locked, offline install), `build.py` (environment and pin checks,
+    minimal build `PATH`, fixed hash seed, post-build pin/forbidden-content/workstation-marker checks,
+    `bundle_manifest.json`), `sct_updater.spec`, `README.md` (layout, dependency inventory, profile/inventory design,
+    intended L-6 deployment).
+  - **Build correction:** the first build collected an OpenSSL 3 from Git for Windows on `PATH`. The recipe now uses
+    a minimal `PATH`, and the bundle carries only CPython's OpenSSL 1.1.1n.
+  - **Reproducibility:** two builds give the same file set and identical code. All bytes are identical except the
+    executables' embedded archive and one stdlib `.pyc`, whose code objects unmarshal identically (CPython 3.10
+    `marshal` serialization).
+- **Candidate (scratch, not deployed):** the scratch build `l5-candidate-20261018T0956Z` (folder
+  `dist\SFM Control Group Updater\`).
+  - 965 files, about 33 MB, bundle identity `ee51113d…`.
+  - GUI executable `a0a6c09d…`, worker executable `4a04c115…`.
+- **Read-only diagnostics:** `runtime-check`, a new worker command, reports runtime identity, import origins, pinned
+  sources, Ed25519 (RFC 8032 test vector) and the TLS trust store.
+- **GUI:** `--sfm-folder PATH` preselects an installation, for the L-6 menu entry. No wording or layout changed.
+- **Compatibility correction result (2026-10-19):** effective **303/303 PASS**.
+  - `c_final` (13:35–14:34Z): the full existing suite A–K, N, X, M, O, W3, Q (236) as regression, with every scratch
+    installation carrying the qualified software and its test-signed inventory.
+  - `c_final2` (14:36–14:46Z): P 34, U 25, W 2 and W4 6 on the corrected worker and rebuilt candidate.
+  - **P6 rewritten:** both local workflows install on verified software; refuse when software is unverified,
+    modified, of an unsupported profile, or changed between preparation and installation (nothing installed, TXT
+    unchanged, no backup); presets, logs, bytecode and custom TXT do not invalidate the inventory; recovery of an
+    interrupted transaction completes after a program file changed.
+  - **Product defect found and fixed:** the worker wrote the user TXT backup before the backend's software check,
+    so a refused replacement left an unclaimed backup file. The backup is now made only after verification passes.
+  - **Candidate:** the scratch build `l5-candidate-20261019T1435Z` (`dist\SFM Control Group Updater\`), 965 files,
+    identity `cf792970…`; GUI `6d12bd72…`, worker `63312291…`. It supersedes the 2026-10-18 candidates.
+  - **Consequence (now verified):** the shipping candidate trusts no key, so it installs **no data at all** until the
+    production public key is embedded. The packaged workflows compile and prepare, then refuse installation truthfully
+    (P9, W2, W4a, U22).
+  - Real process status CLEAR; the live installation identical before and after (see the `gameinfo.txt` observation).
+- **First L-5 result (2026-10-18, before the correction):** effective **136/136 PASS**.
+  - `final`, 2026-10-18 09:57–10:16Z: M 11, O 36, W 2, W3 1, Q 33, W4 6 (89).
+  - `final2`: P 22/22 against a fresh clean copy of the final candidate.
+  - `final3`: U 25/25.
+  - Product source was identical across the three runs; only the harness changed. Real process status was CLEAR
+    throughout. The live installation was identical before and after.
+- **Group P covered:**
+  - the profile and pins, and the qualified software staged byte-exact;
+  - the qualified test installation accepted, installed and re-verified;
+  - rejection of a changed consumer, a missing file, an invalid signature, an altered inventory, an unsupported
+    profile, a contract mismatch, a missing inventory, an untrusted signer, a missing role, path traversal and a
+    runtime mismatch;
+  - mutable data not checked;
+  - the install-time re-check;
+  - local workflows unaffected.
+  - **Clean directory:** runtime closure (frozen 0.1.0, every path and module from the bundle, even with
+    `PYTHONPATH`/`PYTHONHOME`/`PATH` pointing at the development Python; Ed25519; TLS store); packaged compiler
+    parity and determinism (G1 = live `bcd97641…`/`d810d648…`); the three workflows through the packaged shipping
+    worker (rebuild and import installed; a test-signed package refused as unsigned; the real empty release list
+    over TLS); the packaged worker rejects test options; the packaged GUI's window, its worker inside a Job Object,
+    idle close with no orphan; bundle contents equal the manifest.
+- **Recorded deviations:**
+  - a `runtime_check` diagnostic resolved frozen modules' relative `__file__` against the working directory. It is
+    fixed: they are reported as `<frozen>`. The candidate was rebuilt.
+  - harness defects, all fixed: a run-wide clean copy reused the earlier candidate (now per run label), and the U24
+    expectations were updated for the GUI's `sys` import and new entry.
+- **Not covered (L-6 or release):** production trust (the shipping trust list is empty), native SFM, the deployed
+  menu entry, a real official release, and Windows other than this Windows 10 machine.
+- **L-6:** NOT STARTED / NOT AUTHORIZED. The pre-L-6 dependencies are listed under Next.
+
+Previous milestone: **L-4R — GUI usability refinement and final polish: COMPLETE, owner-accepted, 2026-10-18.**
 The owner visually reviewed and approved the final GUI, and requested no further interface changes. This entry
 completes the L-4 usability refinement below and supersedes its wording where they differ. It is committed at the
 L-4R GitHub checkpoint.
@@ -77,7 +194,8 @@ L-4R GitHub checkpoint.
     authority equal to the G1 pins.
 - **Owner acceptance:** visual review completed and approved (2026-10-18). `updater/SHA256SUMS.txt` is regenerated
   at this checkpoint.
-- **L-5:** NOT STARTED / REQUIRES AUTHORIZATION. **L-6:** NOT STARTED.
+- **L-5:** NOT STARTED / REQUIRES AUTHORIZATION at this checkpoint. It has since been completed (see Current milestone).
+  **L-6:** NOT STARTED.
 
 Refinement record (2026-10-18; superseded by the final polish above where the wording differs; its open review
 items are resolved by the owner acceptance above):
@@ -156,7 +274,8 @@ Assigned by the owner after the L-4 window review, with an exact-wording addendu
     run, and the sources were unchanged during it.
 - **Not yet done:** the owner's hands-on review of the revised window (five scratch screenshots are in the evidence),
   designer review, and the checkpoint commit.
-- **L-5:** NOT STARTED / REQUIRES AUTHORIZATION. **L-6:** NOT STARTED.
+- **L-5:** NOT STARTED / REQUIRES AUTHORIZATION at this checkpoint. It has since been completed (see Current milestone).
+  **L-6:** NOT STARTED.
 - **Live installation observation (not caused by this work, not verified by it):** after the L-4 checkpoint the
   live `usermod\cfg` gained `sfm_character_tools_updater\` with one transaction completed by the updater at
   2026-10-18 01:52Z (journal VERIFIED → COMPLETE). At 03:02Z the live Master, sidecar and manifest were
@@ -249,7 +368,8 @@ Authorized by the owner under the L card §5. The designer accepted the report p
 - **No official data release has been published.** Release dependencies are unchanged: the production signing key,
   the signed compatibility profile and installed-software inventory (L-5; `sct-authority-profile-1` remains
   provisional, not certified), `published_at` and the final signed `data-v1.0.0` package.
-- **L-5:** NOT STARTED / REQUIRES AUTHORIZATION. **L-6:** NOT STARTED.
+- **L-5:** NOT STARTED / REQUIRES AUTHORIZATION at this checkpoint. It has since been completed (see Current milestone).
+  **L-6:** NOT STARTED.
 
 Previous milestone: **L-3 — Get Official Data online (headless) and official repository identity: COMPLETE / PASS (bounded), 2026-10-17.**
 Authorized by the owner under the L card §5, together with the repository identity resolution. The designer accepted
@@ -986,7 +1106,12 @@ local only. No release, tag or key exists. The L-4 checkpoint (2026-10-17) chang
 this Ledger. Its scratch run, screenshots and evidence are local only. The local git remote now uses the renamed
 repository URL. The L-4R checkpoint (2026-10-18) changed only files under `updater/` (rewriting `gui/app.py`, adding
 `user_backup.py`, the opt-in `--backup-txt` in `worker.py` and one message, updating the tests, regenerating
-`updater/SHA256SUMS.txt`) and this Ledger. Its scratch runs, screenshots and evidence are local only.
+`updater/SHA256SUMS.txt`) and this Ledger. Its scratch runs, screenshots and evidence are local only. The L-5
+checkpoint (2026-10-19) changed only files under `updater/` (adding `compat/`, `runtime_check.py`, `packaging/` and
+the software-inventory producer and spec; changing `__init__`, `backend`, `candidate`, `gui/app`, `messages`,
+`supervisor`, `worker` and the tests; regenerating `updater/SHA256SUMS.txt`) and this Ledger. Its build environment,
+wheels, builds, candidate, scratch runs and evidence are local only. No key, release, executable or deployment is
+committed.
 
 **References for transfer:**
 - Authoritative R15 design: `cpm/qualification/R15_IMPLEMENTATION_BLUEPRINT.md`, frozen from
@@ -1242,6 +1367,24 @@ Evidence:
     check and the removal is a residual race inside the user's own installation folder.
   - **L-5 packaging:** the one-folder package, the launcher and the shipping worker command; the Python, Tk and
     `cryptography` runtime; and the pinned dependencies, which still load from repository paths.
+- **L-5 items (L-6 prerequisites or release; not L-5 defects):**
+  - **Production trust:** the production signing key, and embedding its public key, which is a separately
+    authorized change. It signs both data releases and the software inventory. Since the compatibility correction,
+    the shipping candidate installs **no data of any workflow** until then: every installation needs a verified
+    inventory.
+  - **L-6 qualification conflict to resolve before L-6:** the card's groups exercise installations on the exact
+    shipping candidate (Group 5 with a test-signed package), but that candidate trusts no test key and so can install
+    nothing. Either a separately identified test-trust qualification build, or the production key (with a
+    production-signed inventory), is needed. This is an owner/designer decision.
+  - **Deployment:** the signed inventory must be installed with the Character Tools software (L-6 deployment). The
+    live installation has none, so the updater cannot install any data there yet.
+  - **Live `gameinfo.txt` changed:** between the L-5 run and the correction (file time 2026-10-18 19:36Z), the live
+    `usermod\gameinfo.txt` changed (`044881f3…` to `20f9d202…`) outside this work. Its first search path is still
+    `|gameinfo_path|.` (usermod), so the effective Master path is unchanged. The other entries add game mounts. The
+    P0 `gameinfo` pin no longer matches.
+  - **Unqualified:** the menu entry (`--sfm-folder`) is designed in `updater/packaging/README.md`, not deployed;
+    Windows versions other than this Windows 10 machine; code signing of the executables and antivirus reputation.
+  - **Reproducibility:** bundles are code-identical but not byte-identical (CPython 3.10 marshal serialization).
 - **Removed from the v1 critical path with P2/P3 (not passed):** native Master access, the CPM working
   directory, the native channel/key oracle, bytecode content and restoration recoverability. These were the
   former U0B open items; see Current milestone.
@@ -1294,9 +1437,9 @@ Evidence:
   **Pre-K complete. `4e35f292…` is the exact CPM candidate eligible to enter K.**
   - **K — COMPLETE / PASS** (K1A2 + K2A1, 2026-10-10).
 
-  L: L-1 to L-4 COMPLETE / PASS (bounded), 2026-10-17; L-4R COMPLETE (owner-accepted), 2026-10-18. L-5 NOT
-  STARTED / REQUIRES AUTHORIZATION. The final packaging layout and the updater's public version (target v0.1.0)
-  are decided in L-5.
+  L: L-1 to L-4 COMPLETE / PASS (bounded), 2026-10-17; L-4R COMPLETE (owner-accepted), 2026-10-18; L-5 COMPLETE /
+  PASS (bounded, Designer-reviewed and owner-accepted), 2026-10-19 (application v0.1.0, one-folder package). L-6 NOT
+  STARTED / NOT AUTHORIZED.
 - **Session 4 notes (not failures; carried to K; unchanged by items 7–8):**
   - Fit's exception path releases the stage with a bare `release()` (no
     `PROD_CPM_FIT_STAGE_RELEASED` line; result discarded); a raising success-path release could in
@@ -1308,19 +1451,30 @@ Evidence:
   R15 suite PASS.
 
 ## Next
-Stop. This is the L-4R GitHub checkpoint (2026-10-18): the owner-accepted GUI.
-- **Next action:** an owner decision on authorizing **L-5** (compatibility profile, signed inventory, one-folder
-  packaging, and assigning the updater's public version v0.1.0, card §5). L-5 is NOT STARTED / REQUIRES
-  AUTHORIZATION.
+Stop. This is the L-5 GitHub checkpoint (2026-10-19): L-5 COMPLETE / PASS (bounded), Designer-reviewed and
+owner-accepted.
+- **Pre-L-6 dependencies, in this order:**
+  1. **Normalizer behavior:** investigate and resolve the owner-reported Normalizer behavior problems. The suspected
+     relationship to animation-group TXT/sidecar data is unconfirmed. Root cause and corrective scope remain
+     undetermined.
+  2. **Launcher button:** resolve the planned launcher-button addition. Exact implementation requirements will be
+     supplied separately.
+  3. **Release identity:** finalize the integrated software identities, the signed inventory, production trust and
+     the release candidate before L-6 qualification. This includes resolving the L-5 items: the shipping candidate
+     installs no data without trust, a test-trust qualification build or the production key for L-6, and deployment
+     of the inventory and menu entry.
+- **Post-v0.1.0 research proposal (not authorized for implementation):** a CPM Pose Library.
+- **L-6** (release qualification on the exact shipping candidate): NOT STARTED / NOT AUTHORIZED.
 - **Live installation:** see the observation in Current milestone. The authority files are exact G1 again, and the
   updater folder holds one completed owner-run transaction.
 - **Outstanding release dependencies:** the production signing key, the signed compatibility profile and
   inventory (L-5), `published_at` and the final signed `data-v1.0.0` package (see Current milestone). No official
   data release has been published.
-- **Not authorized by this checkpoint:** L-5 or any later increment; signing, tagging or publishing a release;
-  any native SFM run; WPR/ETW work; or a live installation write.
+- **Not authorized by this checkpoint:** the Normalizer investigation, the launcher-button work, production signing,
+  L-6 or any later increment; signing, tagging or publishing a release; any native SFM run; WPR/ETW work; or a live
+  installation write.
 
-L-1 to L-4 are COMPLETE / PASS (bounded); L-4R is COMPLETE (owner-accepted). K is COMPLETE / PASS. U0A is PASS (bounded). U0B is closed for v1 at the P1
+L-1 to L-4 are COMPLETE / PASS (bounded); L-4R is COMPLETE (owner-accepted); L-5 is COMPLETE / PASS (bounded). K is COMPLETE / PASS. U0A is PASS (bounded). U0B is closed for v1 at the P1
 evidence boundary. `4e35f292…`, the
 production Normalizer `1f4ec5a2…` and exact G1 authority files remain installed (see the live installation observation).
 

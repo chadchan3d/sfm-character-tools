@@ -26,6 +26,7 @@ from .layout import LEGACY_LOCK, SIDECAR_RE, TXID_RE
 from .legacy_lock import LEGACY_HANDLE, classify_legacy_lock, hold_legacy_lock
 from .messages import MESSAGES, Stop
 from .process_gate import gate, process_status
+from .compat import inventory as software
 
 sha = cand.sha
 SCHEMA = jr.SCHEMA
@@ -387,6 +388,8 @@ def prepare_official(layout, package_dir, allow_older=False):
     authenticated release sequence. The official sidecar is never combined with another TXT."""
     res = _start("official")
     d, desc_bytes, sig, payload = official.read_package(os.path.abspath(package_dir))
+    # L-5 (R2 E2-E3): official data only for a verified, supported Character Tools installation.
+    sw = software.verify_installation(layout, accepted_profiles=set(d["compatible_authority_profiles"]))
     desc_sha = sha(desc_bytes)
     txt, body, manifest = payload["master"], payload["sidecar"], payload["manifest"]
     name = d["files"]["sidecar"]["name"]
@@ -425,7 +428,7 @@ def prepare_official(layout, package_dir, allow_older=False):
               "official": {"sequence": d["sequence"], "data_version": d["data_version"],
                            "release_tag": d["release_tag"], "descriptor_sha256": desc_sha,
                            "signing_key_id": d["signing_key_id"], "older_than_seen": seq["older"],
-                           "high_water_before": seq["high_water_before"]}}
+                           "high_water_before": seq["high_water_before"], "software": sw}}
     v = d["data_version"]
     msg = (MESSAGES["PREPARED_OFFICIAL_OLDER"] % v if seq["older"] else
            MESSAGES["PREPARED_OFFICIAL_REPLACES"] % v if record["consent_required"] else
@@ -461,6 +464,7 @@ def load_prepared(layout, prepid):
                    error="%s: %s" % (type(e).__name__, str(e)[:200]))
     if rec["workflow"] == "official":
         d = official.reverify_staged(desc_bytes, sig, {"master": txt, "manifest": manifest, "sidecar": body})
+        rec["_accepted_profiles"] = list(d["compatible_authority_profiles"])
         if sha(desc_bytes) != rec["official"]["descriptor_sha256"] or d["files"]["sidecar"]["name"] != c["sidecar"]:
             raise Stop("REFUSED", "PREPARE_AGAIN", reason="prepared official record does not match its descriptor")
     return rec, body, manifest, txt
@@ -483,6 +487,11 @@ def install(layout, prepid, confirm_sha, accept_replacement=False):
                 raise Stop("REFUSED", "SOURCE_CHANGED", **e.details)
             if sha(now) != rec["source"]["sha256"]:
                 raise Stop("REFUSED", "SOURCE_CHANGED", reason="chosen TXT changed since preparation")
+        # L-5 (owner-approved correction, 2026-10-18): installing data of any workflow requires a verified,
+        # supported Character Tools installation, re-verified here even if preparation checked earlier.
+        # A valid TXT establishes valid data, not that the installed software can consume it.
+        res["software"] = software.verify_installation(
+            layout, set(rec["_accepted_profiles"]) if rec["workflow"] == "official" else None)
         if rec["consent_required"] and not accept_replacement:
             raise Stop("REFUSED", "NEEDS_CONSENT", reason="replacement not confirmed")
         if kind == "rebuild":

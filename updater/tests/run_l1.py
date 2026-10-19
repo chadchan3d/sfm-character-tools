@@ -194,7 +194,11 @@ def inst_id(case):
     return hashlib.sha256(case.encode("utf-8")).hexdigest()[:10]
 
 
-def make_install(case, master="G1", gens=("g1",), legacy_lock=True, manifest="g1", depth_pad=0, base=None):
+def make_install(case, master="G1", gens=("g1",), legacy_lock=True, manifest="g1", depth_pad=0, base=None,
+                 software=None):
+    """A scratch installation. Unless software=False, it also carries the qualified Character Tools
+    software files and their test-signed inventory under usermod\\scripts (L-5: data of every workflow
+    is installed only into a verified software installation)."""
     base = base or os.path.join(WORK, "i", inst_id(case))
     if depth_pad:
         base = os.path.join(base, *(["p" * 40] * depth_pad))
@@ -208,7 +212,52 @@ def make_install(case, master="G1", gens=("g1",), legacy_lock=True, manifest="g1
     if legacy_lock:
         wbytes(os.path.join(cfg, "sfm_shared_authority", "publisher.lock"), b"")
     wmkdirs(os.path.join(cfg, "sfm_character_tools_updater", "transactions"))
+    if software is None:
+        software = True
+    if software:
+        install_software(os.path.dirname(cfg), software if isinstance(software, str) else "signed_a")
     return cfg
+
+
+SOFTWARE_SPEC = os.path.join(UPDATER, "release_tools", "character_tools_software_v1.json")
+SOFTWARE_PRODUCER = os.path.join(UPDATER, "release_tools", "make_software_inventory.py")
+INVENTORY_REL = os.path.join("scripts", "sfm", "mainmenu", "ChadChan3D", "sfm_character_tools_inventory")
+
+
+def software_dir(*p):
+    return os.path.join(RUN, "software", *p)
+
+
+def ensure_software():
+    """Stage the qualified software from the repository (refusing non-qualified bytes) and sign its
+    inventory with the per-run TEST key test_a (and, for refusal cases, test_b)."""
+    if os.path.exists(software_dir("signed_a", "sfm_character_tools_inventory.json")):
+        return
+    ensure_keys()
+    guard(software_dir("usermod"))
+
+    def run(*args):
+        cp = subprocess.run([PY3, "-E", "-s", "-B", "-X", "pycache_prefix=" + NOPYC, SOFTWARE_PRODUCER] + list(args),
+                            capture_output=True, text=True, env=ENV, cwd=os.path.join(RUN, "tmp"), timeout=600)
+        if cp.returncode != 0:
+            raise RuntimeError("software producer failed: %s" % cp.stderr[-800:])
+        return json.loads(cp.stdout.strip().splitlines()[-1])
+    run("stage", "--spec", SOFTWARE_SPEC, "--out", software_dir("usermod"))
+    for k in ("a", "b"):
+        run("sign", "--spec", SOFTWARE_SPEC, "--root", software_dir("usermod"), "--software-version", "1.0.0-test",
+            "--private", keyfile("test_" + k, "pem"), "--out", software_dir("signed_" + k))
+
+
+def install_software(usermod, signed="signed_a"):
+    ensure_software()
+    src = software_dir("usermod")
+    for dp, dn, fn in os.walk(src):
+        for n in fn:
+            rel = os.path.relpath(os.path.join(dp, n), src)
+            wcopy(os.path.join(dp, n), os.path.join(usermod, rel))
+    if signed:
+        for ext in (".json", ".sig"):
+            wcopy(software_dir(signed, "sfm_character_tools_inventory" + ext), os.path.join(usermod, INVENTORY_REL + ext))
 
 
 STAGING_PREFIX = "sfm_character_tools_updater\\staging\\"
@@ -358,11 +407,13 @@ KEEP = ("process_status", "noop_verification", "transactions_checked", "correspo
         "official", "source", "destination",
         # L-3
         "network", "offer", "releases", "installed_release", "older_release", "download", "high_water",
-        "newer_needs_newer_updater", "conflicting_sequences", "releases_listed", "data_releases", "repository")
+        "newer_needs_newer_updater", "conflicting_sequences", "releases_listed", "data_releases", "repository",
+        # L-4R / L-5
+        "user_backup", "software")
 
 
 def run_op(case, step, args, cfg, stop_at=None, action="go", timeout=900, barrier_timeout=None,
-           before_go=None, inject=None, trust=False, net=False, net_timeout=None, net_base=None):
+           before_go=None, inject=None, trust=True, net=False, net_timeout=None, net_base=None):
     """action: go | kill | eof | badtoken | timeout | callable(name)->'go'|'kill'."""
     out = os.path.join(WORK, "results", "ops", "%s__%s.json" % (case, step))
     guard(out)
@@ -1745,16 +1796,17 @@ def group_W():
         steps.append({"step": k, "rc": cp.returncode, "stdout": cp.stdout.strip()[-200:], **jload(outs[k])})
     real1 = PSTAT()
     if real0[0] == real1[0] == "CLEAR":
-        ok, d = final_is(cfg, ("G3", "g3"))
-        sel_ok, sel = select_ok(cfg, "g3")
+        ok, d = final_is(cfg, ("G3", "g1"))
+        sel = None
+        from sfm_character_tools_updater.messages import MESSAGES as M_
         v = (steps[0]["outcome"] == "STATUS" and steps[0]["correspondence"]["ok"] is False
-             and steps[1]["outcome"] == "PREPARED" and steps[2]["outcome"] == "COMPLETE"
-             and steps[2]["correspondence"]["ok"] is True and "trace" not in steps[2]
-             and steps[2]["post_install_process_status"][0] == "CLEAR" and steps[2]["stdout"] == "RESULT COMPLETE"
-             and steps[3]["correspondence"]["ok"] is True and steps[3]["recovery_needed"] is False
-             and steps[4]["outcome"] == "OK" and ok and sel_ok)
-        why = ("product worker, real query CLEAR: status (needs rebuild) -> prepare-rebuild -> install COMPLETE "
-               "(correspondence verified, no trace) -> status consistent -> recover OK; exact G3; Py2.7 selector G3")
+             and steps[1]["outcome"] == "PREPARED" and steps[2]["outcome"] == "REFUSED"
+             and steps[2].get("message") == M_["SOFTWARE_UNVERIFIED"] and "trace" not in steps[2]
+             and steps[2]["stdout"] == "RESULT REFUSED" and steps[3]["recovery_needed"] is False
+             and steps[4]["outcome"] in ("OK", "NOTHING_TO_RECOVER") and ok and not txdirs(cfg))
+        why = ("product worker, real query CLEAR: status (needs rebuild) -> prepare-rebuild PREPARED -> install REFUSED "
+               "'couldn't verify the installed Character Tools' (the shipping worker trusts no key, so the test-signed "
+               "inventory cannot verify; L-5 correction) -> nothing changed -> recover nothing to do")
     elif real0[0] == real1[0] == "RUNNING":
         ok, d = final_is(cfg, ("G3", "g1"))
         sel = None
@@ -2807,7 +2859,7 @@ def group_W4():
     real1 = PSTAT()
     v = (all(x["net"] == [] for x in steps) and steps[3]["outcome"] == "REFUSED"
          and "isn't signed" in (steps[3]["message"] or "")
-         and steps[4]["outcome"] in (("COMPLETE",) if real0[0] == real1[0] == "CLEAR" else ("REFUSED",))
+         and steps[4]["outcome"] == "REFUSED"
          and real0[0] == real1[0] and real0[0] in ("CLEAR", "RUNNING"))
     R.append(finalize_case(nm, cfg, steps, "PASS" if v else "FAIL",
                            "shipping worker: status, prepare-rebuild, prepare-import, prepare-official (test-signed -> "
@@ -2896,11 +2948,11 @@ def group_W4():
                          "print(sorted(m for m in sys.modules if m.split('.')[0] in %r))" % sorted(netmods)],
                         capture_output=True, text=True, env=ENV, cwd=UPDATER, timeout=120)
     wsrc = open(os.path.join(pkg, "worker.py"), encoding="utf-8").read()
-    v = (users == {"discovery.py": ["http", "ssl", "urllib"]} and cp.stdout.strip() == "[]"
+    v = (users == {"discovery.py": ["http", "ssl", "urllib"], "runtime_check.py": ["ssl"]} and cp.stdout.strip() == "[]"
          and "from . import discovery" in wsrc and "\nfrom . import discovery" not in wsrc)
     R.append(finalize_case(nm, None, [{"importers": users, "worker_import_net_modules": cp.stdout.strip()}],
                            "PASS" if v else "FAIL",
-                           "only discovery.py imports network modules; importing the worker loads none; discovery is "
+                           "only discovery.py imports network modules (runtime_check uses ssl only to read the trust store); importing the worker loads none; discovery is "
                            "imported only inside the check/download dispatch" if v else "unexpected %s %s" % (
                                users, cp.stdout)))
     return R
@@ -2912,7 +2964,7 @@ def alive(pid):
     return ('"%d"' % pid) in cp.stdout
 
 
-def test_worker_argv(inject=None, trust=False, net=False, hold=None, marker=None):
+def test_worker_argv(inject=None, trust=True, net=False, hold=None, marker=None):
     argv = [PY3, "-E", "-s", "-B", "-X", "pycache_prefix=" + NOPYC, TEST_WORKER, "--token", TOKEN,
             "--scratch-root", RUN, "--forbid", A.game]
     inject = dict(inject or {})
@@ -3603,8 +3655,10 @@ def group_U():
     real1 = PSTAT()
     argv0 = supervisor.default_worker_argv()
     if real0[0] == real1[0] == "CLEAR":
-        ok, d = final_is(cfg, ("G3", "g3"))
-        v = v1["heading"] == "Character Tools data updated" and ok
+        from sfm_character_tools_updater.messages import MESSAGES as M_
+        ok, d = final_is(cfg, ("G3", "g1"))
+        v = (v1["kind"] == "warning" and v1["text"] == M_["SOFTWARE_UNVERIFIED"] and ok and not txdirs(cfg)
+             and "success" not in v1["kind"])
     else:
         v = v1["screen"] == "wait"
     v = v and (argv0[-2:] == ["-m", "sfm_character_tools_updater.worker"] and "test_worker" not in " ".join(argv0)
@@ -3653,8 +3707,11 @@ def group_U():
          and gapp.REMINDER == "Close SFM before updating its animation-group TXT or Character Tools data."
          and gapp.FOLDER_PICKER_TITLE == "Select your SourceFilmmaker folder"
          and "initialdir=sfm_folder(self.cfg)" in src_ and "including any changes" not in src_
-         and "App(root, installations=detect_installations())" in main_src and "worker_argv" not in main_src
-         and imports <= {"json", "os", "re", "subprocess", "tkinter", "..", "..messages", "ctypes", "winreg"}
+         and "App(root, installations=startup_installations(sys.argv[1:]))" in main_src and "worker_argv" not in main_src
+         and gapp.startup_installations(["--trust-key", "x"]) == gapp.detect_installations()
+         and gapp.startup_installations(["--sfm-folder", os.path.dirname(os.path.dirname(os.path.dirname(cfg24)))])[0]
+         == os.path.normpath(cfg24)
+         and imports <= {"json", "os", "re", "subprocess", "sys", "tkinter", "..", "..messages", "ctypes", "winreg"}
          and cp.stdout.strip() == "[]" and all(c.returncode == 2 for c in cps))
     R.append(finalize_case(nm, None, [{"imports": sorted(imports), "gui_import_modules": cp.stdout.strip(),
                                        "worker_rc": [c.returncode for c in cps]}], "PASS" if v else "FAIL",
@@ -3665,9 +3722,461 @@ def group_U():
     return R
 
 
+# ------------------------------------------------------------------ L-5: compatibility profile, signed inventory, package
+def software_variant(name, mutate=None, sign_key="test_a", raw=None, drop_sig=False):
+    """A signed-inventory variant under software_dir(name): the test_a inventory with `mutate`
+    applied, re-signed with `sign_key` (or the original signature kept when sign_key is None)."""
+    d = software_dir(name)
+    if os.path.exists(d):
+        return name
+    base = software_dir("signed_a", "sfm_character_tools_inventory.json")
+    inv = json.load(open(base, encoding="utf-8"))
+    if mutate:
+        mutate(inv)
+    data = raw(inv) if raw else (json.dumps(inv, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n").encode()
+    wbytes(os.path.join(d, "sfm_character_tools_inventory.json"), data)
+    if sign_key is None:
+        wcopy(software_dir("signed_a", "sfm_character_tools_inventory.sig"), os.path.join(d, "sfm_character_tools_inventory.sig"))
+    elif not drop_sig:
+        producer("sign", "--descriptor", os.path.join(d, "sfm_character_tools_inventory.json"), "--private",
+                 keyfile(sign_key, "pem"), "--out", os.path.join(d, "sfm_character_tools_inventory.sig"))
+    return name
+
+
+def frozen_bundle():
+    # Per run label: every run copies the bundle it is given into its own clean folder.
+    return os.path.join(WORK, "clean", "SFM Control Group Updater")
+
+
+CLEAN_ENV = None
+
+
+def frozen_env():
+    windir = os.environ.get("SystemRoot", r"C:\\Windows")
+    return {"SystemRoot": windir, "WINDIR": windir, "TEMP": os.path.join(RUN, "tmp"), "TMP": os.path.join(RUN, "tmp"),
+            "PATH": os.pathsep.join([os.path.join(windir, "System32"), windir]),
+            "USERPROFILE": os.environ.get("USERPROFILE", ""), "LOCALAPPDATA": os.environ.get("LOCALAPPDATA", ""),
+            "APPDATA": os.environ.get("APPDATA", ""), "SystemDrive": os.environ.get("SystemDrive", "C:"),
+            "COMPUTERNAME": os.environ.get("COMPUTERNAME", ""), "USERNAME": os.environ.get("USERNAME", "")}
+
+
+def frozen_worker(nm, step, args, cfg, extra_env=None):
+    out = os.path.join(WORK, "results", "ops", "%s__%s.json" % (nm, step))
+    guard(out)
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    cwd = os.path.join(WORK, "clean_cwd")
+    os.makedirs(cwd, exist_ok=True)
+    env = frozen_env()
+    env.update(extra_env or {})
+    cp = subprocess.run([os.path.join(frozen_bundle(), "sct-updater-worker.exe"), args[0], "--installation", cfg,
+                         "--result", out] + list(args[1:]), capture_output=True, text=True, env=env, cwd=cwd,
+                        timeout=900, creationflags=0x08000000)
+    r = jload(out) if os.path.exists(out) else {}
+    r.pop("trace", None)
+    r["_rc"] = cp.returncode
+    r["_stderr"] = cp.stderr[-600:]
+    return r
+
+
+def under_dir(path, root):
+    return norm(path) == norm(root) or norm(path).startswith(norm(root) + "\\")
+
+
+def group_P():
+    """L-5: authority profile, signed installed-software inventory (accept and refuse) and the packaged
+    one-folder application run from a clean directory."""
+    R = []
+    from sfm_character_tools_updater import candidate, official as off
+    from sfm_character_tools_updater.compat import inventory as inv_mod, profile as prof
+    ensure_packages()
+    ensure_software()
+
+    # P1 profile, pins and qualified software identities
+    nm = "P1_profile_pins_and_qualified_software"
+    spec = json.load(open(SOFTWARE_SPEC, encoding="utf-8"))
+    pins_ok = set(candidate.PINS.values()) == (set(prof.PROFILE_1["compiler"].values()) | {
+        v for k, v in prof.PROFILE_1["validator_provider"].items() if k.endswith(".py")})
+    staged = {f["path"]: sha_file(software_dir("usermod", *f["path"].split("/"))) for f in spec["files"]}
+    signed = json.load(open(software_dir("signed_a", "sfm_character_tools_inventory.json"), encoding="utf-8"))
+    v = (pins_ok and prof.contract_sha256(prof.PROFILE_1) == prof.PROFILE_SHA256["sct-authority-profile-1"]
+         and len(spec["files"]) == 31 and all(staged[f["path"]] == f["sha256"] for f in spec["files"])
+         and {f["role"] for f in spec["files"]} >= set(prof.REQUIRED_ROLES)
+         and signed["profile_contract_sha256"] == prof.PROFILE_SHA256["sct-authority-profile-1"]
+         and signed["runtime_api_version"] == "1.0.0-b2a"
+         and signed["runtime_build_id"] == "package-boundary-corrected-2026-09-22"
+         and not any(f["path"].endswith((".pyc", ".txt", ".json", ".sfmsidecar")) for f in signed["files"]))
+    R.append(finalize_case(nm, None, [{"profile_sha256": prof.PROFILE_SHA256, "files": len(spec["files"])}],
+                           "PASS" if v else "FAIL",
+                           "profile pins equal the updater's pins; 31 qualified software files staged byte-exact; all "
+                           "required roles; the signed inventory names profile, contract hash, runtime API/build; no "
+                           "mutable or bytecode files listed" if v else "unexpected"))
+
+    def official_case(nm, why, expect_key=None, variant="signed_a", alter=None, install=False):
+        cfg = make_install(nm, software=variant or False)
+        if variant == "":
+            install_software(os.path.dirname(cfg), signed=None)
+        if alter:
+            alter(os.path.dirname(cfg))
+        before = tree(cfg, include_staging=True)
+        st = official_prep(nm, "prep", cfg, pkgdir("G3_s5"))
+        steps = [st]
+        if expect_key is None:
+            ok_ = st["outcome"] == "PREPARED" and (st.get("official") or {}).get("software", {}).get("files") == 31
+            if install and ok_:
+                steps.append(install_fn(nm, "install", cfg, st["prepid"], st["confirm_sha"], accept=True, trust=True))
+                fin, d = final_is(cfg, ("G3", "g3"))
+                ok_ = steps[-1]["outcome"] == "COMPLETE" and fin and (steps[-1].get("software") or {}).get(
+                    "authority_profile") == "sct-authority-profile-1"
+        else:
+            ok_ = (st["outcome"] == "REFUSED" and st.get("message") == MESSAGES_[expect_key]
+                   and tree(cfg, include_staging=True) == before)
+        R.append(finalize_case(nm, cfg, steps, "PASS" if ok_ else "FAIL", why if ok_ else "unexpected %s %s %s" % (
+            outcomes(steps), st.get("message"), st.get("details"))))
+        return cfg
+
+    from sfm_character_tools_updater.messages import MESSAGES as MESSAGES_
+    install_fn = install
+    official_case("P2_qualified_installation_accepted", "qualified test installation (31 files, test-signed inventory): "
+                  "official prepared with the verified software summary, installed exact G3, re-verified at install",
+                  install=True)
+
+    def change_cpm(u):
+        p = os.path.join(u, "scripts", "ChadChan3D_CPM", "SFM_Character_Preset_Manager.py")
+        data = open(p, "rb").read()
+        os.remove(p)
+        wbytes(p, data + b"\n# local change\n")
+
+    def drop_normalizer(u):
+        os.remove(os.path.join(u, "scripts", "sfm", "mainmenu", "ChadChan3D", "Rebuild_Control_Groups_Normalizer.py"))
+
+    def flip_sig(u):
+        p = os.path.join(u, INVENTORY_REL + ".sig")
+        data = bytearray(open(p, "rb").read())
+        os.remove(p)
+        data[0] ^= 1
+        wbytes(p, bytes(data))
+    official_case("P3a_changed_consumer_refused", "changed installed CPM app -> SOFTWARE_MODIFIED; nothing written",
+                  "SOFTWARE_MODIFIED", alter=change_cpm)
+    official_case("P3b_missing_required_file_refused", "Normalizer removed -> SOFTWARE_MODIFIED; nothing written",
+                  "SOFTWARE_MODIFIED", alter=drop_normalizer)
+    official_case("P3c_invalid_signature_refused", "inventory signature altered -> SOFTWARE_UNVERIFIED; nothing written",
+                  "SOFTWARE_UNVERIFIED", alter=flip_sig)
+    official_case("P3d_altered_inventory_refused", "inventory bytes changed under the original signature -> "
+                  "SOFTWARE_UNVERIFIED", "SOFTWARE_UNVERIFIED",
+                  variant=software_variant("v_altered", lambda d: d.update(software_version="9.9.9"), sign_key=None))
+    official_case("P3e_unsupported_profile_refused", "validly signed inventory naming an unimplemented profile -> "
+                  "SOFTWARE_UNSUPPORTED", "SOFTWARE_UNSUPPORTED",
+                  variant=software_variant("v_profile9", lambda d: d.update(authority_profile="sct-authority-profile-9")))
+    official_case("P3f_profile_contract_mismatch_refused", "signed inventory with the profile ID but a different contract "
+                  "hash -> SOFTWARE_UNSUPPORTED", "SOFTWARE_UNSUPPORTED",
+                  variant=software_variant("v_contract", lambda d: d.update(profile_contract_sha256="0" * 64)))
+    official_case("P3g_missing_inventory_refused", "software present but no inventory -> SOFTWARE_UNVERIFIED",
+                  "SOFTWARE_UNVERIFIED", variant="")
+    official_case("P3h_untrusted_signer_refused", "inventory signed by an untrusted key (test_b) -> SOFTWARE_UNVERIFIED",
+                  "SOFTWARE_UNVERIFIED", variant="signed_b")
+    official_case("P3i_missing_role_refused", "signed inventory without the Normalizer role -> SOFTWARE_UNSUPPORTED",
+                  "SOFTWARE_UNSUPPORTED", variant=software_variant(
+                      "v_norole", lambda d: d.update(files=[f for f in d["files"] if f["role"] != "normalizer"])))
+    official_case("P3j_path_traversal_refused", "signed inventory with a '..' path -> SOFTWARE_UNVERIFIED",
+                  "SOFTWARE_UNVERIFIED", variant=software_variant(
+                      "v_traversal", lambda d: d["files"][0].update(path="scripts/../../cfg/x.py")))
+    official_case("P3k_runtime_mismatch_refused", "signed inventory with a different runtime build -> "
+                  "SOFTWARE_UNSUPPORTED", "SOFTWARE_UNSUPPORTED",
+                  variant=software_variant("v_runtime", lambda d: d.update(runtime_build_id="other-build")))
+
+    def mutable_noise(u):
+        md = os.path.join(u, "scripts", "sfm", "mainmenu", "ChadChan3D")
+        wbytes(os.path.join(md, "cpm_authority_adapter.pyc"), b"\x03\xf3\r\nstale bytecode")
+        wbytes(os.path.join(u, "scripts", "ChadChan3D_CPM", "presets", "library.json"), b"{}")
+        wbytes(os.path.join(u, "cfg", "SFM_Character_Preset_Manager.log"), b"log")
+    official_case("P4_mutable_data_not_checked", "bytecode, presets and logs added: not inventoried, official prepared",
+                  alter=mutable_noise)
+
+    # P5 install-time re-check: the software changes after preparation
+    nm = "P5_install_time_recheck"
+    cfg = make_install(nm)
+    st = official_prep(nm, "prep", cfg, pkgdir("G3_s5"))
+    change_cpm(os.path.dirname(cfg))
+    act0 = active_set(tree(cfg))
+    s2 = install(nm, "install", cfg, st.get("prepid", ""), st.get("confirm_sha", ""), accept=True, trust=True)
+    v = (st["outcome"] == "PREPARED" and s2["outcome"] == "REFUSED" and s2.get("message") == MESSAGES_["SOFTWARE_MODIFIED"]
+         and active_set(tree(cfg)) == act0 and not txdirs(cfg))
+    R.append(finalize_case(nm, cfg, [st, s2], "PASS" if v else "FAIL",
+                           "software changed after preparation -> install refused SOFTWARE_MODIFIED before any "
+                           "transaction; installed files unchanged" if v else "unexpected %s" % outcomes([st, s2])))
+
+    # P6 (owner-approved correction): the local workflows require the same verified software before installing
+    def local_case(nm, why, kind, variant="signed_a", alter=None, after_prepare=None, expect=None, noise=False):
+        """kind: rebuild (Update Using SFM's TXT, G3 TXT with G1 data) | import (Choose Another TXT File, custom G3 TXT
+        over G1). expect None -> installed; else the refusal key, with nothing installed and the TXT unchanged."""
+        if kind == "rebuild":
+            cfg = make_install(nm, master="G3", gens=("g1",), software=variant or False)
+            prep_args, confirm, want = ["prepare-rebuild"], SHA["G3"], ("G3", "g3")
+        else:
+            cfg = make_install(nm, software=variant or False)
+            prep_args, confirm, want = ["prepare-import", "--source", G3_TXT], SHA["G1"], ("G3", "g3")
+        u = os.path.dirname(cfg)
+        if variant == "":
+            install_software(u, signed=None)
+        if alter:
+            alter(u)
+        if noise:
+            mutable_noise(u)
+        pr = run_op(nm, "prep", prep_args, cfg)
+        if after_prepare:
+            after_prepare(u)
+        act0 = active_set(tree(cfg))
+        master_sha = sha_file(os.path.join(cfg, "sfm_defaultanimationgroups.txt"))
+        args_ = ["install", "--prepared", pr.get("prepid", ""), "--confirm-sha", pr.get("confirm_sha", "")]
+        if kind == "import":
+            args_ += ["--accept-replacement", "--backup-txt"]  # exactly as the GUI's Replace Groups
+        st = run_op(nm, "install", args_, cfg)
+        steps = [pr, st]
+        if expect is None:
+            fin, d = final_is(cfg, want)
+            ok_ = (pr["outcome"] == "PREPARED" and st["outcome"] == "COMPLETE" and fin
+                   and (st.get("software") or {}).get("files") == 31
+                   and (kind != "import" or list((backups(cfg) or {}).values()) == [SHA["G1"]]))
+        else:
+            ok_ = (pr["outcome"] == "PREPARED" and st["outcome"] == "REFUSED" and st.get("message") == MESSAGES_[expect]
+                   and active_set(tree(cfg)) == act0 and not txdirs(cfg) and backups(cfg) is None
+                   and sha_file(os.path.join(cfg, "sfm_defaultanimationgroups.txt")) == master_sha)
+        R.append(finalize_case(nm, cfg, steps, "PASS" if ok_ else "FAIL", why if ok_ else "unexpected %s %s %s" % (
+            outcomes(steps), st.get("message"), st.get("details"))))
+
+    for kind, label in (("rebuild", "Update Using SFM's TXT"), ("import", "Choose Another TXT File (custom TXT)")):
+        k = kind[0]
+        local_case("P6%s1_%s_verified_installs" % (k, kind), "%s on verified software: prepared and installed, software "
+                   "re-verified at install" % label, kind)
+        local_case("P6%s2_%s_unverified_refused" % (k, kind), "%s with no software inventory: compiled and validated "
+                   "(preparation allowed), installation refused SOFTWARE_UNVERIFIED; nothing installed; TXT unchanged"
+                   % label, kind, variant="", expect="SOFTWARE_UNVERIFIED")
+        local_case("P6%s3_%s_modified_refused" % (k, kind), "%s with a modified CPM program file: installation refused "
+                   "SOFTWARE_MODIFIED; nothing installed; TXT unchanged" % label, kind, alter=change_cpm,
+                   expect="SOFTWARE_MODIFIED")
+        local_case("P6%s4_%s_changed_after_prepare" % (k, kind), "%s: software modified between preparation and "
+                   "installation -> refused SOFTWARE_MODIFIED at install" % label, kind, after_prepare=change_cpm,
+                   expect="SOFTWARE_MODIFIED")
+        local_case("P6%s5_%s_unsupported_profile_refused" % (k, kind), "%s with a validly signed inventory naming an "
+                   "unimplemented profile -> refused SOFTWARE_UNSUPPORTED" % label, kind, variant="v_profile9",
+                   expect="SOFTWARE_UNSUPPORTED")
+        local_case("P6%s6_%s_mutable_data_ignored" % (k, kind), "%s: presets, logs and bytecode added (and a custom TXT) "
+                   "do not invalidate the inventory; installed" % label, kind, noise=True)
+
+    # P6r recovery of an already-started transaction is not gated by the software check
+    nm = "P6r_recovery_not_gated"
+    cfg = make_install(nm, master="G3", gens=("g1",))
+    st = activate(nm, "interrupt", cfg, "rebuild", SHA["G3"], stop_at="act_moved_forward_0", action="kill")
+    change_cpm(os.path.dirname(cfg))
+    rec = recover(nm, "recover", cfg)
+    fin, d = final_is(cfg, ("G3", "g3"))
+    st2 = status(nm, "status", cfg)
+    v = (st["killed"] and rec["outcome"] == "OK" and fin and st2.get("recovery_needed") is False)
+    R.append(finalize_case(nm, cfg, [st, rec, st2], "PASS" if v else "FAIL",
+                           "install interrupted mid-transaction, then a program file changed: recovery still runs and "
+                           "completes the exact set (not gated by the software check)" if v else "unexpected %s" % (
+                               outcomes([st, rec, st2]))))
+
+    # ---------------- packaged application (clean directory) ----------------
+    src_bundle = A.bundle
+    if not src_bundle or not os.path.isdir(src_bundle):
+        R.append(finalize_case("P7_packaged_bundle_present", None, [], "FAIL", "no --bundle given"))
+        return R
+    if not os.path.exists(frozen_bundle()):
+        guard(frozen_bundle())
+        shutil.copytree(src_bundle, frozen_bundle())
+    clean = frozen_bundle()
+
+    # P7 runtime closure from a clean directory (no development Python on PATH; PYTHONPATH/PYTHONHOME ignored)
+    nm = "P7_runtime_closure_clean_directory"
+    cfg = make_install(nm)
+    rc = frozen_worker(nm, "runtime", ["runtime-check"], cfg)
+    rc2 = frozen_worker(nm, "runtime_hostile_env", ["runtime-check"], cfg, extra_env={
+        "PYTHONPATH": os.path.join(REPO, "tools") + os.pathsep + UPDATER, "PYTHONHOME": os.path.dirname(PY3),
+        "PATH": os.pathsep.join([os.path.dirname(PY3), frozen_env()["PATH"]])})
+    def closure_ok(r):
+        ch = r.get("checks") or {}
+        return (r.get("outcome") == "RUNTIME_OK" and r.get("frozen") is True and r.get("version") == PRODUCT_VERSION()
+                and under_dir(r.get("executable", ""), clean)
+                and all(under_dir(p, clean) for p in r.get("sys_path", []) if p)
+                and all(p == "<frozen>" or under_dir(p, clean) for p in r.get("module_origins", []))
+                and under_dir(ch["pinned_dependencies"]["deps_root"], clean)
+                and ch["ed25519"]["rfc8032_test1_verifies"] and ch["ed25519"]["rejects_altered_message"]
+                and under_dir(ch["ed25519"]["location"], clean)
+                and ch["tls"]["ca_certificates"] > 0 and ch["tls"]["ok"] and ch["profile_matches_pins"]["ok"])
+    v = closure_ok(rc) and closure_ok(rc2)
+    R.append(finalize_case(nm, cfg, [rc, rc2], "PASS" if v else "FAIL",
+                           "packaged worker from a clean copy: frozen 0.1.0; every sys.path entry and loaded module from "
+                           "the bundle (also with PYTHONPATH/PYTHONHOME/PATH pointing at the development Python); pinned "
+                           "sources verified in the bundle; Ed25519 RFC 8032 vector; TLS trust store loaded" if v else
+                           "unexpected %s / %s" % (rc.get("outcome"), rc.get("checks"))))
+
+    # P8 canonical compiler parity and determinism with the packaged dependencies
+    nm = "P8_packaged_compiler_parity"
+    cfg = make_install(nm, master="G3", gens=("g1",))
+    a1 = frozen_worker(nm, "prep_rebuild_1", ["prepare-rebuild"], cfg)
+    a2 = frozen_worker(nm, "prep_rebuild_2", ["prepare-rebuild"], cfg)
+    cfg2 = make_install(nm + "_g1", master="G3", gens=("g3",), manifest="g3")
+    a3 = frozen_worker(nm, "prep_import_g1", ["prepare-import", "--source", G1_TXT], cfg2)
+
+    def staged(cfg_, r):
+        d_ = os.path.join(cfg_, "sfm_character_tools_updater", "staging", r.get("prepid", "x"))
+        c = r.get("candidate") or {}
+        return (sha_file(os.path.join(d_, c.get("sidecar", "x"))) if os.path.exists(os.path.join(d_, c.get("sidecar", "x")))
+                else None, sha_file(os.path.join(d_, "manifest.json")) if os.path.exists(os.path.join(d_, "manifest.json"))
+                else None)
+    s1_, s2_, s3_ = staged(cfg, a1), staged(cfg, a2), staged(cfg2, a3)
+    v = (a1.get("outcome") == a2.get("outcome") == a3.get("outcome") == "PREPARED"
+         and s1_ == s2_ == (GEN["g3"]["sidecar_sha"], GEN["g3"]["manifest_sha"])
+         and s3_ == (GEN["g1"]["sidecar_sha"], GEN["g1"]["manifest_sha"]))
+    R.append(finalize_case(nm, cfg, [a1, a2, a3], "PASS" if v else "FAIL",
+                           "packaged compile of G3 (twice) and G1 reproduces the reference sidecars and manifests "
+                           "byte-for-byte (G1 = live bcd97641/d810d648)" if v else "unexpected %s %s %s" % (s1_, s2_, s3_)))
+
+    # P9 the three workflows through the packaged (shipping) worker, real process query
+    nm = "P9_packaged_workflows"
+    real0 = PSTAT()
+    cfg = make_install(nm, master="G3", gens=("g1",))
+    w = [frozen_worker(nm, "prep_rebuild", ["prepare-rebuild"], cfg)]
+    w.append(frozen_worker(nm, "install_rebuild", ["install", "--prepared", w[0].get("prepid", ""), "--confirm-sha",
+                                                   w[0].get("confirm_sha", "")], cfg))
+    ok_r, d = final_is(cfg, ("G3", "g3"))
+    cfg2 = make_install(nm + "_import")
+    w.append(frozen_worker(nm, "prep_import", ["prepare-import", "--source", G3_TXT], cfg2))
+    w.append(frozen_worker(nm, "install_import", ["install", "--prepared", w[2].get("prepid", ""), "--confirm-sha",
+                                                  w[2].get("confirm_sha", ""), "--accept-replacement", "--backup-txt"],
+                           cfg2))
+    ok_i, d = final_is(cfg2, ("G3", "g3"))
+    bk = (w[3].get("user_backup") or {})
+    cfg3 = make_install(nm + "_official")
+    before3 = tree(cfg3, include_staging=True)
+    w.append(frozen_worker(nm, "prep_official", ["prepare-official", "--package", pkgdir("G3_s5")], cfg3))
+    w.append(frozen_worker(nm, "check_official", ["check-official"], cfg3))
+    real1 = PSTAT()
+    if real0[0] == real1[0] == "CLEAR":
+        ok_r0, d = final_is(cfg, ("G3", "g1"))
+        ok_i0, d = final_is(cfg2, ("G1", "g1"))
+        v = (w[0].get("outcome") == "PREPARED" and w[1].get("outcome") == "REFUSED"
+             and w[1].get("message") == MESSAGES_["SOFTWARE_UNVERIFIED"] and ok_r0 and not txdirs(cfg)
+             and w[2].get("outcome") == "PREPARED" and w[3].get("outcome") == "REFUSED"
+             and w[3].get("message") == MESSAGES_["SOFTWARE_UNVERIFIED"] and ok_i0 and not txdirs(cfg2)
+             and not bk and backups(cfg2) is None
+             and w[4].get("outcome") == "REFUSED" and w[4].get("message") == MESSAGES_["PACKAGE_UNTRUSTED"]
+             and tree(cfg3, include_staging=True) == before3 and w[5].get("outcome") in ("NONE_PUBLISHED",))
+        why = ("packaged shipping worker (real query CLEAR; the product trusts no key yet): Update Using SFM's TXT and "
+               "Choose Another TXT File compile and prepare, then refuse installation because the test-signed software "
+               "inventory cannot be verified (nothing changed, no backup made); Get Published Version refuses a "
+               "test-signed package as unsigned and reads the real release list over TLS -> NONE_PUBLISHED")
+    else:
+        v, why = False, "real process status not CLEAR (%s/%s): inconclusive" % (real0[0], real1[0])
+    R.append(finalize_case(nm, cfg, w, "PASS" if v else "FAIL", why if v else "%s %s" % (
+        why, [(x.get("outcome"), x.get("message")) for x in w])))
+
+    # P10 the packaged worker exposes no test option
+    nm = "P10_packaged_worker_rejects_test_options"
+    cfg = make_install(nm)
+    rcs = []
+    for opt in (["--trust-key", "00" * 32], ["--inject", "process=clear"], ["--hold-at", "x"], ["--net-base", "http://x"],
+                ["--stop-at", "locked"], ["--scratch-root", RUN]):
+        out = os.path.join(WORK, "results", "ops", "%s__%s.json" % (nm, opt[0].strip("-")))
+        guard(out)
+        cp = subprocess.run([os.path.join(clean, "sct-updater-worker.exe"), "status", "--installation", cfg, "--result",
+                             out] + opt, capture_output=True, text=True, env=frozen_env(), timeout=120,
+                            creationflags=0x08000000)
+        rcs.append((opt[0], cp.returncode, os.path.exists(out)))
+    v = all(rc_ == 2 and not ex for o, rc_, ex in rcs)
+    R.append(finalize_case(nm, cfg, [{"rcs": rcs}], "PASS" if v else "FAIL",
+                           "packaged worker rejects --trust-key, --inject, --hold-at, --net-base, --stop-at and "
+                           "--scratch-root (usage error, no result)" if v else "unexpected %s" % rcs))
+
+    # P11 packaged GUI from the clean directory: window, worker in a Job Object, idle close, no orphan
+    nm = "P11_packaged_gui_clean_launch"
+    cfg = make_install(nm)
+    sfm = os.path.dirname(os.path.dirname(os.path.dirname(cfg)))
+    before = tree(cfg, include_staging=True)
+    import ctypes
+    import ctypes.wintypes as wt
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    u32 = ctypes.WinDLL("user32", use_last_error=True)
+    k32.OpenProcess.restype = wt.HANDLE
+    p = subprocess.Popen([os.path.join(clean, "SFM Control Group Updater.exe"), "--sfm-folder", sfm], env=frozen_env(),
+                         cwd=os.path.join(WORK, "clean_cwd"))
+    seen_workers, in_job, titles = set(), [], set()
+    t0 = time.time()
+    while time.time() - t0 < 60:
+        out = subprocess.run(["wmic", "process", "where", "ParentProcessId=%d" % p.pid, "get", "ProcessId,Name",
+                              "/format:csv"], capture_output=True, text=True).stdout
+        for line in out.splitlines():
+            parts = line.strip().split(",")
+            if len(parts) == 3 and parts[1].lower() == "sct-updater-worker.exe" and parts[2].isdigit():
+                wpid = int(parts[2])
+                if wpid not in seen_workers:
+                    seen_workers.add(wpid)
+                    h = k32.OpenProcess(0x1000, False, wpid)
+                    flag = wt.BOOL()
+                    if h and k32.IsProcessInJob(h, None, ctypes.byref(flag)):
+                        in_job.append(bool(flag.value))
+                    if h:
+                        k32.CloseHandle(h)
+
+        @ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
+        def cb(hwnd, lp):
+            pid_ = wt.DWORD()
+            u32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid_))
+            if pid_.value == p.pid and u32.IsWindowVisible(hwnd):
+                buf = ctypes.create_unicode_buffer(256)
+                u32.GetWindowTextW(hwnd, buf, 256)
+                titles.add(buf.value)
+            return True
+        u32.EnumWindows(cb, 0)
+        if "SFM Control Group Updater" in titles and seen_workers and time.time() - t0 > 8:
+            break
+        time.sleep(0.05)
+    subprocess.run(["taskkill", "/PID", str(p.pid)], capture_output=True)
+    try:
+        p.wait(20)
+        exited = True
+    except subprocess.TimeoutExpired:
+        p.kill()
+        exited = False
+    orphans = [w_ for w_ in seen_workers if alive(w_)]
+    v = ("SFM Control Group Updater" in titles and seen_workers and in_job and all(in_job) and exited and not orphans
+         and tree(cfg, include_staging=True) == before)
+    R.append(finalize_case(nm, cfg, [{"titles": sorted(titles), "workers": sorted(seen_workers), "in_job": in_job,
+                                      "exited": exited, "exit_code": p.returncode, "orphans": orphans}],
+                           "PASS" if v else "FAIL",
+                           "packaged GUI from the clean copy (--sfm-folder scratch): window 'SFM Control Group Updater'; "
+                           "its packaged worker ran inside a Job Object; WM_CLOSE when idle exits; no orphan worker; "
+                           "installation unchanged (read-only status)" if v else
+                           "unexpected titles=%s workers=%s in_job=%s exited=%s orphans=%s" % (
+                               titles, seen_workers, in_job, exited, orphans)))
+
+    # P12 bundle contents and identity
+    nm = "P12_bundle_contents"
+    man = json.load(open(A.bundle_manifest, encoding="utf-8")) if A.bundle_manifest else {}
+    files = {f["path"]: f["sha256"] for f in man.get("files", [])}
+    actual = {}
+    for dp, dn, fn in os.walk(clean):
+        for n in fn:
+            actual[os.path.relpath(os.path.join(dp, n), clean).replace("\\", "/")] = sha_file(os.path.join(dp, n))
+    forbidden = [f_ for f_ in actual if any(x in "/" + f_.lower() for x in (
+        "test_worker", "fake_github", "net_audit", "gui_driver", "run_l1", "make_official_package",
+        "make_software_inventory", ".pem", "/tests/"))]
+    deps = {f_: h for f_, h in actual.items() if f_.startswith("_internal/sct_deps/")}
+    v = (files == actual and not forbidden and len(deps) == 9 and set(deps.values()) == set(candidate.PINS.values())
+         and man.get("version") == PRODUCT_VERSION() and not man.get("workstation_path_markers_found_in"))
+    R.append(finalize_case(nm, None, [{"files": len(actual), "identity": man.get("bundle_identity_sha256"),
+                                       "forbidden": forbidden}], "PASS" if v else "FAIL",
+                           "clean copy equals the build manifest (%d files, identity %s); 9 pinned sources exactly; no "
+                           "test or development material; no workstation path markers" % (
+                               len(actual), (man.get("bundle_identity_sha256") or "")[:12]) if v else
+                           "unexpected forbidden=%s deps=%d same=%s" % (forbidden, len(deps), files == actual)))
+    return R
+
+
 GROUPS = {"A": group_A, "B": group_B, "C": group_C, "D": group_D, "E": group_E, "F": group_F, "G": group_G,
           "H": group_H, "I": group_I, "J": group_J, "K": group_K, "N": group_N, "X": group_X, "W": group_W,
-          "M": group_M, "O": group_O, "W3": group_W3, "Q": group_Q, "W4": group_W4, "U": group_U}
+          "M": group_M, "O": group_O, "W3": group_W3, "Q": group_Q, "W4": group_W4, "U": group_U, "P": group_P}
 
 
 def main():
@@ -3682,6 +4191,8 @@ def main():
     ap.add_argument("--label")
     ap.add_argument("--groups")
     ap.add_argument("--outside-target")
+    ap.add_argument("--bundle", help="L-5: the built one-folder application to copy into a clean directory")
+    ap.add_argument("--bundle-manifest", help="L-5: the build's bundle_manifest.json")
     ap.add_argument("--process-default", default="clear",
                     help="process form injected into every test operation that does not set one ('' = real query)")
     A = ap.parse_args()
