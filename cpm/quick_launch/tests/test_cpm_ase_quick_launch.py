@@ -641,8 +641,10 @@ def scenario_lifecycle(env, c):
         watched = len(ctl._watched)
         env.close_editor(parts["editor"])
         waiting_now = ctl.state == "WAITING" and ctl._discovery.isActive() and ctl._editor is None \
-            and ctl._row is None and ctl._button is None
+            and ctl._row is None
         env.pump(1100)
+        # The dead button reference is released on the next discovery tick.
+        waiting_now = waiting_now and ctl._button is None
         cycles.append({
             "attached": attached, "placed": placed, "restore_ticks": restore_ticks, "watched": watched,
             "waiting_after_close": waiting_now, "buttons_after_close": len(env.named(BUTTON_NAME)),
@@ -661,27 +663,22 @@ def scenario_lifecycle(env, c):
       [(x["watched"], x["timers"], x["quit_receivers"]) for x in cycles])
     c("cycles.attachments_counted", ctl.counters["attachments"] == 10, ctl.counters["attachments"])
 
-    # Row lost while the editor survives: back to WAITING, then the surviving
-    # editor is unsupported -> SUSPENDED, quietly, without a retry storm.
+    # Row lost while the editor survives: back to WAITING (quietly, still
+    # polling), then automatic reattachment when a complete toolbar appears.
     parts = env.make_editor()
     env.pump(2100)
     c("row_loss.attached_first", ctl.state == "ATTACHED")
     parts["row"].deleteLater()
     env.flush()
-    c("row_loss.waiting", ctl.state == "WAITING")
-    env.pump(1200)
-    c("row_loss.suspended_unsupported", ctl.state == "SUSPENDED" and ctl.suspend_reason == "unsupported",
-      (ctl.state, ctl.suspend_reason))
-    c("row_loss.one_diagnostic", env.console.count("unsupported Animation Set Editor layout") == 1)
+    c("row_loss.waiting", ctl.state == "WAITING" and ctl._discovery.isActive())
+    env.pump(2200)
+    c("row_loss.still_waiting_quietly", ctl.state == "WAITING" and ctl._discovery.isActive()
+      and env.console.count("isn't supported") == 0, ctl.state)
     events = ctl.counters["filter_events"]
     parts["editor"].resize(400, 900)
     parts["editor"].resize(479, 935)
     c("row_loss.editor_filter_removed", ctl.counters["filter_events"] == events,
       ctl.counters["filter_events"] - events)
-    ticks = ctl.counters["discovery_ticks"]
-    env.pump(2200)
-    c("row_loss.no_retry_storm", ctl.counters["discovery_ticks"] == ticks and not ctl._discovery.isActive())
-    # A deliberate bootstrap rerun rediscovers once.
     bar = CQEditorUpperBarWidget(parts["editor"])
     bar.setGeometry(0, 2, 479, 39)
     plus = CQTabbedToolButton(bar)
@@ -689,31 +686,40 @@ def scenario_lifecycle(env, c):
     plus.setGeometry(2, 1, 40, 32)
     bar.show()
     plus.show()
-    env.autoinit()
-    env.pump(50)
-    c("rerun_after_unsupported.attached", ctl.state == "ATTACHED" and len(env.named(BUTTON_NAME)) == 1)
+    ticks = ctl.counters["discovery_ticks"]
+    env.pump(2100)
+    c("row_loss.reattached_without_rerun", ctl.state == "ATTACHED" and ctl._row is bar
+      and len(env.named(BUTTON_NAME)) == 1 and ctl.counters["discovery_ticks"] - ticks <= 2
+      and not ctl._discovery.isActive())
     env.close_editor(parts["editor"])
     env.pump(1100)
 
-    # Ambiguous: two editors -> SUSPENDED, nothing injected.
+    # Ambiguous: two editors -> WAITING, nothing injected; once one remains,
+    # it is attached automatically.
     first = env.make_editor()
     second = env.make_editor()
     env.pump(1200)
-    c("two_editors.suspended", ctl.state == "SUSPENDED" and not env.named(BUTTON_NAME), ctl.state)
+    c("two_editors.waiting_no_injection", ctl.state == "WAITING" and ctl._discovery.isActive()
+      and not env.named(BUTTON_NAME), ctl.state)
     env.close_editor(second["editor"])
+    env.pump(1200)
+    c("two_editors.one_left_attached", ctl.state == "ATTACHED" and ctl._editor is first["editor"]
+      and len(env.named(BUTTON_NAME)) == 1)
     env.close_editor(first["editor"])
-    env.autoinit()
-    c("two_editors.rerun_waits", ctl.state == "WAITING")
-    # Unsupported: a row with a layout, or without the native Add.
+    env.pump(1100)
+    # Positively unsupported: a row with a layout manager -> SUSPENDED, once.
     with_layout = env.make_editor(layout=True)
     env.pump(1200)
-    c("row_with_layout.suspended", ctl.state == "SUSPENDED" and not env.named(BUTTON_NAME))
+    c("row_with_layout.suspended", ctl.state == "SUSPENDED" and ctl.suspend_reason == "unsupported"
+      and not env.named(BUTTON_NAME))
+    c("row_with_layout.one_actionable_diagnostic", env.console.count("isn't supported") == 1
+      and env.console.count("from the Scripts menu") >= 1)
+    ticks = ctl.counters["discovery_ticks"]
+    env.pump(2200)
+    c("row_with_layout.no_retry_storm", ctl.counters["discovery_ticks"] == ticks and not ctl._discovery.isActive())
     env.close_editor(with_layout["editor"])
     env.autoinit()
-    no_add = env.make_editor(add=False)
-    env.pump(1200)
-    c("row_without_add.suspended", ctl.state == "SUSPENDED" and not env.named(BUTTON_NAME))
-    env.close_editor(no_add["editor"])
+    c("row_with_layout.rerun_waits", ctl.state == "WAITING")
 
     # Shutdown while waiting.
     env.autoinit()
@@ -797,7 +803,8 @@ def scenario_ownership(env, c):
     env.pump(500)
     c("deleted_owned.limit_stops_recreation", ctl._button is None
       and ctl.counters["buttons_created"] == created + 3)
-    c("deleted_owned.limit_one_diagnostic", env.console.count("keeps being removed") == 1)
+    c("deleted_owned.limit_one_diagnostic", env.console.count("removed from the Animation Set Editor toolbar repeatedly") == 1
+      and env.console.count("from the Scripts menu, or run ChadChan3D_CPM_ASE_Button again") == 1)
     c("deleted_owned.no_storm", ctl.counters["layout_runs"] == runs)
     c("deleted_owned.still_attached", ctl.state == "ATTACHED")
 
@@ -999,6 +1006,247 @@ def scenario_launch(env, c):
     c("controller_still_attached", ctl.state == "ATTACHED")
 
 
+def scenario_recreation_policy(env, c):
+    QtCore, QtGui = env.QtCore, env.QtGui
+    env.make_main()
+    parts = env.make_editor()
+    row = parts["row"]
+    env.autoinit()
+    env.pump(50)
+    ctl = env.ctl()
+    base = ctl.counters["buttons_created"]
+    exhausted = "removed from the Animation Set Editor toolbar repeatedly"
+
+    def created():
+        return ctl.counters["buttons_created"] - base
+
+    def kill():
+        ctl._button.deleteLater()
+        env.flush()
+        env.pump(50)
+
+    # CPM's own creation, removal, geometry and visibility never rearm.
+    kill()
+    kill()
+    row.resize(80, 39)
+    env.pump(50)
+    hidden_when_narrow = ctl._button.isHidden()
+    row.resize(479, 39)
+    parts["tools"].move(430, 1)
+    parts["tools"].move(437, 1)
+    env.pump(50)
+    c("own_events.no_rearm", hidden_when_narrow and not ctl._button.isHidden() and ctl._recreations == 2
+      and created() == 2, (hidden_when_narrow, ctl._recreations, created()))
+    kill()
+    kill()
+    c("unchanged.bounded_at_three", ctl._button is None and created() == 3 and not env.named(BUTTON_NAME),
+      created())
+    c("unchanged.one_actionable_message", env.console.count(exhausted) == 1
+      and env.console.count("from the Scripts menu, or run ChadChan3D_CPM_ASE_Button again") == 1)
+    row.resize(470, 39)
+    row.resize(479, 39)
+    parts["tools"].hide()
+    parts["tools"].show()
+    parts["tools"].raise_()
+    env.pump(100)
+    runs = ctl.counters["layout_runs"]
+    env.pump(500)
+    c("unchanged.geometry_visibility_zorder_no_rearm", ctl._button is None and created() == 3)
+    c("unchanged.no_storm", ctl.counters["layout_runs"] == runs and not ctl._discovery.isActive())
+    c("unchanged.no_lockout_state", ctl.state == "ATTACHED" and ctl.suspend_reason is None)
+
+    # A genuine change to the non-CPM toolbar children rearms the full budget.
+    ext = QtGui.QToolButton(row)
+    ext.setObjectName("toolbutton_ext")
+    ext.setGeometry(150, 1, 32, 32)
+    ext.show()
+    env.pump(50)
+    c("structure_change.recovered", ctl._button is not None and ctl._button.isVisible() and created() == 4
+      and clear_of_siblings(row, ctl._button)[0], created())
+    kill()
+    kill()
+    kill()
+    c("structure_change.full_budget", ctl._button is not None and created() == 7, created())
+    kill()
+    c("structure_change.bounded_again", ctl._button is None and created() == 7
+      and env.console.count(exhausted) == 2)
+
+    # An explicit Autoinit refresh rearms.
+    env.autoinit()
+    env.pump(50)
+    c("refresh.recovered", ctl._button is not None and ctl._button.isVisible() and created() == 8
+      and len(env.named(BUTTON_NAME)) == 1, created())
+
+    # A still-valid owned button moved elsewhere stays owned: no duplicate,
+    # never moved back or deleted.
+    own = ctl._button
+    own.setParent(env.main)
+    own.setGeometry(700, 700, 40, 32)
+    own.show()
+    env.pump(50)
+    c("reparented.no_duplicate", ctl._button is own and created() == 8 and len(env.named(BUTTON_NAME)) == 1)
+    c("reparented.not_moved_or_deleted", env.shiboken.isValid(own) and own.parentWidget() is env.main
+      and rect(own) == [700, 700, 40, 32] and own.isVisible())
+    c("reparented.one_message", env.console.count("moved out of the toolbar") == 1)
+    env.autoinit()
+    env.pump(50)
+    c("reparented.refresh_no_duplicate", created() == 8 and len(env.named(BUTTON_NAME)) == 1
+      and own.parentWidget() is env.main)
+    env.close_editor(parts["editor"])
+    parts = env.make_editor()
+    env.pump(2100)
+    c("reparented.new_toolbar_no_duplicate", ctl.state == "ATTACHED" and ctl._button is own and created() == 8
+      and len(env.named(BUTTON_NAME)) == 1 and rect(own) == [700, 700, 40, 32])
+    own.setParent(parts["row"])
+    own.show()
+    env.pump(50)
+    c("reparented.returned_is_placed", own.parentWidget() is parts["row"] and rect(own)[0] == 47
+      and own.isVisible() and created() == 8, rect(own))
+    own.click()
+    c("reparented.click_still_launches", [r[0] for r in sys._ql_cpm_record] == ["start"])
+    own.setParent(env.main)
+    env.pump(50)
+    own.deleteLater()
+    env.flush()
+    env.pump(50)
+    c("reparented_then_destroyed.recreated", ctl._button is not None and ctl._button.parentWidget() is parts["row"]
+      and created() == 9 and len(env.named(BUTTON_NAME)) == 1, created())
+    # Shutdown leaves a button that lives elsewhere in place, disconnected.
+    moved = ctl._button
+    moved.setParent(env.main)
+    env.pump(50)
+    env.app.aboutToQuit.emit()
+    env.flush()
+    moved.click()
+    c("shutdown.elsewhere_button_untouched_and_disconnected", env.shiboken.isValid(moved)
+      and moved.parentWidget() is env.main and [r[0] for r in sys._ql_cpm_record] == ["start"]
+      and ctl.state == "STOPPED")
+
+
+def scenario_delayed_construction(env, c):
+    QtCore, QtGui = env.QtCore, env.QtGui
+    env.make_main()
+    env.autoinit()
+    ctl = env.ctl()
+    parts = env.make_editor(row=False)
+    editor = parts["editor"]
+    env.pump(1200)
+    c("editor_without_toolbar.waiting", ctl.state == "WAITING" and ctl._discovery.isActive()
+      and not env.named(BUTTON_NAME))
+    bar = CQEditorUpperBarWidget(editor)
+    bar.setGeometry(0, 2, 479, 39)
+    tools = CQTabbedToolButton(bar)
+    tools.setToolTip("Tools")
+    tools.setGeometry(437, 1, 40, 32)
+    bar.show()
+    env.pump(1200)
+    c("toolbar_without_add.waiting", ctl.state == "WAITING" and ctl._discovery.isActive()
+      and not env.named(BUTTON_NAME))
+
+    def add_button(row, x=2):
+        plus = CQTabbedToolButton(row)
+        plus.setToolTip("Add")
+        plus.setGeometry(x, 1, 40, 32)
+        plus.show()
+        return plus
+
+    plus = add_button(bar)
+    ticks = ctl.counters["discovery_ticks"]
+    env.pump(1200)
+    c("add_appears.attached", ctl.state == "ATTACHED" and ctl._row is bar and len(env.named(BUTTON_NAME)) == 1
+      and rect(ctl._button) == [47, 1, 40, 32] and ctl.counters["discovery_ticks"] - ticks <= 2)
+    ticks = ctl.counters["discovery_ticks"]
+    env.pump(2200)
+    c("attached.polling_stopped", not ctl._discovery.isActive() and ctl.counters["discovery_ticks"] == ticks)
+    c("delayed.quiet", env.console.count("[ChadChan3D CPM Quick Launch] ") == 0)
+
+    # Required structure lost without destruction: detach to WAITING.
+    plus.deleteLater()
+    env.flush()
+    env.flush()
+    c("add_lost.waiting", ctl.state == "WAITING" and ctl._discovery.isActive() and ctl._row is None)
+    c("add_lost.own_button_removed", not env.named(BUTTON_NAME) and ctl._button is None)
+    events = ctl.counters["filter_events"]
+    bar.resize(470, 39)
+    bar.resize(479, 39)
+    c("add_lost.filters_removed", ctl.counters["filter_events"] == events)
+    plus = add_button(bar)
+    env.pump(1200)
+    c("add_returns.reattached", ctl.state == "ATTACHED" and len(env.named(BUTTON_NAME)) == 1)
+
+    # Temporarily ambiguous candidates: wait, inject nothing, then recover.
+    dup = add_button(bar, 300)
+    env.pump(50)
+    env.flush()
+    c("two_add_candidates.waiting_no_injection", ctl.state == "WAITING" and not env.named(BUTTON_NAME))
+    dup.deleteLater()
+    env.flush()
+    env.pump(1200)
+    c("two_add_candidates.recovered", ctl.state == "ATTACHED" and len(env.named(BUTTON_NAME)) == 1)
+    bar2 = CQEditorUpperBarWidget(editor)
+    bar2.setGeometry(0, 50, 479, 39)
+    bar2.show()
+    env.pump(50)
+    env.flush()
+    c("two_toolbar_candidates.waiting_no_injection", ctl.state == "WAITING" and not env.named(BUTTON_NAME))
+    bar2.deleteLater()
+    env.flush()
+    env.pump(1200)
+    c("two_toolbar_candidates.recovered", ctl.state == "ATTACHED" and ctl._row is bar
+      and len(env.named(BUTTON_NAME)) == 1)
+
+    # Toolbar replacement: the old toolbar is destroyed, a new complete one appears.
+    new_bar = CQEditorUpperBarWidget(editor)
+    new_bar.setGeometry(0, 2, 479, 39)
+    add_button(new_bar)
+    bar.deleteLater()
+    new_bar.show()
+    env.flush()
+    env.pump(1200)
+    button = ctl._button
+    c("replaced.attached_to_new", ctl.state == "ATTACHED" and ctl._row is new_bar
+      and button is not None and button.parentWidget() is new_bar and len(env.named(BUTTON_NAME)) == 1)
+    c("replaced.no_stale_references", not ctl._graveyard and not ctl._graveyard_connections
+      and all(env.shiboken.isValid(o) for o in ctl._watched)
+      and all(env.shiboken.isValid(o) and o.parentWidget() is new_bar for o in ctl._structure)
+      and all(env.shiboken.isValid(src) for src, slot in ctl._connections))
+    # Replacement while the old toolbar survives elsewhere.
+    newest = CQEditorUpperBarWidget(editor)
+    newest.setGeometry(0, 2, 479, 39)
+    add_button(newest)
+    newest.show()
+    new_bar.setParent(env.main)
+    env.flush()
+    env.pump(1200)
+    c("replaced_old_alive.attached_to_newest", ctl.state == "ATTACHED" and ctl._row is newest
+      and len(env.named(BUTTON_NAME)) == 1 and ctl._button.parentWidget() is newest)
+    events = ctl.counters["filter_events"]
+    new_bar.resize(300, 39)
+    c("replaced_old_alive.old_unwatched", ctl.counters["filter_events"] == events
+      and not new_bar.findChildren(QtGui.QWidget, BUTTON_NAME))
+
+    # Foreign widget renamed away from the reserved name: recovery follows
+    # the next toolbar event (no extra polling).
+    env.close_editor(editor)
+    parts = env.make_editor()
+    foreign = QtGui.QToolButton(parts["row"])
+    foreign.setObjectName(BUTTON_NAME)
+    foreign.setGeometry(100, 1, 40, 32)
+    foreign.show()
+    env.pump(1200)
+    c("foreign.blocks_without_touching", ctl.state == "ATTACHED" and ctl._button is None
+      and rect(foreign) == [100, 1, 40, 32])
+    foreign.setObjectName("someone_else")
+    env.pump(200)
+    c("foreign_renamed.no_immediate_poll", ctl._button is None)
+    parts["tools"].move(430, 1)
+    env.pump(50)
+    c("foreign_renamed.recovers_on_next_toolbar_event", ctl._button is not None and ctl._button.isVisible()
+      and clear_of_siblings(parts["row"], ctl._button)[0] and rect(foreign) == [100, 1, 40, 32])
+    module = env.module()
+    c("no_lockout", module._RESTART_REQUIRED is False and ctl.suspend_reason is None)
+
+
 SCENARIOS = [
     ("namespace", scenario_namespace),
     ("bootstrap_refusals", scenario_bootstrap_refusals),
@@ -1011,6 +1259,8 @@ SCENARIOS = [
     ("failure_cleanup", scenario_failure_cleanup),
     ("filter_failure", scenario_filter_failure),
     ("launch", scenario_launch),
+    ("recreation_policy", scenario_recreation_policy),
+    ("delayed_construction", scenario_delayed_construction),
 ]
 
 

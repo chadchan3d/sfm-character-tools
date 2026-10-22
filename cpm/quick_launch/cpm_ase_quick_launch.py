@@ -16,10 +16,12 @@
 # hides, reparents or deletes another control.
 #
 # Controller states:
-#   WAITING    no supported editor; one 1-second discovery timer runs
+#   WAITING    no complete, uniquely supported editor toolbar yet (absent,
+#              still being built, or temporarily ambiguous); one 1-second
+#              discovery timer runs
 #   ATTACHED   a validated editor/row; discovery stopped; local events drive
 #              one coalesced layout timer
-#   SUSPENDED  unsupported or ambiguous hierarchy, or an unexpected failure;
+#   SUSPENDED  a positively unsupported toolbar, or an unexpected failure;
 #              no automatic retry
 #   STOPPING / STOPPED  timers stopped, owned filters and connections removed,
 #              owned widgets released
@@ -74,6 +76,12 @@ NOTICE_TITLE = "SFM Character Preset Manager"
 LAUNCH_FAILED_TEXT = (
     "Character Preset Manager couldn't be opened. Try its Scripts-menu entry. "
     "If that also fails, repair the CPM installation."
+)
+RECREATION_EXHAUSTED_TEXT = (
+    "the CPM button was removed from the Animation Set Editor toolbar "
+    "repeatedly, so it won't be added again for now. Open Character Preset "
+    "Manager from the Scripts menu, or run ChadChan3D_CPM_ASE_Button again "
+    "from Autoinit Manager to retry."
 )
 
 WAITING = "WAITING"
@@ -166,6 +174,16 @@ def _contains(items, obj):
     return False
 
 
+def _same_members(first, second):
+    """Identity-based set equality (z-order changes are not structure)."""
+    if len(first) != len(second):
+        return False
+    for item in first:
+        if not _contains(second, item):
+            return False
+    return True
+
+
 def _occupied_spans(row, own, band_top, band_bottom):
     """Horizontal spans of the row's visible direct-child widgets that
     intersect the button band, excluding CPM's own button and windows."""
@@ -229,6 +247,7 @@ class QuickLaunchController(QtCore.QObject):
         self._launching = False
         self._notice = None
         self._recreations = 0
+        self._structure = []
         self._reported = set()
         self._discovery = None
         self._layout = None
@@ -299,6 +318,8 @@ class QuickLaunchController(QtCore.QObject):
         if self.state == WAITING:
             self._discover_once()
             return "refreshed:" + self.state
+        # An explicit Autoinit refresh rearms button recreation.
+        self._rearm_recreation()
         self._schedule_layout()
         return "refreshed:" + self.state
 
@@ -319,7 +340,7 @@ class QuickLaunchController(QtCore.QObject):
             except Exception:
                 pass
             self._quit_connected = False
-        self._release_attachment(remove_button=True)
+        self._release_attachment(final=True)
         self._purge_graveyard()
         notice = self._notice
         self._notice = None
@@ -357,33 +378,39 @@ class QuickLaunchController(QtCore.QObject):
                     found.append(widget)
         return found
 
-    def _resolve_row(self, editor):
+    def _classify_editor(self, editor):
+        """('ok', row, add, None) for the complete, uniquely supported toolbar;
+        ('waiting', None, None, reason) while it is absent, still being built
+        or ambiguous; ('unsupported', None, None, reason) for a structure
+        Quick Launch positively cannot use."""
         rows = [child for child in _widget_children(editor)
                 if _class_name(child) == ROW_CLASS]
-        if len(rows) != 1:
-            return None, None, "editor has %d upper bars" % (len(rows),)
+        if not rows:
+            return ("waiting", None, None, "upper bar not present yet")
+        if len(rows) > 1:
+            return ("waiting", None, None, "%d upper bar candidates" % (len(rows),))
         row = rows[0]
         if row.layout() is not None:
-            return None, None, "upper bar has a layout"
+            return ("unsupported", None, None, "the upper bar uses a layout manager")
         adds = [child for child in _widget_children(row)
                 if _class_name(child) == NATIVE_BUTTON_CLASS
                 and child.toolTip() == NATIVE_ADD_TOOLTIP]
-        if len(adds) != 1:
-            return None, None, "upper bar has %d native Add buttons" % (len(adds),)
-        return row, adds[0], None
+        if not adds:
+            return ("waiting", None, None, "native Add button not present yet")
+        if len(adds) > 1:
+            return ("waiting", None, None, "%d native Add button candidates" % (len(adds),))
+        return ("ok", row, adds[0], None)
 
     def _discover_once(self):
         editors = self._find_editors()
-        if not editors:
+        if len(editors) != 1:
+            # Absent, or temporarily ambiguous: keep waiting, inject nothing.
             return
-        if len(editors) > 1:
-            self._suspend_unsupported("%d Animation Set Editors found" % (len(editors),))
-            return
-        row, add, reason = self._resolve_row(editors[0])
-        if row is None:
+        status, row, add, reason = self._classify_editor(editors[0])
+        if status == "unsupported":
             self._suspend_unsupported(reason)
-            return
-        self._attach(editors[0], row)
+        elif status == "ok":
+            self._attach(editors[0], row)
 
     def _suspend_unsupported(self, reason):
         self._discovery.stop()
@@ -391,9 +418,9 @@ class QuickLaunchController(QtCore.QObject):
         self.suspend_reason = SUSPEND_UNSUPPORTED
         if "unsupported" not in self._reported:
             self._reported.add("unsupported")
-            console("unsupported Animation Set Editor layout (%s); the CPM button "
-                    "was not added. Use the Scripts menu to open Character "
-                    "Preset Manager." % (reason,))
+            console("this Animation Set Editor toolbar isn't supported (%s), so "
+                    "the CPM button wasn't added. Open Character Preset Manager "
+                    "from the Scripts menu." % (reason,))
 
     # -- attachment ---------------------------------------------------------
 
@@ -402,10 +429,14 @@ class QuickLaunchController(QtCore.QObject):
         serial = self._serial
         self._editor = editor
         self._row = row
-        self._button = None
-        self._recreations = 0
+        # A button that died with an earlier toolbar is released; one still
+        # alive elsewhere stays owned, so no second button is created.
+        if not _valid(self._button):
+            self._button = None
+        self._structure = []
+        self._rearm_recreation()
         self._reported.discard("foreign-button")
-        self._reported.discard("recreation-limit")
+        self._reported.discard("button-elsewhere")
         self.state = ATTACHED
         self._discovery.stop()
         self.counters["attachments"] += 1
@@ -422,14 +453,17 @@ class QuickLaunchController(QtCore.QObject):
             self._on_attachment_lost(serial)
         return lost
 
-    def _make_button_lost_slot(self, serial):
-        def lost(*args):
-            if serial == self._serial and self.state == ATTACHED:
-                self._schedule_layout()
-        return lost
+    def _on_button_destroyed(self, *args):
+        if self.state == ATTACHED:
+            self._schedule_layout()
+
+    def _rearm_recreation(self):
+        self._recreations = 0
+        self._reported.discard("recreation-limit")
 
     def _on_attachment_lost(self, serial):
         # Runs from a destroyed() emission: never inspect the dying object.
+        # The button reference is kept and validated at the next attachment.
         try:
             if serial != self._serial or self.state != ATTACHED:
                 return
@@ -441,7 +475,7 @@ class QuickLaunchController(QtCore.QObject):
             self._connections = []
             self._editor = None
             self._row = None
-            self._button = None
+            self._structure = []
             self._layout_pending = False
             self._layout.stop()
             self.state = WAITING
@@ -452,6 +486,8 @@ class QuickLaunchController(QtCore.QObject):
     def _purge_graveyard(self):
         """Remove leftover filters and connections from objects that
         survived a lost attachment, one event-loop turn later."""
+        if self._button is not None and not _valid(self._button):
+            self._button = None
         pending = self._graveyard_connections
         self._graveyard_connections = []
         for source, slot in pending:
@@ -469,8 +505,11 @@ class QuickLaunchController(QtCore.QObject):
                 except Exception:
                     pass
 
-    def _release_attachment(self, remove_button):
-        """Detach from objects that are still valid (stop/failure paths)."""
+    def _release_attachment(self, final):
+        """Detach from objects that are still valid. CPM's own button is
+        deleted only while it is still in the released upper bar; a button
+        someone moved elsewhere is never moved or deleted. A non-final
+        release keeps owning it so that no second button is created."""
         self._serial += 1
         for source, slot in self._connections:
             if _valid(source):
@@ -484,18 +523,29 @@ class QuickLaunchController(QtCore.QObject):
                     obj.removeEventFilter(self)
                 except Exception:
                     pass
-        button = self._button
-        if remove_button and _valid(button):
+        button, row = self._button, self._row
+        if not _valid(button):
+            self._button = None
+        elif row is not None and button.parentWidget() is row:
             try:
                 button.hide()
                 button.deleteLater()
             except Exception:
                 pass
+            self._button = None
+        elif final:
+            for signal, slot in ((button.clicked, self._on_click),
+                                 (button.destroyed, self._on_button_destroyed)):
+                try:
+                    signal.disconnect(slot)
+                except Exception:
+                    pass
+            self._button = None
         self._connections = []
         self._watched = []
         self._editor = None
         self._row = None
-        self._button = None
+        self._structure = []
         self._layout_pending = False
 
     def _watch(self, obj):
@@ -542,19 +592,36 @@ class QuickLaunchController(QtCore.QObject):
     def _run_layout(self):
         self.counters["layout_runs"] += 1
         editor, row = self._editor, self._row
-        if not (_valid(editor) and _valid(row)) or row.parentWidget() is not editor:
+        if not (_valid(editor) and _valid(row)):
             self._on_attachment_lost(self._serial)
             return
-        row_now, add, reason = self._resolve_row(editor)
-        if row_now is not row:
-            self._release_attachment(remove_button=True)
-            self._suspend_unsupported(reason or "upper bar changed")
+        status, row_now, add, reason = self._classify_editor(editor)
+        if status != "ok" or row_now is not row:
+            # The attached toolbar lost its required structure or was
+            # replaced: detach safely, then wait, reattach or suspend.
+            self._release_attachment(final=False)
+            if status == "unsupported":
+                self._suspend_unsupported(reason)
+            elif status == "ok":
+                self._attach(editor, row_now)
+            else:
+                self.state = WAITING
+                self._discovery.start()
             return
         self._in_layout = True
         try:
+            structure = []
             for child in _widget_children(row):
-                if child is not self._button and not child.isWindow():
+                if child is self._button:
+                    continue
+                structure.append(child)
+                if not child.isWindow():
                     self._watch(child)
+            # A genuine change to the non-CPM children rearms recreation;
+            # CPM's own creation, removal, geometry and visibility do not.
+            if not _same_members(structure, self._structure):
+                self._structure = structure
+                self._rearm_recreation()
             button = self._ensure_button(row, add)
             if button is not None:
                 self._place(row, add, button)
@@ -564,16 +631,23 @@ class QuickLaunchController(QtCore.QObject):
     def _ensure_button(self, row, add):
         button = self._button
         if button is not None:
-            if _valid(button) and button.parentWidget() is row:
-                return button
-            # Lost or moved away by someone else: release, never delete.
+            if _valid(button):
+                if button.parentWidget() is row:
+                    self._reported.discard("button-elsewhere")
+                    return button
+                # Moved elsewhere by another script: still ours. It is never
+                # moved back, deleted or duplicated.
+                if "button-elsewhere" not in self._reported:
+                    self._reported.add("button-elsewhere")
+                    console("the CPM button was moved out of the toolbar by "
+                            "another script; it was left where it is.")
+                return None
             self._button = None
             self._recreations += 1
         if self._recreations > MAX_BUTTON_RECREATIONS:
             if "recreation-limit" not in self._reported:
                 self._reported.add("recreation-limit")
-                console("the CPM button keeps being removed; it will not be added "
-                        "again until the Animation Set Editor is reopened.")
+                console(RECREATION_EXHAUSTED_TEXT)
             return None
         for child in _widget_children(row):
             if child.objectName() == BUTTON_NAME:
@@ -595,7 +669,7 @@ class QuickLaunchController(QtCore.QObject):
         except Exception:
             pass
         button.clicked.connect(self._on_click)
-        button.destroyed.connect(self._make_button_lost_slot(self._serial))
+        button.destroyed.connect(self._on_button_destroyed)
         self._button = button
         self.counters["buttons_created"] += 1
         return button
@@ -713,7 +787,7 @@ class QuickLaunchController(QtCore.QObject):
             except Exception:
                 pass
         try:
-            self._release_attachment(remove_button=True)
+            self._release_attachment(final=True)
             self._purge_graveyard()
         except Exception:
             pass
