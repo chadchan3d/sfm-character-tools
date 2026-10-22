@@ -1,0 +1,4 @@
+# CPM Quick Launch: hash-identified production sources and their tests keep
+# exact LF bytes on every checkout and archive export.
+*.py text eol=lf
+*.md text eol=lf
