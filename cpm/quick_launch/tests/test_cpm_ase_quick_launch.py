@@ -23,6 +23,7 @@ Usage (from the repository root):
 from __future__ import print_function
 
 import ast
+import base64
 import hashlib
 import json
 import os
@@ -53,6 +54,7 @@ BUTTON_NAME = "chadchan3d_cpm_ase_button"
 CONTROLLER_NAME = "chadchan3d_cpm_ase_quick_launch_controller"
 NOTICE_NAME = "chadchan3d_cpm_ase_quick_launch_notice"
 R15_NOTICE_ATTR = "_chadchan3d_cpm_launch_notice_v1"
+APPROVED_ICON_SHA256 = "fb3691d898897abb8971bb59a6186ab18d7ee61c4024c3dc3e602dfd60ed1584"
 LAUNCH_FAILED_TEXT = (
     "Character Preset Manager couldn't be opened. Try its Scripts-menu entry. "
     "If that also fails, repair the CPM installation."
@@ -485,12 +487,17 @@ def scenario_geometry(env, c):
     env.pump(50)
     ctl = env.ctl()
     button = env.named(BUTTON_NAME)[0]
-    c("native.position", rect(button) == [47, 1, 40, 32], rect(button))
+    c("native.position", rect(button) == [47, 1, 36, 32], rect(button))
     c("native.visible", button.isVisible())
     c("native.text_tooltip", button.text() == "CPM" and button.toolTip() == "Open Character Preset Manager"
       and button.accessibleName() == "Open Character Preset Manager")
     c("native.plain_tool_button", type(button) is QtGui.QToolButton and button.parentWidget() is row)
-    c("native.not_clipped", button.width() >= max(40, button.sizeHint().width()))
+    png = base64.b64decode(env.module().BUTTON_ICON_PNG_B64)
+    c("native.icon_only_36x32", button.toolButtonStyle() == QtCore.Qt.ToolButtonIconOnly
+      and not button.icon().isNull() and button.iconSize() == QtCore.QSize(36, 32)
+      and button.width() == 36 and button.text() == "CPM"
+      and hashlib.sha256(png).hexdigest() == APPROVED_ICON_SHA256
+      and QtGui.QImage.fromData(png).size() == QtCore.QSize(36, 32), button.iconSize())
     c("native.add_tools_unchanged", rect(add) == [2, 1, 40, 32] and rect(tools) == [437, 1, 40, 32]
       and not add.isHidden() and not tools.isHidden())
 
@@ -637,7 +644,7 @@ def scenario_lifecycle(env, c):
         attached = ctl.state == "ATTACHED" and len(env.named(BUTTON_NAME)) == 1
         restore_ticks = ctl.counters["discovery_ticks"] - ticks
         button = env.named(BUTTON_NAME)
-        placed = bool(button) and rect(button[0]) == [47, 1, 40, 32] and button[0].isVisible()
+        placed = bool(button) and rect(button[0]) == [47, 1, 36, 32] and button[0].isVisible()
         watched = len(ctl._watched)
         env.close_editor(parts["editor"])
         waiting_now = ctl.state == "WAITING" and ctl._discovery.isActive() and ctl._editor is None \
@@ -1154,7 +1161,7 @@ def scenario_delayed_construction(env, c):
     ticks = ctl.counters["discovery_ticks"]
     env.pump(1200)
     c("add_appears.attached", ctl.state == "ATTACHED" and ctl._row is bar and len(env.named(BUTTON_NAME)) == 1
-      and rect(ctl._button) == [47, 1, 40, 32] and ctl.counters["discovery_ticks"] - ticks <= 2)
+      and rect(ctl._button) == [47, 1, 36, 32] and ctl.counters["discovery_ticks"] - ticks <= 2)
     ticks = ctl.counters["discovery_ticks"]
     env.pump(2200)
     c("attached.polling_stopped", not ctl._discovery.isActive() and ctl.counters["discovery_ticks"] == ticks)

@@ -1,16 +1,28 @@
 # CPM Quick Launch (optional component)
 
-An optional **CPM** text button in SFM's Animation Set Editor toolbar. It opens Character Preset Manager through the
-existing, unchanged R15 Scripts-menu launcher. Base CPM does not depend on it, and the Scripts-menu entry remains the
-fallback.
+An optional **CPM** button in SFM's Animation Set Editor toolbar: a 36×32 framed icon with bold "CPM" lettering, in
+the same style as the native toolbar buttons. It opens Character Preset Manager through the existing, unchanged R15
+Scripts-menu launcher. Base CPM does not depend on it, and the Scripts-menu entry remains the fallback.
 
 **Design authority:** the Owner-approved *CPM Quick Launch Construction Blueprint* (Astra), with the supporting
 adversarial audit and runtime addendum, from the designer handoff of 2026-10-18. Stages QL-1 to QL-3 are authorized
 separately. This component is outside the Control Group Updater's L-series and its software inventory.
 
-**Status:** QL-1 constructed and verified offline, including the corrections from Astra's adjudication of the QL-1
-discretionary choices (recoverable recreation budget; waiting instead of suspending on incomplete or ambiguous
-toolbars). QL-2 (real SFM) and QL-3 (optional packaging and installation) are not started.
+**Status:**
+- **QL-1:** constructed and verified offline, including the corrections from Astra's adjudication of the QL-1
+  discretionary choices (recoverable recreation budget; waiting instead of suspending on incomplete or ambiguous
+  toolbars).
+- **QL-2:** owner-accepted PASS in real SFM within the tested scope (2026-10-22): startup, appearance, launch, repeated
+  use, editor close and reopen, resizing, floating and docking, Extended ASE coexistence and shutdown. The text-only
+  button was replaced by the approved framed icon.
+- **QL-3** (optional packaging and installation): not started.
+
+Two docking incidents seen once each during QL-2 are **intermittent and unattributed**. Neither recurred in later
+repeated floating and docking:
+- a blank ("ghost") dock pane after re-docking, after which Console briefly showed the editor's controls;
+- a floating editor without CPM.
+
+They are not confirmed product defects, and no cause has been established.
 
 ## Files
 
@@ -29,7 +41,7 @@ Autoinit (shared globals)
   -> bootstrap: one function, deleted in finally; leaves no names behind
   -> private module chadchan3d_cpm_ase_quick_launch (ABSENT -> LOADING -> READY, hash-identified, never reloaded)
   -> one controller per SFM process (QObject child of QApplication, retained by the module)
-  -> one QToolButton "CPM" (object name chadchan3d_cpm_ase_button) parented to the native upper bar
+  -> one icon-only QToolButton (object name chadchan3d_cpm_ase_button, 36x32 framed "CPM" icon) parented to the native upper bar
   -> click: unchanged installed R15 launcher, compiled and run in a fresh dictionary
   -> CPM's existing load-once, reuse and refusal behavior
 ```
@@ -60,7 +72,16 @@ Autoinit (shared globals)
     reference, are released on the next discovery tick.
   - **Structure lost or replaced without destruction:** for example, Add removed or a second candidate added. The
     controller detaches safely, removing its button from that bar, then waits or attaches to the replacement.
+- **Appearance:**
+  - SFM's own style draws no frame for icon buttons: the native buttons' framed look is part of their icon artwork.
+    CPM therefore uses an original 36×32 PNG (664 B, SHA-256 `fb3691d8…`), embedded in the controller as base64 and
+    loaded as a standard `QIcon`. It reproduces the measured native frame: transparent top, dark border, bevel
+    highlight, gradient, soft drop shadow. The bold "CPM" lettering is centred on its visible pixels.
+  - There is no runtime painting and no stylesheet. The button is icon-only with a 36×32 icon size. The text "CPM",
+    tooltip and accessible name "Open Character Preset Manager" are kept.
+  - If the icon ever failed to decode, the button falls back to the plain text label.
 - **Placement:**
+  - The button's width is a fixed 36 px; its height follows the native Add button (32 px).
   - The vertical band comes from the native Add button.
   - Occupied space is every direct child widget that is explicitly visible (`isVisibleTo`), intersects the band and
     isn't a window. This includes unfamiliar controls; CPM's own button is excluded.
@@ -112,3 +133,20 @@ py -3 cpm/quick_launch/tests/test_cpm_ase_quick_launch.py --phase=static
 - **Python 3.10:** runs the static checks only.
 
 Mocks do not qualify real SFM widgets, Autoinit itself or Extended ASE coexistence; those belong to QL-2.
+
+Current result (icon integration, 2026-10-22): **233/233** under SFM's Python 2.7.5 + PySide 1.2, and **32/32**
+static checks under Python 3.10.
+
+## Real-SFM qualification (QL-2)
+
+The two product files were deployed by a controlled, hash-verified copy, alongside a temporary read-only observation
+probe that was removed after acceptance. The final live check (2026-10-22) confirmed:
+
+| Check | Result |
+|---|---|
+| Icon | the 36×32 framed icon is shown |
+| Placement | `[194, 1, 36, 32]`, 5 px after Extended ASE's last visible button; no overlap |
+| State | one owned button; controller attached with discovery polling stopped; one controller |
+| Launch | Character Preset Manager opens normally |
+
+The test installation's Extended ASE settings and Autoinit configuration were unchanged throughout.

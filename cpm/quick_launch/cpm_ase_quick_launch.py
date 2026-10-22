@@ -28,6 +28,7 @@
 #
 # Python 2.7.5 / PySide 1.2 (SFM's embedded interpreter).
 
+import base64
 import os
 import sys
 import traceback
@@ -54,8 +55,25 @@ NOTICE_NAME = "chadchan3d_cpm_ase_quick_launch_notice"
 
 BUTTON_TEXT = "CPM"
 BUTTON_TOOLTIP = "Open Character Preset Manager"
-NOMINAL_WIDTH = 40
+NOMINAL_WIDTH = 36
 NOMINAL_HEIGHT = 32
+# The approved native-style 36x32 toolbar icon (original artwork; PNG, 664 B,
+# SHA-256 fb3691d8...). Loaded once per button as a standard QIcon.
+BUTTON_ICON_PNG_B64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAACQAAAAgCAYAAAB6kdqOAAAABHNCSVQICAgIfAhkiAAAAAlw"
+    "SFlzAAAOxAAADsQBlSsOGwAAAjpJREFUWIXtV02r2kAUPYlRQX0GySIUAkZRKrQF/4pG168P"
+    "unLjWjeSjSIFl27r3oq/RSjiD7BFCLNQiAvNx1u8TsiXecKD5BV6IHDvOXfuHCaTcQT+4x8D"
+    "QwNBEBa2bbcZhnmIcf4TgDUh5KvHUKlU2rIs+7HX67H5fD42N7quYz6fWwC2hJAvAMAIgrBo"
+    "NpuPoijGZsSPw+GAzWazIIQ8cbZtt3meh2VZiRnieR4A2gC+cwzDPKTTadi2nZihTCYDAEUA"
+    "4ADAMIzEzPjBJm3Aj3e3QhyARDe0H1yUqKpqgBuNRjd59xiah/UL0zyGrtdrQBiPxwCAbrfr"
+    "4ev1uhNTbblcQlVVDIdDz+TunPa7NZ/HUNQnX6vVPLm7NkqjJgaDASaTSWSdGyzwsof8D8U9"
+    "mjsHgE6n43DUjJuL6vnqpo7SptOpEyuKgmq1CgCoVCpQFAWr1SqgvdbzTYYURXFiWZadWsuy"
+    "IMuyo7u1uwxFvdMorVwuh9bRmOr+HlE9OQAwTTMgtFotrNdrzGYzD9/v9504bFwUf4/OCIJg"
+    "NxqNUHG/3wc4SZIcXpKk0DFhvLtfmL7b7UAI+RR5MN5qfIt/i0Zx85Ulhff5W5bk5cwPDsDJ"
+    "MIxiKpVKzMTfLXOihtbn8/kxl8slZkjXdQD4CWDLAIAoin8KhcKHbDaLOFfKNE1cLhccj8ff"
+    "mqZJgPeP4g+83PyLsTkCTizLLjVN+0YJxlfwOUYzFL/cif9gDB7NMcO/QukEPHiuj8+1WiyP"
+    "BYrNBwAAAABJRU5ErkJggg=="
+)
 CLEARANCE = 5
 
 DISCOVERY_INTERVAL_MS = 1000
@@ -663,7 +681,13 @@ class QuickLaunchController(QtCore.QObject):
         button.setText(BUTTON_TEXT)
         button.setToolTip(BUTTON_TOOLTIP)
         button.setAccessibleName(BUTTON_TOOLTIP)
-        button.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
+        pixmap = QtGui.QPixmap()
+        if pixmap.loadFromData(base64.b64decode(BUTTON_ICON_PNG_B64), "PNG"):
+            button.setIcon(QtGui.QIcon(pixmap))
+            button.setIconSize(QtCore.QSize(NOMINAL_WIDTH, NOMINAL_HEIGHT))
+            button.setToolButtonStyle(QtCore.Qt.ToolButtonIconOnly)
+        else:
+            button.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
         try:
             button.setAutoRaise(bool(add.autoRaise()))
         except Exception:
@@ -677,7 +701,7 @@ class QuickLaunchController(QtCore.QObject):
     def _place(self, row, add, button):
         band = add.geometry()
         height = band.height() if band.height() > 0 else NOMINAL_HEIGHT
-        width = max(NOMINAL_WIDTH, button.sizeHint().width())
+        width = NOMINAL_WIDTH
         spans = _occupied_spans(row, button, band.y(), band.y() + height)
         x = find_free_slot(row.width(), band.x(), spans, width)
         if x is None:

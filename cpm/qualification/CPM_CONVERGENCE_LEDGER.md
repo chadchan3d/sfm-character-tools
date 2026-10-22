@@ -8,6 +8,27 @@ Blueprint, or expands scope, report the conflict before dependent edits.
 Otherwise proceed with the assigned milestone.
 
 ## Current milestone
+**CPM Quick Launch (optional component) — QL-2 PASS in real SFM, owner-accepted within the tested scope
+(2026-10-22).** Record: `cpm/quick_launch/README.md`. It is separate from the L-series and the software inventory, and
+QL-3 is not started.
+- **Sources:**
+  - bootstrap `23e3a8813057642400b7e06e0b55e13c89f47b684779d907740905a5e28e4070`;
+  - controller `4558d296505416591c79d08ecc9aa2fcaa0710003dbaaad94422e7654229f56f`;
+  - tests `8b1195f24f5f1ac84d109d5af5f97f11d3b6386c563188772607dba37174888d`.
+- **Appearance:** an original framed 36×32 bold "CPM" icon (`fb3691d8…`), embedded as a standard `QIcon`; fixed
+  36 px width. No runtime painting or stylesheet.
+- **Offline:** 233/233 under SFM Python 2.7.5 + PySide 1.2; static 32/32 under 3.10.
+- **Real SFM:** startup, launch, repeated use, editor close and reopen, resizing, floating and docking, and Extended
+  ASE coexistence all passed. The final check showed the icon at `[194, 1, 36, 32]`, 5 px clearance, one owned
+  button, polling stopped, and CPM opening normally.
+- **Installed (kept):** the bootstrap and controller, at the hashes above. The temporary QL-2 probe has been
+  removed. Extended ASE settings and Autoinit configuration are unchanged.
+- **Intermittent and unattributed (no correction):**
+  - one blank dock pane after re-docking;
+  - one floating editor without CPM.
+
+  Neither recurred in later repeated floating and docking.
+
 **v1 Release Baseline Amendment — Normalizer integration, corrected Candidate C Master promotion and Phase F
 post-governor simplification: OFFLINE-COMPLETE (owner-accepted, 2026-10-22); repository checkpoint committed.
 Real-SFM verification of `6b5d2941…` and of the corrected Candidate C combination is PENDING (see Pending below).**
@@ -1457,6 +1478,14 @@ Evidence:
     1.2–1.5 s.
 
 ## Unresolved
+- **CPM Quick Launch (not product defects):**
+  - Two docking incidents were each seen once and are intermittent and unattributed:
+    - a blank dock pane after re-docking, after which Console briefly showed the editor's controls;
+    - a floating editor without CPM.
+
+    Neither recurred in later repeated floating and docking, and no cause is established.
+  - Coexistence was tested with the audited Extended ASE v1.5 and Autoinit v1.2 only.
+  - QL-3 packaging is not started.
 - **Offline-v1 limitations (published, not qualified; Amendment §5):**
   - L-A: unexpected native SFM overlap during installation;
   - L-B: power/cache-loss persistence. No hard reset was performed; the constructed-state tests qualify
@@ -1609,8 +1638,8 @@ owner-accepted.
   1. **Normalizer behavior:** investigate and resolve the owner-reported Normalizer behavior problems. The suspected
      relationship to animation-group TXT/sidecar data is unconfirmed. Root cause and corrective scope remain
      undetermined.
-  2. **Launcher button:** resolve the planned launcher-button addition. Exact implementation requirements will be
-     supplied separately.
+  2. **Launcher button:** CPM Quick Launch QL-1 and QL-2 PASS (2026-10-22; see Current milestone). QL-3 (optional
+     packaging and installation) is NOT STARTED / NOT AUTHORIZED.
   3. **Release identity:** finalize the integrated software identities, the signed inventory, production trust and
      the release candidate before L-6 qualification. This includes resolving the L-5 items: the shipping candidate
      installs no data without trust, a test-trust qualification build or the production key for L-6, and deployment
