@@ -9,10 +9,10 @@
    "source": "cpm/app/SFM_Character_Preset_Manager.py"
   },
   {
-   "byte_length": 380006,
+   "byte_length": 496210,
    "path": "scripts/sfm/mainmenu/ChadChan3D/Rebuild_Control_Groups_Normalizer.py",
    "role": "normalizer",
-   "sha256": "1f4ec5a26605aa90380eb0532fec3915d2cc24a3a20473ed70d57198bd995db7",
+   "sha256": "6b5d294116765aa1941e0f98394b4b6e35ad0acd2f80c90aba418b13c9b6130d",
    "source": "audit_external_runtime/Rebuild_Control_Groups_Normalizer.py"
   },
   {
@@ -219,7 +219,7 @@
    "source": "tools/sfm_master_sidecar/reader.py"
   }
  ],
- "qualification": "K COMPLETE / PASS (2026-10-10); exact installed identities re-verified by U0B-P0 (2026-10-12)",
+ "qualification": "K COMPLETE / PASS (2026-10-10); exact installed identities re-verified by U0B-P0 (2026-10-12). Normalizer admitted by the v1 Release Baseline Amendment (2026-10-21): 6b5d2941 (Phase F simplification of the real-SFM-qualified 25a5e3cd) offline-verified; bounded live-SFM check and CPM/Normalizer coexistence with Candidate C pending",
  "schema": 1,
  "software": "SFM Character Tools"
 }

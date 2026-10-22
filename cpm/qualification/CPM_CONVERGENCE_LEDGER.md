@@ -8,8 +8,160 @@ Blueprint, or expands scope, report the conflict before dependent edits.
 Otherwise proceed with the assigned milestone.
 
 ## Current milestone
-**L-5 — Compatibility and packaging: COMPLETE / PASS (bounded), 2026-10-19. Designer-reviewed and owner-accepted,
-including the owner-approved compatibility correction.** Committed at the L-5 GitHub checkpoint.
+**v1 Release Baseline Amendment — Normalizer integration, corrected Candidate C Master promotion and Phase F
+post-governor simplification: OFFLINE-COMPLETE (owner-accepted, 2026-10-22); repository checkpoint committed.
+Real-SFM verification of `6b5d2941…` and of the corrected Candidate C combination is PENDING (see Pending below).**
+The owner approved two changed first-release identities (record:
+`updater_qualification/design/V1_RELEASE_BASELINE_AMENDMENT.md`, `a33d8b3b…`):
+- **Decision A:** the Normalizer.
+  - **Current:** `6b5d294116765aa1941e0f98394b4b6e35ad0acd2f80c90aba418b13c9b6130d` (496,210 B), the amendment §8
+    Phase F simplification. **Offline-verified; pending the bounded live-SFM check.**
+  - **Historical:** `25a5e3cd2ccf62dad00df7122d5f1b1d62aea63a2069459993acc3e44feaa343` (496,624 B), the
+    real-SFM-qualified build. The qualifications below were recorded on it.
+- **Decision B, amended by option (b):** the corrected Candidate C.
+  - **Master:** `1d855cd34b90a2e6254d97eb4c6ac4b08ccc64d994b8e6a754ddac8466b155ec`.
+  - **Sidecar:** `3791677522119a6ca45c1092743041dc07014cfa1fd0891526db995bcf526a16`.
+  - **Manifest:** `6c7568063a69de2a22c05f55df066db369f3340e68d0208f9f36a4c017c3c7ae`.
+  - **Historical:** original Candidate C (`00df6304…` / `43572fd2…` / `c646f1da…`) is the identity used by every
+    real-SFM qualification.
+
+G1 and the Normalizer `1f4ec5a2…` remain historical qualification and regression references. This is a narrow
+exception to the L card §1 frozen-Normalizer scope; R2, the L card, the Contract Amendment and R15 are unchanged.
+
+**Repository integration (committed in the repository checkpoint):**
+- `audit_external_runtime/Rebuild_Control_Groups_Normalizer.py` is now `6b5d2941…` (previously `25a5e3cd…`).
+- **Phase F post-governor simplification (Astra's final revised adjudication, owner-approved, 2026-10-21; amendment
+  §8):**
+  - **Removed:** the process-lifetime Selected/All restriction. Every sequence of successful runs is allowed.
+  - **Kept:** the canonical shot-identity re-resolution, the governor (112 / 24 MiB at all three boundaries,
+    unchanged), the PRE, native, authority and transaction protections, and the active-run lock.
+  - **Restart required only after a measured low-memory STOP or an unverified post-mutation or cleanup outcome.**
+    This is recorded on the main window and in the process and survives menu re-execution; a clean UNKNOWN or an
+    ordinary refusal records nothing.
+  - **Post-mutation abort ruling (Astra, final; owner-approved 2026-10-22):** the condition `(not success and
+    mutation_started)` is retained unchanged, with no additional recovery machinery. A generic abort after a native
+    Rebuild attempt requires a restart because complete recovery cannot be verified: the transaction has no rollback
+    and the abort path doesn't re-verify the session. It does not mean corruption was established. A verified native
+    fallback and the resource-stop closures are unaffected. The user-facing wording claims neither corruption nor low
+    memory. No new testing; the accepted offline evidence stands.
+  - **Fail closed:** lookups and records fail closed. A failed active-run lookup is no longer "no active run".
+  - **Wording:** the UNKNOWN wording is the approved initial sentence plus retry guidance with no restart demanded.
+  - **Offline:**
+
+    | Suite | Result |
+    |---|---|
+    | Focused Phase F | 21/21 |
+    | Resource stop | 69/69 |
+    | UI and log | 20/20 |
+    | Floors | 35/35 |
+    | Retention | 19/19 |
+    | Diagnostics | 74/74 |
+    | PRE regression | identical |
+
+    Private evidence: the manifest of the Phase F work folder (see the amendment).
+  - **Not SFM-tested:** `6b5d2941…` has not been run in SFM.
+- `updater/release_tools/character_tools_software_v1.json` pins the new hash and length; its `qualification` note
+  records the amendment. All 31 spec sources match their pins. Roles, profile `2bbd93d0…`, the inventory verifier
+  and the updater package are unchanged.
+- **Consumer contract re-verified by content against `1f4ec5a2…`:** the menu-folder locator is byte-identical; the
+  runtime API and build equal the profile's Normalizer contract; the authority imports and interfaces are identical.
+- **Master: corrected Candidate C `1d855cd3…` is PROMOTED into `sfm_defaultanimationgroups.txt`** (previously G1
+  `ac45e5c1…`, kept in Git history and backed up).
+  - **Provenance:** G1 → Candidate B `e2c0f117…` → original Candidate C `00df6304…` → corrected Candidate C.
+    - **Candidate B:** the documented data-v1.0.0 replacement: header, 14 additions, 15 corrections, 12 new
+      `groupColor`s and the Attachments colour, and side-ordering of 14,956 controls.
+    - **Original C:** B plus exactly the four rig-side group renames.
+  - **Phase 1 approved (2026-10-21);** the owner acknowledged the full Candidate B scope.
+  - **Why a correction was needed:** the first Phase 2 stopped before replacement. In 170 controls, original C had
+    one more leading tab than G1 and than structural depth, which violates the CLAUDE.md indentation rule (§5, §18).
+    Candidate B's side-ordering step introduced it: Hair 78, Clothing 48, Sexual Bones 25, Face/Ears 8, Wings 4,
+    Other 4, Tail 2, Face/Lower Face 1 (private evidence `candidate_c_indentation_finding.tsv` `deca31e1…`).
+  - **Correction (owner option (b), 2026-10-21):** exactly one leading tab removed from each of the 170 lines;
+    nothing else changed. The same step had also brought 170 of G1's 11,001 pre-existing over-indented lines to
+    their depth. That is approved Candidate B content and is left unchanged.
+  - **Equivalence and validation (19/19 PASS):**
+    - **The edit:** exactly 170 indentation-only lines.
+    - **Content:** identical groups, occurrences and fold families.
+    - **Indentation:** no deviation beyond G1's preserved ones.
+    - **Validator:** `tools/validate_master.py` PASS.
+    - **Compiler:** the pinned compiler (`candidate.compile_real`, 9 pins) still reproduces original C's
+      `43572fd2…` / `c646f1da…`.
+    - **New authority:** sidecar `37916775…` and manifest `6c756806…`, read back from disk, pass reader parity,
+      FINAL R3-A2B admission and the manifest binding.
+    - **Equivalence:** exhaustive cross-parity both ways. The sidecars are equal in length with byte-identical
+      bodies; only the header's source SHA-256 and the header digest differ.
+  - **Promotion (CLAUDE.md procedure, 28/28 PASS):**
+    - the canonical Master was asserted to be G1;
+    - a temporary candidate was validated;
+    - the group hierarchy equals G1's except the four renames;
+    - all G1 controls are present, plus the 14 additions;
+    - colours and indentation match the rules;
+    - G1 was backed up, the file atomically replaced, then re-opened and re-validated;
+    - compiled from the repository copy: `37916775…` / `6c756806…`.
+  - **Not SFM-tested:** the corrected byte identities have not been run in SFM.
+
+**Accepted Normalizer qualifications (private evidence, local only; all real-SFM runs used original Candidate C
+`00df6304…`):**
+- **Four-name rig sides and PRE bridge:** real-SFM PASS (`RESULT.md` `742ac9fd…`).
+- **PRE admission:** qualified. Strict membership reads `0e4c982e…`, with the real-SFM legacy `shot228` PASS
+  (`QUALIFICATION_RESULT.md` `602d4881…`).
+- **Production resource floors (Astra, 2026-10-21):** 112 MiB free VAS (117,440,512 B) and 24 MiB largest
+  contiguous region (25,165,824 B), the same at command preparation, target preparation and native entry.
+  - **Comparison:** at or below either floor gives STOP; an incomplete census gives UNKNOWN (fail closed).
+  - **Evidence:** the Astra evidence package `45742be9…`, and the external memory measurement
+    (`MEASUREMENT_RESULT.md` `0ffb7851…`).
+- **Safe stop, save, restart and Selected Shot(s) continuation:** qualified in real SFM (`QUALIFICATION_RESULT.md`
+  `7dc437a9…`).
+- **Final integrated resource-stop qualification, real SFM, 2026-10-21: 9/9 PASS.**
+  - **Build:** the qualification-only derivative `5c2520d9…` of `25a5e3cd…`, with an injected native-entry stop at
+    `shot2/mia1` and the production floors kept.
+  - **Results:**
+    - the real readings were above the floors;
+    - the stopped target never entered native Rebuild;
+    - closure and isolation PASS;
+    - the real Qt dialog showed "1 of 4 shots completed / Stopped at: shot2 (unfinished) / 3 shots remaining,
+      including shot2" with **Close only**;
+    - the report was kept as `Normalizer - Resource Stop - <date-time>.log`, classified `RESOURCE_STOP`;
+    - the verified verdict was written after the six teardown checks;
+    - the installation was restored exactly.
+  - **Evidence:** `QUALIFICATION_RESULT.md` `bb997d50…`, the report `27ef0bed…`, the dialog screenshot `9ca1572c…`,
+    and the manifest `6f96b865…`.
+- **Report classification:**
+  - a verified protective stop with no normalization problem is kept as `Normalizer - Resource Stop - …`, with
+    Close only;
+  - a refusal, a non-clean target, an UNKNOWN stop or a failed verification keeps
+    `Normalizer - Send to Developer - …` with Show Log File and the developer guidance;
+  - a clean run replaces `Normalizer - Last Run.log`;
+  - Resource Stop and Send to Developer share **one 20-file dated-report limit**.
+- **Offline (`25a5e3cd…`, manifest `5de996a7…`):**
+
+  | Suite | Result |
+  |---|---|
+  | UI and log classification | 20/20 |
+  | Resource stop | 69/69 |
+  | Production floors | 35/35 |
+  | Retention | 19/19 |
+  | Diagnostics | 74/74 |
+  | PRE regression | identical to the qualified record |
+
+**Pending (not yet performed):**
+- **Phase F build `6b5d2941…`:** PENDING the bounded live-SFM check (amendment §6 item 5):
+  - Selected and All use in one process;
+  - one low-memory STOP refusing the next invocation until SFM restarts;
+  - one clean UNKNOWN permitting the next invocation.
+- **Revised CPM/Normalizer release combination:** PENDING bounded coexistence verification of the Normalizer
+  `6b5d2941…` with the corrected Candidate C (`1d855cd3…` / `37916775…` / `6c756806…`).
+- **The amendment §6 qualification delta:**
+  1. Candidate C structural and compiled-authority validation: DONE (offline, 2026-10-21; see above);
+  2. focused K-level coexistence with the corrected Candidate C. Its byte identities have not been run in SFM;
+     the existing real-SFM evidence used original C;
+  3. changed-inventory identity, compatibility and packaging checks;
+  4. L-6 on the exact shipping candidate, with the amendment §5 reconciliation.
+- **Unchanged:** the L-5 items below (production trust, the L-6 test-trust conflict, inventory deployment).
+- **L-6:** NOT STARTED / NOT AUTHORIZED.
+
+Previous milestone: **L-5 — Compatibility and packaging: COMPLETE / PASS (bounded), 2026-10-19. Designer-reviewed
+and owner-accepted, including the owner-approved compatibility correction.** Committed at the L-5 GitHub checkpoint.
 Authorized by the owner under the L card §5. Base: `0010395…`.
 - **Private evidence (local only):**
   - L-5: `L5_IMPLEMENTATION_REPORT.md` `83ec2f22…`, manifest `1f4ac03a…` (46 entries);

@@ -90,14 +90,21 @@ Safety / CONTEXTUALIZER layered-isolation boundary:
   - the original playhead is restored and verified at completion or abort.
 
 OUTPUT:
-  C:\Users\Public\Documents\sfm_rebuild_control_groups.txt
+  C:\Users\Public\Documents\SFM Normalizer Logs\
+      Normalizer - Last Run.log  (the latest clean run; replaced each time)
+      Normalizer - Send to Developer - <local date> <local time>.log
+          (a run with a refusal, failure or interruption; the newest
+          20 are kept)
 """
 
 import ctypes
+import errno
 import hashlib
+import json
 import os
 import re
 import struct
+import subprocess
 import sys
 import time
 import traceback
@@ -159,65 +166,212 @@ RUN_LOCK_NAME = (
     "__SFM_REBUILD_CONTROL_GROUPS_CONTEXTUALIZER_RUNNING__"
 )
 
-# Process-lifetime scope-aware admission guard (2026-09-24, revised).
-# Independent of RUN_LOCK_NAME: RUN_LOCK_NAME marks a run as CURRENTLY
-# ACTIVE and is released when that run finishes; these markers instead
-# record THIS SFM PROCESS'S OWN CUMULATIVE NORMALIZER USAGE CLASS and are
-# never cleared once installed -- only process exit removes them. See
-# StartRebuildControlGroups() (refusal boundary, before _choose_scope(),
-# and again immediately after scope resolution -- the scope dialog runs
-# its own nested Qt event loop, so state must be reread rather than
-# trusted from before it opened) and RebuildControlGroupsProductionRun
-# .start() (arming boundary, immediately before
-# collect_scope_master_wanted_folds()).
-#
-# Three logical process states, tracked by which (if any) of the two
-# markers below is present on main_window:
-#   UNUSED               -- neither marker present.
-#   SELECTED_USED         -- SELECTED_USED marker present. A Selected
-#                            Shot(s) request whose canonically resolved
-#                            shot set is a PROPER SUBSET of the project
-#                            has completed arming in this process.
-#   FULL_SCOPE_STARTED    -- FULL_SCOPE_STARTED marker present. Either an
-#                            All Shots request, or a Selected Shot(s)
-#                            request whose resolved shot set exactly
-#                            equals the complete project shot set (exact
-#                            workload equivalence, not a size threshold),
-#                            has completed arming in this process.
-# Selected Shot(s) over any proper subset of project shots -- 1, 2, 5, 10,
-# any number -- remains normal, repeatedly-usable functionality within
-# one process (UNUSED/SELECTED_USED -> SELECTED_USED). Only a full-scope
-# request is gated: FULL_SCOPE_STARTED refuses every later request
-# (Selected or All) until SFM restarts, and SELECTED_USED refuses a LATER
-# full-scope request (but not a later Selected proper-subset request).
-# No numeric shot/target/model/control/memory threshold is used anywhere
-# in this classification -- only exact set-equality full-scope
-# equivalence and the state matrix above.
-NORMALIZER_PROCESS_STATE_SELECTED_USED_MARKER_NAME = (
-    "__SFM_REBUILD_CONTROL_GROUPS_PROCESS_STATE_V2_SELECTED_USED__"
-)
-NORMALIZER_PROCESS_STATE_FULL_SCOPE_STARTED_MARKER_NAME = (
-    "__SFM_REBUILD_CONTROL_GROUPS_PROCESS_STATE_V2_FULL_SCOPE_STARTED__"
-)
+# Restart requirement (Phase F post-governor simplification, 2026-10-21).
+# Normalizer no longer restricts use by earlier Selected/All usage in this
+# SFM process: every sequence of successful runs is allowed, and every run is
+# protected by the resource governor's admission checks. SFM must be restarted
+# before Normalizer runs again only after:
+#   LOW_MEMORY          a measured low-memory STOP (a later favorable memory
+#                       reading never clears it);
+#   UNVERIFIED_CLEANUP  a run that entered native Rebuild and then failed, or
+#                       whose essential cleanup (Master-index lease,
+#                       protected-Master handles, run lock, resource-stop
+#                       closure) could not be verified.
+# A clean UNKNOWN stop and an ordinary refusal record nothing: the next
+# invocation is admitted afresh. The requirement is recorded twice -- a marker
+# parented to the SFM main window and a process attribute -- so it survives
+# menu-script re-execution and document changes; only process exit removes
+# it. A lookup that cannot be trusted fails closed (restart required).
+RESTART_REASON_LOW_MEMORY = u"LOW_MEMORY"
+RESTART_REASON_UNVERIFIED_CLEANUP = u"UNVERIFIED_CLEANUP"
+RESTART_MARKER_NAMES = {
+    RESTART_REASON_LOW_MEMORY:
+        "__SFM_REBUILD_CONTROL_GROUPS_RESTART_REQUIRED_LOW_MEMORY__",
+    RESTART_REASON_UNVERIFIED_CLEANUP:
+        "__SFM_REBUILD_CONTROL_GROUPS_RESTART_REQUIRED_UNVERIFIED_CLEANUP__",
+}
+RESTART_PROCESS_ATTRIBUTE = "_sfm_rebuild_control_groups_restart_requirement"
 
-# Legacy marker from the prior, superseded broad one-attempt guard
-# (commit f3efd132ad5456a583df5917ef85576db0690c60). That marker could
-# not distinguish Selected use from All-Shots use, so if it is found
-# without valid new-scheme state present, this process's own history
-# cannot be safely reconstructed -- treat it as unreadable/ambiguous
-# state and require a restart. Never assume UNUSED and never reinterpret
-# it as SELECTED_USED.
-NORMALIZER_PROCESS_ATTEMPT_MARKER_NAME_LEGACY = (
-    "__SFM_REBUILD_CONTROL_GROUPS_PROCESS_ATTEMPT_CONSUMED__"
-)
-
-OUTPUT_PATH = (
+OUTPUT_DIRECTORY = (
     "C:\\Users\\Public\\Documents\\"
-    "sfm_rebuild_control_groups.txt"
+    "SFM Normalizer Logs"
 )
+
+OUTPUT_FALLBACK_DIRECTORY = (
+    "C:\\Users\\Public\\Documents"
+)
+
+OUTPUT_NAME_PREFIX = "Normalizer - Send to Developer - "
+
+
+def create_run_log_file():
+    """Create this execution's report under a readable name. An existing
+    report is never overwritten: a second report in the same minute gets a
+    numbered suffix."""
+    now = time.localtime()
+    hour = now.tm_hour % 12 or 12
+    stem = "%s%04d-%02d-%02d %d-%02d %s" % (
+        OUTPUT_NAME_PREFIX,
+        now.tm_year,
+        now.tm_mon,
+        now.tm_mday,
+        hour,
+        now.tm_min,
+        "AM" if now.tm_hour < 12 else "PM",
+    )
+
+    for directory in (
+            OUTPUT_DIRECTORY,
+            OUTPUT_FALLBACK_DIRECTORY):
+        try:
+            if not os.path.isdir(directory):
+                os.makedirs(directory)
+        except Exception:
+            continue
+
+        for number in range(1, 1000):
+            file_name = (
+                stem + ".log"
+                if number == 1
+                else "%s (%d).log" % (stem, number)
+            )
+            path = os.path.join(
+                directory,
+                file_name,
+            )
+
+            try:
+                descriptor = os.open(
+                    path,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                )
+            except OSError as exc:
+                if exc.errno == errno.EEXIST:
+                    continue
+                break
+
+            return path, os.fdopen(descriptor, "w")
+
+    raise ProbeError(
+        "Could not create the Normalizer report file."
+    )
+
+
+OUTPUT_LAST_RUN_NAME = "Normalizer - Last Run.log"
+
+# A verified protective resource stop with no normalization problem is kept
+# under its own name; it is a diagnostic record, not a developer incident.
+OUTPUT_RESOURCE_STOP_PREFIX = "Normalizer - Resource Stop - "
+
+# One shared allowance for all dated reports (Resource Stop and Send to
+# Developer together), including the report just written.
+OUTPUT_PROBLEM_REPORTS_KEPT = 20
+
+REPORT_CLEAN_TARGET_OUTCOMES = (
+    "RECONCILED",
+    "NATIVE_POST_ONLY_UNRIGGED",
+)
+
+
+def finalize_run_log_file(log_path, clean, resource_stop=False):
+    """After the report is closed: a clean run's report replaces the single
+    Last Run report. A verified protective resource stop is renamed to its
+    Resource Stop name; any other report keeps its Send to Developer name.
+    Dated reports of both kinds share one allowance: only the newest
+    OUTPUT_PROBLEM_REPORTS_KEPT are retained (newest by modification time,
+    then name). Only this tool's own report names in the report's folder
+    are touched. Never raises; returns the report's final path."""
+    if not log_path:
+        return log_path
+
+    directory = os.path.dirname(log_path)
+
+    if resource_stop and not clean:
+        log_path = _rename_dated_report(
+            log_path,
+            OUTPUT_NAME_PREFIX,
+            OUTPUT_RESOURCE_STOP_PREFIX,
+        )
+
+    if clean:
+        try:
+            last_run = os.path.join(
+                directory,
+                OUTPUT_LAST_RUN_NAME,
+            )
+            if os.path.exists(last_run):
+                os.remove(last_run)
+            os.rename(log_path, last_run)
+            return last_run
+        except Exception:
+            pass
+
+    try:
+        reports = []
+        for file_name in os.listdir(directory):
+            path = os.path.join(directory, file_name)
+            if (
+                    file_name.startswith((
+                        OUTPUT_NAME_PREFIX,
+                        OUTPUT_RESOURCE_STOP_PREFIX,
+                    ))
+                    and file_name.endswith(".log")
+                    and os.path.isfile(path)
+                    and os.path.normcase(path) != os.path.normcase(log_path)):
+                reports.append((os.path.getmtime(path), file_name, path))
+
+        reports.sort(reverse=True)
+
+        for unused_time, unused_name, path in reports[
+                OUTPUT_PROBLEM_REPORTS_KEPT - 1:]:
+            try:
+                os.remove(path)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    return log_path
+
+
+def _rename_dated_report(log_path, old_prefix, new_prefix):
+    """Rename a closed dated report from one prefix to the other, keeping its
+    date-time stem; a taken name gets a numbered suffix. Never raises;
+    returns the report's path after the attempt."""
+    try:
+        directory, base = os.path.split(log_path)
+        if not base.startswith(old_prefix) or not base.endswith(".log"):
+            return log_path
+        stem = base[len(old_prefix):-len(".log")]
+        for number in range(1, 1000):
+            candidate = os.path.join(
+                directory,
+                "%s%s%s.log" % (
+                    new_prefix,
+                    stem,
+                    "" if number == 1 else " (%d)" % number,
+                ),
+            )
+            if not os.path.exists(candidate):
+                os.rename(log_path, candidate)
+                return candidate
+    except Exception:
+        pass
+    return log_path
 
 PRODUCTION_REVISION = (
     "SFM_REBUILD_CONTROL_GROUPS_CONTEXTUALIZER_PRODUCTION_2026_09_22_QUALIFIED_AUTHORITY"
+    "+FOUR_NAME_RIG_SIDES_CANDIDATE_2026_10_20"
+    "+PRE_BRIDGE_CANDIDATE_2026_10_20"
+    "+DIAGNOSTIC_REPORT_CANDIDATE_R2_2026_10_20"
+    "+PRE_SAFETY_CORRECTION_CANDIDATE_2026_10_20"
+    "+PRE_ADMISSION_DEFECT_CORRECTION_2026_10_20"
+    "+PRE_STRICT_MEMBERSHIP_READS_2026_10_20"
+    "+RESOURCE_SAFE_STOP_CANDIDATE_2026_10_20"
+    "+SAFE_STOP_CLOSURE_ORDERING_AND_APPROVED_WORDING_2026_10_21"
+    "+RESOURCE_FLOORS_ASTRA_APPROVED_2026_10_21"
+    "+RESOURCE_STOP_UI_AND_LOG_CLASSIFICATION_2026_10_21"
+    "+PHASE_F_POST_GOVERNOR_SIMPLIFICATION_2026_10_21"
 )
 
 
@@ -405,12 +559,14 @@ def native_master_protect_acquire(path):
 
 
 def native_master_protect_release(handle):
+    """Closes the protection handle; True when no handle was held or it was
+    closed, False when CloseHandle failed."""
     if handle is None:
-        return
+        return True
     try:
-        ctypes.windll.kernel32.CloseHandle(handle)
+        return bool(ctypes.windll.kernel32.CloseHandle(handle))
     except Exception:
-        pass
+        return False
 
 
 
@@ -667,6 +823,310 @@ def contextualizer_process_architecture_sample():
     return result
 
 
+# Resource safe-stop. A fixed two-metric policy on a complete VirtualQuery
+# census of the 32-bit application address range:
+#   STOP     total free address space or the largest free region is at or
+#            below its floor;
+#   UNKNOWN  the census is incomplete or invalid;
+#   ADMIT    the complete census shows both above their floors.
+# Production floors approved by Astra's final threshold disposition
+# (2026-10-21): 112 MiB total free, 24 MiB largest free region, the same at
+# every admission boundary. With either floor unset the policy is disabled.
+RESOURCE_SAFE_STOP_FREE_FLOOR_BYTES = 117440512
+RESOURCE_SAFE_STOP_LARGEST_FLOOR_BYTES = 25165824
+RESOURCE_SAFE_STOP_FLOORS_SOURCE = "ASTRA_FINAL_THRESHOLD_DISPOSITION_2026_10_21"
+
+# Product-owner approved wording (2026-10-21).
+RESOURCE_STOP_TITLE = u"Normalizer \u2014 Stopped to Protect SFM"
+RESOURCE_STOP_BODY_LOW_MEMORY = (
+    u"SFM is running low on available memory. Normalizer stopped to reduce "
+    u"the risk of a crash."
+)
+RESOURCE_STOP_INSTRUCTION = (
+    u"Save your project, restart SFM, then use Selected Shot(s) to process "
+    u"the remaining shots, including the unfinished shot."
+)
+RESOURCE_UNKNOWN_TITLE = u"Normalizer \u2014 Stopped Before Continuing"
+RESOURCE_UNKNOWN_BODY = (
+    u"Normalizer couldn't verify that enough memory is available to "
+    u"continue safely."
+)
+RESOURCE_UNKNOWN_INSTRUCTION_UNFINISHED = (
+    u"Save your project, then use Selected Shot(s) to process the "
+    u"remaining shots, including the unfinished shot."
+)
+RESOURCE_UNKNOWN_INSTRUCTION_REMAINING = (
+    u"Save your project, then use Selected Shot(s) to process the "
+    u"remaining shots."
+)
+RESOURCE_UNKNOWN_INSTRUCTION_RETRY = (
+    u"You can try again. If this keeps happening, save your project and "
+    u"restart SFM."
+)
+RESOURCE_INSTRUCTION_REMAINING = (
+    u"Save your project, restart SFM, then use Selected Shot(s) to process "
+    u"the remaining shots."
+)
+RESOURCE_PROGRESS_NONE = u"No shots were processed."
+RESOURCE_ATTENTION_ACTION = (
+    u"To report the problem, click Show Log File and send the highlighted "
+    u"file to the developer."
+)
+# A shot "couldn't be fully normalized" only when a character was refused. A
+# verified native-only completion (including one with incomplete PRE
+# evidence) is not a failed normalization.
+RESOURCE_ATTENTION_OUTCOMES = (
+    "REFUSED_PRE_UNRESOLVED",
+)
+
+RESOURCE_CENSUS_KERNEL = None
+
+
+class ResourceStopSignal(Exception):
+    pass
+
+
+def resource_safe_stop_floors():
+    """(free_floor, largest_floor) when both floors are explicit positive
+    integers; None (policy disabled) otherwise."""
+    floors = (
+        RESOURCE_SAFE_STOP_FREE_FLOOR_BYTES,
+        RESOURCE_SAFE_STOP_LARGEST_FLOOR_BYTES,
+    )
+
+    for value in floors:
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, long))
+            or value <= 0
+        ):
+            return None
+
+    return (
+        int(floors[0]),
+        int(floors[1]),
+    )
+
+
+class _ResourceCensusKernel(object):
+    """The Win32 calls behind the admission census. VirtualQuery is called
+    through a private prototype: the process-wide kernel32.VirtualQuery is
+    never given argtypes, because each menu invocation re-executes this
+    script with new structure classes and other code calls it too."""
+
+    def __init__(self):
+        self.kernel32 = ctypes.windll.kernel32
+        self.virtual_query = ctypes.WINFUNCTYPE(
+            ctypes.c_size_t,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_size_t,
+        )(("VirtualQuery", self.kernel32))
+
+    def pointer_size(self):
+        return ctypes.sizeof(ctypes.c_void_p)
+
+    def region_info_size(self):
+        return ctypes.sizeof(_MemoryBasicInformation)
+
+    def application_bounds(self):
+        info = _SystemInfo()
+        self.kernel32.GetSystemInfo(ctypes.byref(info))
+        return (
+            _contextualizer_pointer_integer(info.lpMinimumApplicationAddress),
+            _contextualizer_pointer_integer(info.lpMaximumApplicationAddress),
+        )
+
+    def query(self, address):
+        """(returned_size, base_address, region_size, state)"""
+        mbi = _MemoryBasicInformation()
+        returned = int(
+            self.virtual_query(
+                address,
+                ctypes.addressof(mbi),
+                ctypes.sizeof(_MemoryBasicInformation),
+            )
+        )
+        return (
+            returned,
+            _contextualizer_pointer_integer(mbi.BaseAddress),
+            int(mbi.RegionSize),
+            int(mbi.State),
+        )
+
+
+def resource_vas_census(kernel=None):
+    """Complete-range VirtualQuery census for resource admission.
+
+    Admission metrics are set only after a complete, validated walk of the
+    32-bit application address range. A failed, short, inconsistent,
+    overflowing or non-advancing walk returns ok=False/complete=False with
+    the admission metrics cleared. Only primitive counters are kept."""
+    global RESOURCE_CENSUS_KERNEL
+    started = time.time()
+    query_count = 0
+    result = {
+        "ok": False,
+        "complete": False,
+        "free": None,
+        "largest_free": None,
+        "free_regions": None,
+        "query_count": 0,
+        "elapsed": None,
+        "error": None,
+    }
+
+    try:
+        if kernel is None:
+            if RESOURCE_CENSUS_KERNEL is None:
+                RESOURCE_CENSUS_KERNEL = _ResourceCensusKernel()
+            kernel = RESOURCE_CENSUS_KERNEL
+
+        if kernel.pointer_size() != 4:
+            raise RuntimeError("Resource admission requires the 32-bit SFM process.")
+
+        info_size = int(kernel.region_info_size())
+
+        if info_size != 28:
+            raise RuntimeError("Unexpected MEMORY_BASIC_INFORMATION size: %d." % info_size)
+
+        min_address, max_address = kernel.application_bounds()
+        min_address = int(min_address)
+        max_address = int(max_address)
+
+        if min_address <= 0 or max_address <= min_address:
+            raise RuntimeError("Invalid application-address bounds.")
+
+        limit = max_address + 1
+
+        if limit > 0x100000000:
+            raise RuntimeError("Overflowing application-address ceiling.")
+
+        MEM_COMMIT = 0x1000
+        MEM_RESERVE = 0x2000
+        MEM_FREE = 0x10000
+        address = min_address
+        total_free = 0
+        total_other = 0
+        largest_free = 0
+        free_regions = 0
+        complete = False
+
+        while address < limit:
+            returned, base, size, state = kernel.query(address)
+
+            if int(returned) != info_size:
+                raise RuntimeError(
+                    "VirtualQuery incomplete at 0x%08X: returned=%d expected=%d."
+                    % (address, returned, info_size)
+                )
+
+            query_count += 1
+            base = int(base)
+            size = int(size)
+
+            if size <= 0:
+                raise RuntimeError("VirtualQuery returned a zero-sized region.")
+
+            if state not in (MEM_COMMIT, MEM_RESERVE, MEM_FREE):
+                raise RuntimeError("VirtualQuery returned invalid State=0x%X." % state)
+
+            end = base + size
+
+            if base < 0 or not (base <= address < end) or end > 0x100000000:
+                raise RuntimeError("VirtualQuery region does not contain the queried address.")
+
+            span = min(end, limit) - max(base, min_address)
+
+            if span <= 0:
+                raise RuntimeError("VirtualQuery produced an empty in-range span.")
+
+            if state == MEM_FREE:
+                total_free += span
+                free_regions += 1
+                largest_free = max(largest_free, span)
+            else:
+                total_other += span
+
+            if end >= limit:
+                complete = True
+                address = limit
+                break
+
+            if end <= address:
+                raise RuntimeError("VirtualQuery address walk did not advance.")
+
+            address = end
+
+        if not complete:
+            raise RuntimeError("VirtualQuery did not cover the complete range.")
+
+        if total_free + total_other != limit - min_address:
+            raise RuntimeError("VirtualQuery census coverage mismatch.")
+
+        result.update({
+            "ok": True,
+            "complete": True,
+            "free": int(total_free),
+            "largest_free": int(largest_free),
+            "free_regions": int(free_regions),
+        })
+    except Exception as exc:
+        result["error"] = repr(exc)
+
+    result["query_count"] = int(query_count)
+    result["elapsed"] = time.time() - started
+    return result
+
+
+def resource_admission_decision(census, floors):
+    """STOP, UNKNOWN or ADMIT for one fresh census (never cached)."""
+    if not census.get("ok") or not census.get("complete"):
+        return {
+            "decision": "UNKNOWN",
+            "trigger": "INCOMPLETE_CENSUS",
+            "reason": census.get("error") or "incomplete census",
+        }
+
+    free = census.get("free")
+    largest = census.get("largest_free")
+
+    if (
+        isinstance(free, bool)
+        or isinstance(largest, bool)
+        or not isinstance(free, (int, long))
+        or not isinstance(largest, (int, long))
+        or free < 0
+        or largest < 0
+        or largest > free
+    ):
+        return {
+            "decision": "UNKNOWN",
+            "trigger": "INVALID_CENSUS",
+            "reason": "inconsistent census metrics free=%r largest=%r" % (free, largest),
+        }
+
+    stop_free = bool(free <= floors[0])
+    stop_largest = bool(largest <= floors[1])
+
+    if stop_free or stop_largest:
+        return {
+            "decision": "STOP",
+            "trigger": (
+                "FREE+LARGEST_FREE"
+                if stop_free and stop_largest
+                else ("FREE" if stop_free else "LARGEST_FREE")
+            ),
+            "reason": "at or below the production floor",
+        }
+
+    return {
+        "decision": "ADMIT",
+        "trigger": "NONE",
+        "reason": "both metrics above their floors",
+    }
+
+
 def contextualizer_virtual_address_sample():
     """
     Low-cadence VirtualQuery census of the current process address space.
@@ -845,19 +1305,23 @@ class ProbeError(Exception):
 
 
 class NormalizerProcessAttemptMarkerError(Exception):
-    # Raised when a process-lifetime scope-state marker (see
-    # NORMALIZER_PROCESS_STATE_SELECTED_USED_MARKER_NAME /
-    # NORMALIZER_PROCESS_STATE_FULL_SCOPE_STARTED_MARKER_NAME) cannot be
-    # reliably read, installed, or verified, or when the legacy marker
-    # (NORMALIZER_PROCESS_ATTEMPT_MARKER_NAME_LEGACY) is found without
-    # valid new-scheme state, or when both state markers are present at
-    # once (conflicting/malformed state). Every caller must treat this as
-    # a refusal requiring restart -- never as UNUSED, never a guess. Fail
-    # closed.
+    # Raised when the active-run lock, a restart-requirement record (see
+    # RESTART_MARKER_NAMES / RESTART_PROCESS_ATTRIBUTE) or a selected shot's
+    # canonical identity cannot be reliably read, installed or verified, or
+    # when a record is duplicated or malformed. Callers fail closed: it is
+    # never treated as "absent" or "clear".
     pass
 
 
 class NativePostFallback(Exception):
+    pass
+
+
+class PreBridgeUnresolved(Exception):
+    pass
+
+
+class PreCaptureRefusal(Exception):
     pass
 
 
@@ -1262,11 +1726,14 @@ def path_string(parts):
 
     return u"/".join(parts)
 
-def capture_tree(root):
+def capture_tree(root, excluded_handles=None, strict_reads=False):
     groups = {}
     memberships = {}
     duplicate_siblings = []
     duplicate_direct_controls = []
+    seen_group_handles = set()
+    active_group_handles = set()
+    member_rows = []
 
     def walk(
         group,
@@ -1282,13 +1749,48 @@ def capture_tree(root):
                 % path
             )
 
+        group_handle = handle(group)
+
+        if group_handle in active_group_handles:
+            raise ProbeError(
+                "Control-group cycle encountered: %r"
+                % path
+            )
+
+        if group_handle in seen_group_handles:
+            raise ProbeError(
+                "Repeated control-group identity encountered: %r"
+                % path
+            )
+
+        seen_group_handles.add(group_handle)
+        active_group_handles.add(group_handle)
+
         visible = is_visible(group)
         effective_visible = bool(
             ancestor_visible
             and visible
         )
 
-        child_groups = children(group)
+        if strict_reads:
+            try:
+                child_groups = pre_children_strict(group)
+            except Exception as exc:
+                raise ProbeError(
+                    "Unreadable PRE child groups at %r: %s" % (path, exc)
+                )
+        else:
+            child_groups = children(group)
+
+        if excluded_handles:
+            # PRE bridge view: occurrences resolved as non-authoritative are
+            # left out of the semantic view. Nothing in the scene changes.
+            child_groups = [
+                child
+                for child in child_groups
+                if handle(child) not in excluded_handles
+            ]
+
         child_names = [
             name(child)
             for child in child_groups
@@ -1313,11 +1815,29 @@ def capture_tree(root):
                     "count": count,
                 })
 
-        control_objs = direct_controls(group)
+        if strict_reads:
+            try:
+                control_objs = pre_direct_controls_strict(group)
+            except Exception as exc:
+                raise ProbeError(
+                    "Unreadable PRE control memberships at %r: %s" % (path, exc)
+                )
+        else:
+            control_objs = direct_controls(group)
+
         control_names = [
             name(control)
             for control in control_objs
         ]
+
+        for control in control_objs:
+            member_rows.append(
+                (
+                    path,
+                    to_unicode(name(control)),
+                    handle(control),
+                )
+            )
 
         direct_counts = {}
 
@@ -1373,6 +1893,8 @@ def capture_tree(root):
                 effective_visible,
             )
 
+        active_group_handles.discard(group_handle)
+
     walk(
         root,
         [],
@@ -1396,6 +1918,7 @@ def capture_tree(root):
         "duplicate_sibling_groups": duplicate_siblings,
         "duplicate_direct_controls": duplicate_direct_controls,
         "duplicate_memberships": duplicate_memberships,
+        "member_rows": member_rows,
     }
 
 def sha256_stream(path):
@@ -3361,7 +3884,125 @@ def validate_direct_anchor(
     }
 
 
+def rig_attribute_strict(obj, attr_name):
+    """Attribute value; unlike scalar(), raises when it cannot be read."""
+    a = obj.GetAttribute(attr_name)
+
+    if a is not None:
+        try:
+            return a.GetValue()
+        except Exception:
+            pass
+
+    return getattr(obj, attr_name)
+
+
+def rig_array_strict(obj, attr_name):
+    """Array attribute items; unlike arr(), raises when the array is absent
+    or cannot be read instead of reporting it as empty. A verified empty
+    array returns []. Null element references are returned as None."""
+    a = obj.GetAttribute(attr_name)
+
+    if a is None:
+        a = getattr(obj, attr_name, None)
+
+    if a is None:
+        raise ProbeError(
+            "%s absent on %r" % (attr_name, name(obj))
+        )
+
+    try:
+        count = int(a.Count())
+    except Exception:
+        count = len(a)
+
+    out = []
+
+    for i in xrange(count):
+        try:
+            out.append(a[i])
+        except Exception:
+            out.append(a.GetValue(i))
+
+    return out
+
+
+def pre_direct_controls_strict(group):
+    """A group's control memberships as PRE evidence. Unlike
+    direct_controls(), raises when the membership array is absent or cannot
+    be read, or when a member is null or its identity cannot be read. A
+    verified empty array returns []."""
+    controls = rig_array_strict(group, "controls")
+
+    for control in controls:
+        if control is None:
+            raise ProbeError(
+                "null control reference in %r" % name(group)
+            )
+
+        handle(control)
+
+    return controls
+
+
+def pre_children_strict(group):
+    """A group's child control groups as PRE evidence. Unlike children(),
+    raises when the child array is absent or cannot be read, or a child's
+    type cannot be read. Null child references are skipped, as in the
+    structural inspection."""
+    out = []
+
+    for child in rig_array_strict(group, "children"):
+        if child is None:
+            continue
+
+        if to_unicode(child.GetTypeString()) == u"DmeControlGroup":
+            out.append(child)
+
+    return out
+
+
+def rig_registry_records(rig, aset_handle):
+    """The distinct registry records of a rig that link one animation set. A
+    record referenced more than once counts once. Raises when the registry
+    cannot be read."""
+    records = []
+    seen = set()
+
+    for rec in rig_array_strict(rig, "animSetList"):
+        if typ(rec) != u"DmeRigAnimSetElements":
+            continue
+
+        linked = rig_attribute_strict(rec, "animationSet")
+
+        if linked is None or handle(linked) != aset_handle:
+            continue
+
+        rec_handle = handle(rec)
+
+        if rec_handle in seen:
+            continue
+
+        seen.add(rec_handle)
+        records.append(rec)
+
+    return records
+
+
 def discover_rig_context(shot, aset):
+    """Rig evidence for one animation set.
+
+    Each rig counts once by identity. A rig is associated when
+    HasAnimationSet says so. When that call fails, only a positive explicit
+    registry link recovers the association. An absent link (the registry is
+    not known to be complete) or an unreadable registry leaves the
+    association unresolved; such a rig is recorded in association_unreadable,
+    never as unrelated, and the target is refused.
+
+    Of the distinct associated rigs, the authority the contextual composer
+    uses is the one whose single registry record owns controls of this set.
+    Another associated rig is tolerated only when its single record owns
+    none of the set's controls and hides no group the authority does not."""
     result = {
         "status": "UNRIGGED",
         "rig": None,
@@ -3373,6 +4014,12 @@ def discover_rig_context(shot, aset):
         "owned_handles": set(),
         "owned_names_in_order": [],
         "hidden_groups": [],
+        "associated_rigs": [],
+        "repeated_rig_references": 0,
+        "association_from_registry": [],
+        "association_unreadable": [],
+        "authority_rows": [],
+        "non_contributing_rigs": [],
     }
 
     scene = scalar(shot, "scene")
@@ -3387,119 +4034,239 @@ def discover_rig_context(shot, aset):
         result["status"] = "RIG_CONTEXT_UNAVAILABLE"
         return result
 
-    rigs = []
-    matches = []
-
     try:
         objs = reachable(scene)
     except Exception:
         result["status"] = "RIG_TRAVERSAL_FAILED"
         return result
 
+    aset_handle = handle(aset)
+    seen_rigs = set()
+    rigs = []
+    matches = []
+
     for obj in objs:
         if typ(obj) != u"DmeRig":
             continue
 
+        rig_handle = handle(obj)
+
+        if rig_handle in seen_rigs:
+            result["repeated_rig_references"] += 1
+            continue
+
+        seen_rigs.add(rig_handle)
         rigs.append(obj)
 
         try:
-            if bool(obj.HasAnimationSet(aset)):
-                matches.append(obj)
-        except Exception:
-            pass
+            associated = bool(obj.HasAnimationSet(aset))
+        except Exception as exc:
+            # Only a positive explicit registry link recovers the
+            # association. An absent link does not prove the rig unrelated:
+            # the registry is not known to be complete.
+            try:
+                linked = bool(
+                    rig_registry_records(obj, aset_handle)
+                )
+                registry_note = (
+                    "registry links this set"
+                    if linked
+                    else "no registry link (completeness unproven)"
+                )
+            except Exception as registry_exc:
+                linked = False
+                registry_note = "registry unreadable: %s" % registry_exc
+
+            if not linked:
+                result["association_unreadable"].append(
+                    (rig_handle, name(obj), str(exc), registry_note)
+                )
+                continue
+
+            result["association_from_registry"].append(
+                (rig_handle, name(obj), registry_note)
+            )
+            associated = True
+
+        if associated:
+            matches.append(obj)
 
     result["reachable_rig_count"] = len(rigs)
     result["matching_rig_count"] = len(matches)
+    result["associated_rigs"] = [
+        (handle(rig), name(rig))
+        for rig in matches
+    ]
+
+    if result["association_unreadable"]:
+        result["status"] = "RIG_ASSOCIATION_UNREADABLE"
+        return result
 
     if not matches:
         result["status"] = "UNRIGGED"
         return result
 
-    if len(matches) != 1:
+    try:
+        control_objs = rig_array_strict(aset, "controls")
+        control_handles = set([
+            handle(control)
+            for control in control_objs
+        ])
+    except Exception as exc:
+        result["status"] = "TARGET_CONTROLS_UNREADABLE"
+        result["authority_rows"] = [("target controls", str(exc))]
+        return result
+
+    rows = []
+
+    for rig in matches:
+        row = {
+            "rig": rig,
+            "rig_handle": handle(rig),
+            "records": None,
+            "registry": None,
+            "owned_handles": set(),
+            "hidden_groups": [],
+            "authority": None,
+        }
+        rows.append(row)
+
+        try:
+            records = rig_registry_records(rig, aset_handle)
+        except Exception:
+            row["authority"] = "REGISTRY_UNREADABLE"
+            continue
+
+        row["records"] = len(records)
+
+        if len(records) != 1:
+            row["authority"] = "REGISTRY_AMBIGUOUS"
+            continue
+
+        registry = records[0]
+        row["registry"] = registry
+        registry_handles = set()
+
+        try:
+            for obj in rig_array_strict(registry, "elementList"):
+                if obj is not None:
+                    registry_handles.add(handle(obj))
+        except Exception as exc:
+            row["authority"] = "OWNERSHIP_UNREADABLE"
+            row["detail"] = str(exc)
+            continue
+
+        try:
+            hidden_items = rig_array_strict(registry, "hiddenGroups")
+        except Exception as exc:
+            row["authority"] = "HIDDEN_GROUPS_UNREADABLE"
+            row["detail"] = str(exc)
+            continue
+
+        if any([item is None for item in hidden_items]):
+            row["authority"] = "HIDDEN_GROUPS_UNREADABLE"
+            row["detail"] = "null hidden-group entry"
+            continue
+
+        row["owned_handles"] = (
+            control_handles
+            .intersection(registry_handles)
+        )
+        row["hidden_groups"] = [
+            to_unicode(x)
+            for x in hidden_items
+        ]
+        row["authority"] = (
+            "OWNS_CONTROLS"
+            if row["owned_handles"]
+            else "ZERO_OWNERSHIP"
+        )
+
+    result["authority_rows"] = [
+        (
+            row["rig_handle"],
+            name(row["rig"]),
+            row["authority"],
+            row["records"],
+            len(row["owned_handles"]),
+            list(row["hidden_groups"]),
+            row.get("detail"),
+        )
+        for row in rows
+    ]
+
+    # Evidence that could not be read is never treated as empty, for the
+    # selected authority and for any other associated rig alike.
+    if any([
+            row["authority"] in (
+                "REGISTRY_UNREADABLE",
+                "OWNERSHIP_UNREADABLE",
+                "HIDDEN_GROUPS_UNREADABLE")
+            for row in rows]):
+        result["status"] = "RIG_EVIDENCE_UNREADABLE"
+        return result
+
+    owners = [
+        row
+        for row in rows
+        if row["authority"] == "OWNS_CONTROLS"
+    ]
+
+    if len(owners) != 1:
+        if len(rows) == 1:
+            row = rows[0]
+            result["rig"] = row["rig"]
+            result["rig_handle"] = row["rig_handle"]
+            result["status"] = {
+                "ZERO_OWNERSHIP": "STALE_ZERO_OWNERSHIP_RIG",
+            }.get(row["authority"], "AMBIGUOUS_RIG_REGISTRY")
+
+            if row["registry"] is not None:
+                result["registry"] = row["registry"]
+                result["registry_handle"] = handle(row["registry"])
+        else:
+            result["status"] = "AMBIGUOUS_MULTIPLE_RIGS"
+
+        return result
+
+    authority = owners[0]
+    others = [
+        row
+        for row in rows
+        if row is not authority
+    ]
+
+    if not all([
+            row["authority"] == "ZERO_OWNERSHIP"
+            and set(row["hidden_groups"]).issubset(
+                set(authority["hidden_groups"]))
+            for row in others]):
         result["status"] = "AMBIGUOUS_MULTIPLE_RIGS"
         return result
 
-    rig = matches[0]
-
-    registry_matches = []
-
-    for rec in arr(rig, "animSetList"):
-        if typ(rec) != u"DmeRigAnimSetElements":
-            continue
-
-        linked = scalar(rec, "animationSet")
-
-        try:
-            same = bool(
-                linked is not None
-                and handle(linked) == handle(aset)
-            )
-        except Exception:
-            same = False
-
-        if same:
-            registry_matches.append(rec)
-
-    if len(registry_matches) != 1:
-        result["status"] = "AMBIGUOUS_RIG_REGISTRY"
-        result["rig"] = rig
-        result["rig_handle"] = handle(rig)
-        return result
-
-    registry = registry_matches[0]
-
-    control_objs = arr(aset, "controls")
-    control_handles = set([
-        handle(control)
-        for control in control_objs
-    ])
-
-    registry_handles = set()
-
-    for obj in arr(registry, "elementList"):
-        try:
-            registry_handles.add(handle(obj))
-        except Exception:
-            pass
-
-    owned_handles = (
-        control_handles
-        .intersection(registry_handles)
-    )
-
-    if not owned_handles:
-        result["status"] = "STALE_ZERO_OWNERSHIP_RIG"
-        result["rig"] = rig
-        result["registry"] = registry
-        result["rig_handle"] = handle(rig)
-        result["registry_handle"] = handle(registry)
-        return result
+    result["non_contributing_rigs"] = [
+        row["rig_handle"]
+        for row in others
+    ]
 
     owned_names = []
 
     for control in control_objs:
-        if handle(control) in owned_handles:
+        if handle(control) in authority["owned_handles"]:
             owned_names.append(name(control))
 
     result.update({
         "status": "SUPPORTED_ACTIVE_RIG",
-        "rig": rig,
-        "registry": registry,
-        "rig_handle": handle(rig),
-        "registry_handle": handle(registry),
-        "owned_handles": owned_handles,
+        "rig": authority["rig"],
+        "registry": authority["registry"],
+        "rig_handle": authority["rig_handle"],
+        "registry_handle": handle(authority["registry"]),
+        "owned_handles": authority["owned_handles"],
         "owned_names_in_order": owned_names,
-        "hidden_groups": [
-            to_unicode(x)
-            for x in arr(
-                registry,
-                "hiddenGroups"
-            )
-        ],
+        "hidden_groups": authority["hidden_groups"],
     })
 
     return result
-
 
 def strip_reconciliation_wrapper(path):
     p = to_unicode(path)
@@ -3611,6 +4378,8 @@ def capture_snapshot_explicit(
     aset,
     label,
     rig_context=None,
+    excluded_handles=None,
+    strict_reads=False,
 ):
     if rig_context is None:
         rig_context = discover_rig_context(
@@ -3695,7 +4464,11 @@ def capture_snapshot_explicit(
             in controls_by_name.items()
         ])
 
-    tree = capture_tree(root)
+    tree = capture_tree(
+        root,
+        excluded_handles,
+        strict_reads,
+    )
 
     owned_names = []
 
@@ -3776,6 +4549,9 @@ def capture_snapshot_explicit(
         "duplicate_memberships": tree[
             "duplicate_memberships"
         ],
+        "member_rows": tree[
+            "member_rows"
+        ],
         "rig_recon_exists": bool(
             RIG_RECON_ROOT
             in tree[
@@ -3788,6 +4564,1475 @@ def capture_snapshot_explicit(
                 "groups"
             ]
         ),
+    }
+
+
+# Identity-aware PRE bridge. Strict PRE capture refuses repeated semantic
+# group paths. Rig scripts leave such repeats under RigArms/RigLegs when a rig
+# is attached, detached and attached again. This bridge reads every group
+# occurrence by identity and resolves a repeated path only when the facts
+# the policy needs are unique:
+#   - an occurrence whose subtree holds no control (EMPTY) is left out;
+#   - exactly one occurrence holding rig-owned controls of the single
+#     supported active rig (RIG) is the presentation for that path;
+#   - an occurrence holding only non-owned controls (RESIDUAL) is left out
+#     only when every one of those controls has an independent Master
+#     interpretation as a finger, carpal or toe control (the families the
+#     policy re-derives from native POST);
+#   - anything else is unresolved.
+# Excluded occurrences are only omitted from the semantic PRE view; no scene
+# object is changed before native Rebuild.
+PRE_BRIDGE_FAMILIES = (
+    u"RigArms",
+    u"RigLegs",
+)
+
+PRE_BRIDGE_MAX_GROUP_OCCURRENCES = 20000
+
+PRE_BRIDGE_RESIDUAL_MASTER_DESTINATIONS = (
+    u"Arms/LeftArm/LeftFingers",
+    u"Arms/LeftArm/LeftCarpals",
+    u"Arms/RightArm/RightFingers",
+    u"Arms/RightArm/RightCarpals",
+    u"Toes/LeftToes",
+    u"Toes/RightToes",
+)
+
+PRE_REFUSAL_TERMINAL_STATUS = "REFUSED_PRE_UNRESOLVED"
+
+PRE_REFUSAL_USER_MESSAGE = (
+    "This character's rig groups could not be resolved safely, "
+    "so it was left unchanged."
+)
+
+
+def capture_group_occurrences(root):
+    occurrences = []
+    by_handle = {}
+    stack = [
+        (
+            root,
+            [],
+            None,
+            (),
+            True,
+        )
+    ]
+
+    while stack:
+        group, parts, parent_handle, ancestors, ancestor_visible = stack.pop()
+        path = path_string(parts)
+
+        try:
+            group_handle = handle(group)
+        except Exception:
+            raise PreBridgeUnresolved(
+                "unreadable control-group identity at %r" % path
+            )
+
+        if group_handle in ancestors:
+            raise PreBridgeUnresolved(
+                "control-group cycle at %r" % path
+            )
+
+        if group_handle in by_handle:
+            raise PreBridgeUnresolved(
+                "repeated control-group identity at %r" % path
+            )
+
+        if len(by_handle) >= PRE_BRIDGE_MAX_GROUP_OCCURRENCES:
+            raise PreBridgeUnresolved(
+                "control-group tree exceeds %d occurrences"
+                % PRE_BRIDGE_MAX_GROUP_OCCURRENCES
+            )
+
+        try:
+            control_objs = pre_direct_controls_strict(group)
+        except Exception as exc:
+            raise PreBridgeUnresolved(
+                "unreadable control memberships at %r: %s" % (path, exc)
+            )
+
+        try:
+            child_groups = pre_children_strict(group)
+        except Exception as exc:
+            raise PreBridgeUnresolved(
+                "unreadable child groups at %r: %s" % (path, exc)
+            )
+
+        try:
+            effective_visible = bool(
+                ancestor_visible
+                and is_visible(group)
+            )
+            control_rows = [
+                (
+                    to_unicode(name(control)),
+                    handle(control),
+                )
+                for control in control_objs
+            ]
+            child_rows = [
+                (
+                    child,
+                    to_unicode(name(child)),
+                )
+                for child in child_groups
+            ]
+        except Exception as exc:
+            raise PreBridgeUnresolved(
+                "unreadable control group at %r: %s" % (path, exc)
+            )
+
+        occurrence = {
+            "handle": group_handle,
+            "parent": parent_handle,
+            "path": path,
+            "effective_visible": effective_visible,
+            "controls": control_rows,
+            "children": [],
+        }
+        occurrences.append(occurrence)
+        by_handle[group_handle] = occurrence
+
+        if parent_handle is not None:
+            by_handle[parent_handle]["children"].append(
+                group_handle
+            )
+
+        for child, child_name in reversed(child_rows):
+            stack.append(
+                (
+                    child,
+                    parts + [child_name],
+                    group_handle,
+                    ancestors + (group_handle,),
+                    effective_visible,
+                )
+            )
+
+    return occurrences, by_handle
+
+
+def resolve_pre_duplicate_bridge(root, rig_context, master, target_controls):
+    if (
+        rig_context is None
+        or rig_context.get("status") != "SUPPORTED_ACTIVE_RIG"
+    ):
+        raise PreBridgeUnresolved(
+            "repeated PRE group paths need exactly one supported active rig; "
+            "rig status=%r"
+            % (
+                None
+                if rig_context is None
+                else rig_context.get("status"),
+            )
+        )
+
+    owned_handles = set(
+        rig_context["owned_handles"]
+    )
+
+    occurrences, by_handle = capture_group_occurrences(
+        root
+    )
+
+    by_path = {}
+
+    for occurrence in occurrences:
+        by_path.setdefault(
+            occurrence["path"],
+            [],
+        ).append(occurrence)
+
+    duplicate_paths = sorted(
+        [
+            path
+            for path, rows in by_path.items()
+            if len(rows) > 1
+        ],
+        key=lambda path: (
+            path.count(u"/"),
+            path,
+        ),
+    )
+
+    if not duplicate_paths:
+        raise PreBridgeUnresolved(
+            "no repeated group path found"
+        )
+
+    excluded = set()
+
+    def is_live(occurrence):
+        current = occurrence
+
+        while current is not None:
+            if current["handle"] in excluded:
+                return False
+
+            current = (
+                by_handle[current["parent"]]
+                if current["parent"] is not None
+                else None
+            )
+
+        return True
+
+    def subtree_controls(occurrence):
+        rows = []
+        stack = [occurrence]
+
+        while stack:
+            current = stack.pop()
+            rows.extend([
+                (
+                    control_name,
+                    control_handle,
+                    current["effective_visible"],
+                )
+                for control_name, control_handle in current["controls"]
+            ])
+
+            for child_handle in current["children"]:
+                stack.append(by_handle[child_handle])
+
+        return rows
+
+    decisions = []
+    visible_residual_controls = set()
+
+    for path in duplicate_paths:
+        parts = path.split(u"/")
+
+        if len(parts) < 2 or parts[0] not in PRE_BRIDGE_FAMILIES:
+            raise PreBridgeUnresolved(
+                "repeated group path outside the supported rig-side families: %r"
+                % path
+            )
+
+        live = [
+            occurrence
+            for occurrence in by_path[path]
+            if is_live(occurrence)
+        ]
+
+        if len(live) <= 1:
+            continue
+
+        classified = []
+
+        for occurrence in live:
+            rows = subtree_controls(occurrence)
+
+            if any([
+                    row[1] in owned_handles
+                    for row in rows]):
+                kind = "RIG"
+            elif not rows:
+                kind = "EMPTY"
+            else:
+                kind = "RESIDUAL"
+
+            classified.append(
+                (
+                    kind,
+                    occurrence,
+                    rows,
+                )
+            )
+
+        if len([
+                row
+                for row in classified
+                if row[0] == "RIG"]) > 1:
+            raise PreBridgeUnresolved(
+                "more than one occurrence of %r holds rig-owned controls"
+                % path
+            )
+
+        for kind, occurrence, rows in classified:
+            if kind == "RIG":
+                continue
+
+            if kind == "RESIDUAL":
+                for control_name, control_handle, was_visible in rows:
+                    if target_controls.get(control_handle) != control_name:
+                        raise PreBridgeUnresolved(
+                            "foreign control object %r (handle %r) would be "
+                            "excluded from a non-rig occurrence of %r"
+                            % (
+                                control_name,
+                                control_handle,
+                                path,
+                            )
+                        )
+
+                    lookup = master_lookup(
+                        master,
+                        control_name,
+                    )
+                    destination = (
+                        to_unicode(lookup["destination"])
+                        if lookup["known"]
+                        else None
+                    )
+
+                    if (
+                        destination
+                        not in PRE_BRIDGE_RESIDUAL_MASTER_DESTINATIONS
+                    ):
+                        raise PreBridgeUnresolved(
+                            "control %r in a non-rig occurrence of %r has no "
+                            "independent finger/carpal/toe interpretation "
+                            "(Master destination %r)"
+                            % (
+                                control_name,
+                                path,
+                                destination,
+                            )
+                        )
+
+                    if was_visible:
+                        visible_residual_controls.add(
+                            control_name
+                        )
+
+            excluded.add(
+                occurrence["handle"]
+            )
+            decisions.append(
+                (
+                    path,
+                    kind,
+                    len(rows),
+                )
+            )
+
+    remaining = sorted([
+        path
+        for path, rows in by_path.items()
+        if len([
+            occurrence
+            for occurrence in rows
+            if is_live(occurrence)]) > 1
+    ])
+
+    if remaining:
+        raise PreBridgeUnresolved(
+            "repeated group paths remain unresolved: %r"
+            % remaining[:10]
+        )
+
+    # Complete, unfiltered memberships of every control left out of the view.
+    all_memberships = {}
+    live_memberships = {}
+
+    for occurrence in occurrences:
+        for control_name, control_handle in occurrence["controls"]:
+            all_memberships.setdefault(control_handle, []).append(
+                occurrence["path"]
+            )
+
+            if is_live(occurrence):
+                live_memberships.setdefault(control_handle, []).append(
+                    occurrence["path"]
+                )
+
+    excluded_memberships = []
+
+    for occurrence in occurrences:
+        if is_live(occurrence):
+            continue
+
+        for control_name, control_handle in occurrence["controls"]:
+            excluded_memberships.append(
+                (
+                    control_name,
+                    control_handle,
+                    all_memberships.get(control_handle, []),
+                    live_memberships.get(control_handle, []),
+                )
+            )
+
+    return excluded, {
+        "occurrences": len(occurrences),
+        "duplicate_paths": duplicate_paths,
+        "excluded": decisions,
+        "visible_residual_controls": sorted(visible_residual_controls),
+        "excluded_memberships": excluded_memberships,
+    }
+
+
+def control_identity_failures(snapshot, reference=None):
+    """Exact control identity: the target's controls are the same objects as
+    in the reference capture, and no other object stands in any group under
+    a target control's name."""
+    expected = (
+        reference
+        if reference is not None
+        else snapshot
+    )["control_handles"]
+    failures = []
+
+    if (
+        reference is not None
+        and snapshot["control_handles"] != reference["control_handles"]
+    ):
+        failures.append(
+            ("target_control_identity_changed",)
+        )
+
+    for path, control_name, control_handle in snapshot.get("member_rows", []):
+        wanted = expected.get(control_name)
+
+        if wanted is not None and control_handle != wanted:
+            failures.append(
+                (
+                    "foreign_object_under_target_name",
+                    path,
+                    control_name,
+                    control_handle,
+                )
+            )
+
+    return failures
+
+
+def resolve_pre_name_keyed_facts(pre, master):
+    """The name-keyed PRE facts the contextual policy needs on a rigged
+    target. Refused: exact duplicate control names, and a foreign object
+    under a target control's name.
+
+    A control object referenced by several groups is resolved with the
+    existing contextual rules. The classifier gives a control's PRE path
+    meaning only for a rig-owned control in an effectively visible PRE
+    group: _active_rig_counterpart_destination refines a Master destination
+    from that source path, and a Master-unknown control keeps its
+    (canonicalized) source path. Hidden memberships carry no path
+    obligation, and a non-owned control's destination comes from Master and
+    native POST.
+
+    The reference is accepted when every visible membership of a rig-owned
+    control gives one outcome under every rig-family evidence combination.
+    The PRE view then keeps one visible membership (the first, else the first
+    hidden one), so the classifier applies that outcome and the visibility
+    obligation stays. Returns (conflicts, resolved, view)."""
+    if pre["duplicate_control_names"]:
+        return (
+            [
+                "exact duplicate control names %r"
+                % sorted(pre["duplicate_control_names"].keys())[:10]
+            ],
+            [],
+            pre,
+        )
+
+    conflicts = [
+        "foreign control object (handle %r) named like target control %r at %r"
+        % (failure[3], failure[2], failure[1])
+        for failure in control_identity_failures(pre)
+    ]
+    owned = set([
+        to_unicode(x)
+        for x in pre["owned_control_name_set"]
+    ])
+    resolved = []
+    keep = {}
+
+    for control_name, paths in sorted(pre["duplicate_memberships"].items()):
+        control_name = to_unicode(control_name)
+        unique_paths = []
+
+        for path in paths:
+            if to_unicode(path) not in unique_paths:
+                unique_paths.append(to_unicode(path))
+
+        visible = [
+            path
+            for path in unique_paths
+            if pre["groups"][path]["effective_visible"]
+        ]
+        outcomes = None
+
+        if control_name in owned and len(visible) > 1:
+            try:
+                lookup = master_lookup(master, control_name)
+            except Exception as exc:
+                conflicts.append(
+                    "control %r is referenced by %r and its Master "
+                    "destination is ambiguous: %s"
+                    % (control_name, unique_paths, exc)
+                )
+                continue
+
+            outcomes = {}
+
+            for has_rigarms in (True, False):
+                for has_riglegs in (True, False):
+                    if lookup["known"]:
+                        outcomes[(has_rigarms, has_riglegs)] = sorted(set([
+                            _active_rig_counterpart_destination(
+                                lookup["destination"],
+                                path,
+                                has_rigarms,
+                                has_riglegs,
+                                master,
+                            )
+                            for path in visible
+                        ]))
+                    else:
+                        outcomes[(has_rigarms, has_riglegs)] = sorted(set([
+                            _canonicalize_context_path(path, master)
+                            for path in visible
+                        ]))
+
+            destination = (
+                to_unicode(lookup["destination"])
+                if lookup["known"]
+                else u""
+            )
+            root_dependent = bool(
+                u"<ROOT>" in visible
+                and (
+                    destination.startswith(u"Arms/")
+                    or destination.startswith(u"Legs/")
+                    or destination == u"Body"
+                )
+            )
+
+            if root_dependent or any([
+                    len(values) != 1
+                    for values in outcomes.values()]):
+                conflicts.append(
+                    "control %r has visible memberships %r with conflicting "
+                    "contextual outcomes %r%s"
+                    % (
+                        control_name,
+                        visible,
+                        sorted(outcomes.items()),
+                        " (root-direct refinement depends on native POST)"
+                        if root_dependent
+                        else "",
+                    )
+                )
+                continue
+
+        representative = (
+            visible[0]
+            if visible
+            else unique_paths[0]
+        )
+        keep[control_name] = representative
+        resolved.append(
+            (
+                control_name,
+                unique_paths,
+                representative,
+                None
+                if outcomes is None
+                else sorted(set([
+                    value[0]
+                    for value in outcomes.values()
+                ])),
+            )
+        )
+
+    if conflicts or not keep:
+        return conflicts, resolved, pre
+
+    view = dict(pre)
+    view["groups"] = dict(pre["groups"])
+    view["memberships"] = dict(pre["memberships"])
+    view["duplicate_memberships"] = dict([
+        (control_name, paths)
+        for control_name, paths in pre["duplicate_memberships"].items()
+        if to_unicode(control_name) not in keep
+    ])
+
+    for control_name, representative in keep.items():
+        view["memberships"][control_name] = [representative]
+
+        for path in set([
+                to_unicode(x)
+                for x in pre["memberships"][control_name]]):
+            meta = dict(view["groups"][path])
+            names = []
+
+            for direct_name in meta["direct_control_names_in_order"]:
+                if to_unicode(direct_name) == control_name:
+                    if path != representative or control_name in names:
+                        continue
+                names.append(direct_name)
+
+            meta["direct_control_names_in_order"] = names
+            view["groups"][path] = meta
+
+    return conflicts, resolved, view
+
+def inspect_group_structure(root):
+    """Identity walk of the whole control-group graph that reads only group
+    identities and child-group references. Returns one of
+      ("CLEAR", group_count)      the walk completed with no hazard;
+      ("HAZARD", reason)          a group cycle or a group object reachable twice;
+      ("INCOMPLETE", reason)      the walk could not finish (unreadable
+                                  identity or child list, or the size bound).
+    Only CLEAR admits a target."""
+    stack = [
+        (
+            root,
+            u"<ROOT>",
+            (),
+        )
+    ]
+    seen = set()
+    path = u"<ROOT>"
+
+    try:
+        while stack:
+            group, path, ancestors = stack.pop()
+            group_handle = handle(group)
+
+            if group_handle in ancestors:
+                return (
+                    "HAZARD",
+                    "control-group cycle at %r" % path,
+                )
+
+            if group_handle in seen:
+                return (
+                    "HAZARD",
+                    "repeated control-group identity at %r" % path,
+                )
+
+            seen.add(group_handle)
+
+            if len(seen) > PRE_BRIDGE_MAX_GROUP_OCCURRENCES:
+                return (
+                    "INCOMPLETE",
+                    "inspection incomplete: more than %d groups"
+                    % PRE_BRIDGE_MAX_GROUP_OCCURRENCES,
+                )
+
+            for child in rig_array_strict(group, "children"):
+                if child is None:
+                    continue
+
+                if to_unicode(child.GetTypeString()) != u"DmeControlGroup":
+                    continue
+
+                stack.append(
+                    (
+                        child,
+                        (
+                            name(child)
+                            if path == u"<ROOT>"
+                            else path + u"/" + name(child)
+                        ),
+                        ancestors + (group_handle,),
+                    )
+                )
+    except Exception as exc:
+        return (
+            "INCOMPLETE",
+            "inspection incomplete at %r: %s" % (path, exc),
+        )
+
+    return (
+        "CLEAR",
+        len(seen),
+    )
+
+def pre_rig_admission_detail(pre_rig):
+    return (
+        "%s associated_rigs=%r authority=%r association_unreadable=%r "
+        "association_from_registry=%r"
+        % (
+            pre_rig.get("status"),
+            pre_rig.get("associated_rigs"),
+            pre_rig.get("authority_rows"),
+            pre_rig.get("association_unreadable"),
+            pre_rig.get("association_from_registry"),
+        )
+    )
+
+
+def prepare_pre_snapshot(shot, aset, root, master):
+    """Operation-specific PRE admission, decided before any native mutation
+    whether or not strict capture succeeds. Three facts are established:
+      1. the group structure is readable, with no group cycle and no group
+         object reachable twice;
+      2. for contextual reconciliation, the rig evidence gives exactly one
+         ownership/presentation authority (SUPPORTED_ACTIVE_RIG) and the
+         name-keyed PRE facts are unambiguous;
+      3. otherwise, the only qualified native-only pathway: a positively
+         unrigged target.
+
+    mode STRICT      strict capture succeeded and the target is admitted
+    mode BRIDGED     repeated paths resolved; strict capture of the resolved view
+    mode NATIVE_ONLY positively unrigged target whose PRE could not be captured
+    mode REFUSE      the caller must not start native Rebuild
+    """
+    admission = {
+        "structure": None,
+        "structure_inspection": None,
+        "contextual_authority": None,
+        "native_only_pathway": None,
+        "redundant_references_resolved": [],
+    }
+    result = {
+        "mode": None,
+        "pre": None,
+        "pre_rig": None,
+        "error": None,
+        "bridge": None,
+        "admission": admission,
+    }
+
+    try:
+        pre_rig = discover_rig_context(
+            shot,
+            aset,
+        )
+    except Exception as exc:
+        result["mode"] = "REFUSE"
+        result["error"] = "rig context unreadable: %s" % exc
+        return result
+
+    result["pre_rig"] = pre_rig
+    status = pre_rig.get("status")
+    admission["contextual_authority"] = status
+
+    if status not in (
+            "SUPPORTED_ACTIVE_RIG",
+            "UNRIGGED"):
+        admission["native_only_pathway"] = "NOT_QUALIFIED"
+        result["mode"] = "REFUSE"
+        result["error"] = (
+            "rig admission refused: %s"
+            % pre_rig_admission_detail(pre_rig)
+        )
+        return result
+
+    inspection = inspect_group_structure(root)
+    admission["structure_inspection"] = inspection
+
+    if inspection[0] != "CLEAR":
+        admission["structure"] = inspection[0]
+        admission["native_only_pathway"] = (
+            "NOT_ADMITTED"
+            if status == "UNRIGGED"
+            else "NOT_QUALIFIED"
+        )
+        result["mode"] = "REFUSE"
+        result["error"] = "group structure not cleared; structure: %s" % (
+            inspection[1],
+        )
+        return result
+
+    try:
+        pre = capture_snapshot_explicit(
+            shot,
+            aset,
+            "PRE",
+            pre_rig,
+            None,
+            True,
+        )
+        strict_error = None
+    except Exception as exc:
+        pre = None
+        strict_error = str(exc)
+
+    if status == "UNRIGGED":
+        admission["native_only_pathway"] = "POSITIVELY_UNRIGGED"
+
+        if strict_error is None:
+            admission["structure"] = "READABLE"
+            result["mode"] = "STRICT"
+            result["pre"] = pre
+            return result
+
+        result["error"] = strict_error
+        admission["structure"] = "NOT_CAPTURED_FOR_CONTEXTUAL"
+        result["mode"] = "NATIVE_ONLY"
+        return result
+
+    admission["native_only_pathway"] = "NOT_QUALIFIED"
+    mode = "STRICT"
+
+    if strict_error is not None:
+        result["error"] = strict_error
+
+        if not strict_error.startswith(
+                "Duplicate semantic group path encountered"):
+            admission["structure"] = "STRICT_CAPTURE_FAILED"
+            result["mode"] = "REFUSE"
+            return result
+
+        try:
+            excluded, report = resolve_pre_duplicate_bridge(
+                root,
+                pre_rig,
+                master,
+                dict([
+                    (handle(control), to_unicode(name(control)))
+                    for control in arr(aset, "controls")
+                ]),
+            )
+            pre = capture_snapshot_explicit(
+                shot,
+                aset,
+                "PRE",
+                pre_rig,
+                excluded,
+                True,
+            )
+        except Exception as exc:
+            admission["structure"] = "BRIDGE_UNRESOLVED"
+            result["mode"] = "REFUSE"
+            result["error"] = "%s; bridge: %s" % (strict_error, exc)
+            return result
+
+        pre["pre_bridge"] = report
+        result["bridge"] = report
+        mode = "BRIDGED"
+
+    conflicts, resolved, view = resolve_pre_name_keyed_facts(
+        pre,
+        master,
+    )
+    admission["redundant_references_resolved"] = resolved
+
+    if conflicts:
+        admission["structure"] = "NAME_KEYED_FACTS_UNRESOLVED"
+        result["mode"] = "REFUSE"
+        result["error"] = "%s; name-keyed: %s" % (
+            result["error"] or "PRE capture passed",
+            "; ".join(conflicts[:5]),
+        )
+        return result
+
+    admission["structure"] = "READABLE"
+    result["mode"] = mode
+    result["pre"] = view
+    return result
+
+PRE_REASON_CODES = (
+    ("repeated PRE group paths need exactly one supported active rig",
+     "PRE_BRIDGE_RIG_NOT_SINGLE_SUPPORTED"),
+    ("unreadable control memberships at", "PRE_BRIDGE_MEMBERSHIP_UNREADABLE"),
+    ("unreadable child groups at", "PRE_BRIDGE_CHILDREN_UNREADABLE"),
+    ("Unreadable PRE control memberships at", "PRE_STRICT_MEMBERSHIP_UNREADABLE"),
+    ("Unreadable PRE child groups at", "PRE_STRICT_CHILDREN_UNREADABLE"),
+    ("unreadable control-group identity", "PRE_BRIDGE_GROUP_UNREADABLE"),
+    ("unreadable control group", "PRE_BRIDGE_GROUP_UNREADABLE"),
+    ("control-group cycle at", "PRE_BRIDGE_GROUP_CYCLE"),
+    ("repeated control-group identity at", "PRE_BRIDGE_REPEATED_GROUP_IDENTITY"),
+    ("control-group tree exceeds", "PRE_BRIDGE_RESOURCE_LIMIT"),
+    ("repeated group path outside the supported rig-side families",
+     "PRE_BRIDGE_PATH_OUTSIDE_RIG_FAMILIES"),
+    ("holds rig-owned controls", "PRE_BRIDGE_CONFLICTING_RIG_OWNED"),
+    ("no independent finger/carpal/toe interpretation", "PRE_BRIDGE_RESIDUAL_UNINTERPRETED"),
+    ("repeated group paths remain unresolved", "PRE_BRIDGE_UNRESOLVED_REMAINING"),
+    ("no repeated group path found", "PRE_BRIDGE_NO_REPEATED_PATH"),
+    ("rig association unreadable", "PRE_RIG_ASSOCIATION_UNREADABLE"),
+    ("rig context unreadable", "PRE_RIG_CONTEXT_UNREADABLE"),
+    ("Control-group cycle encountered", "PRE_STRICT_GROUP_CYCLE"),
+    ("Repeated control-group identity encountered", "PRE_STRICT_REPEATED_GROUP_IDENTITY"),
+    ("Duplicate semantic group path encountered", "PRE_STRICT_REPEATED_GROUP_PATH"),
+    ("rig admission refused: RIG_ASSOCIATION_UNREADABLE", "PRE_ADMISSION_ASSOCIATION_UNREADABLE"),
+    ("rig admission refused: AMBIGUOUS_MULTIPLE_RIGS", "PRE_ADMISSION_RIG_AUTHORITY_UNRESOLVED"),
+    ("rig admission refused: AMBIGUOUS_RIG_REGISTRY", "PRE_ADMISSION_REGISTRY_AMBIGUOUS"),
+    ("rig admission refused: RIG_REGISTRY_UNREADABLE", "PRE_ADMISSION_REGISTRY_UNREADABLE"),
+    ("rig admission refused: STALE_ZERO_OWNERSHIP_RIG", "PRE_ADMISSION_STALE_ZERO_OWNERSHIP"),
+    ("rig admission refused: RIG_TRAVERSAL_FAILED", "PRE_ADMISSION_RIG_TRAVERSAL_FAILED"),
+    ("rig admission refused: RIG_EVIDENCE_UNREADABLE", "PRE_ADMISSION_RIG_EVIDENCE_UNREADABLE"),
+    ("rig admission refused: TARGET_CONTROLS_UNREADABLE", "PRE_ADMISSION_TARGET_CONTROLS_UNREADABLE"),
+    ("rig admission refused: RIG_CONTEXT_UNAVAILABLE", "PRE_ADMISSION_RIG_CONTEXT_UNAVAILABLE"),
+)
+
+PRE_REASON_SEPARATORS = (
+    (u"; bridge: ", None),
+    (u"; structure: ", "PRE_STRUCTURE"),
+    (u"; name-keyed: ", "PRE_NAME_KEYED"),
+)
+
+PRE_REASON_PART_CODES = {
+    "PRE_STRUCTURE": (
+        ("control-group cycle at", "PRE_STRUCTURE_GROUP_CYCLE"),
+        ("repeated control-group identity at", "PRE_STRUCTURE_REPEATED_GROUP_IDENTITY"),
+        ("inspection incomplete", "PRE_STRUCTURE_INSPECTION_INCOMPLETE"),
+    ),
+    "PRE_NAME_KEYED": (
+        ("exact duplicate control names", "PRE_NAME_KEYED_DUPLICATE_CONTROL_NAMES"),
+        ("foreign control object", "PRE_NAME_KEYED_FOREIGN_SAME_NAME"),
+        ("conflicting contextual outcomes", "PRE_NAME_KEYED_CONFLICTING_MEMBERSHIP"),
+        ("Master destination", "PRE_NAME_KEYED_CONFLICTING_MEMBERSHIP"),
+    ),
+}
+
+PRE_BRIDGE_FOREIGN_CODE = (
+    "would be excluded from a non-rig occurrence",
+    "PRE_BRIDGE_FOREIGN_CONTROL_EXCLUDED",
+)
+
+
+def pre_reason_code(error_text):
+    """Stable diagnostic code for a PRE capture/bridge message (reporting
+    only; never used for a decision). The bridge's own reason, which follows
+    '; bridge: ', takes precedence over the strict-capture reason."""
+    if not error_text:
+        return None
+
+    text = to_unicode(error_text)
+
+    for separator, kind in reversed(PRE_REASON_SEPARATORS):
+        if separator not in text:
+            continue
+
+        part = text.split(separator, 1)[1]
+
+        if kind is None:
+            if PRE_BRIDGE_FOREIGN_CODE[0] in part:
+                return PRE_BRIDGE_FOREIGN_CODE[1]
+            table = PRE_REASON_CODES
+        else:
+            table = PRE_REASON_PART_CODES[kind]
+
+        for needle, code in table:
+            if needle in part:
+                return code
+
+    for needle, code in PRE_REASON_CODES:
+        if needle in text:
+            return code
+
+    return "PRE_STRICT_CAPTURE_FAILED"
+
+
+PRE_DIAGNOSTIC_MAX_OCCURRENCES = 2000
+PRE_DIAGNOSTIC_MAX_REPORTED_OCCURRENCES = 300
+PRE_DIAGNOSTIC_MAX_CONTROLS_PER_GROUP = 300
+
+
+def capture_pre_diagnostic_evidence(root, rig_context, master):
+    """Bounded, read-only evidence for a PRE refusal or bridge decision,
+    taken before native Rebuild. Never raises; never used for a decision.
+    Reports the rig and its registration-derived ownership, and every group
+    occurrence at a repeated path (plus its parent), inside the rig-side
+    families or involved in a cycle or repeated identity, with identities,
+    parents, metadata, visibility, ordered direct controls and the
+    EMPTY/RIG/RESIDUAL classification of its subtree."""
+    lines = []
+
+    try:
+        status = None if rig_context is None else rig_context.get("status")
+        owned = set()
+
+        if rig_context is not None:
+            owned = set(rig_context.get("owned_handles") or [])
+
+        lines.append(
+            "PRE_DIAG_RIG status=%r rig=%r rig_handle=%r registry_handle=%r "
+            "matching_rigs=%r reachable_rigs=%r owned_controls=%d hidden_groups=%r"
+            % (
+                status,
+                None
+                if rig_context is None or rig_context.get("rig") is None
+                else name(rig_context["rig"]),
+                None if rig_context is None else rig_context.get("rig_handle"),
+                None if rig_context is None else rig_context.get("registry_handle"),
+                None if rig_context is None else rig_context.get("matching_rig_count"),
+                None if rig_context is None else rig_context.get("reachable_rig_count"),
+                len(owned),
+                [] if rig_context is None else list(rig_context.get("hidden_groups") or []),
+            )
+        )
+
+        if rig_context is not None:
+            lines.append(
+                "PRE_DIAG_RIG_EVIDENCE associated_rigs=%r repeated_rig_references=%r "
+                "association_from_registry=%r association_unreadable=%r "
+                "authority_rows=%r non_contributing_rigs=%r"
+                % (
+                    rig_context.get("associated_rigs"),
+                    rig_context.get("repeated_rig_references"),
+                    rig_context.get("association_from_registry"),
+                    rig_context.get("association_unreadable"),
+                    rig_context.get("authority_rows"),
+                    rig_context.get("non_contributing_rigs"),
+                )
+            )
+
+        if rig_context is not None and rig_context.get("owned_names_in_order"):
+            lines.append(
+                "PRE_DIAG_RIG_OWNED_CONTROLS %r"
+                % [to_unicode(x) for x in rig_context["owned_names_in_order"]]
+            )
+
+        occurrences = []
+        by_handle = {}
+        events = []
+        stack = [(root, [], None, (), True)]
+
+        while stack and len(occurrences) < PRE_DIAGNOSTIC_MAX_OCCURRENCES:
+            group, parts, parent_handle, ancestors, ancestor_visible = stack.pop()
+            path = path_string(parts)
+
+            try:
+                group_handle = handle(group)
+            except Exception:
+                events.append(("UNREADABLE_GROUP_IDENTITY", path, None))
+                continue
+
+            if group_handle in ancestors:
+                events.append(("CYCLE", path, group_handle))
+                continue
+
+            if group_handle in by_handle:
+                events.append(("REPEATED_IDENTITY", path, group_handle))
+                continue
+
+            membership_read = "VERIFIED"
+            children_read = "VERIFIED"
+
+            try:
+                pre_direct_controls_strict(group)
+            except Exception as read_exc:
+                membership_read = "UNREADABLE: %s" % read_exc
+                events.append(("UNREADABLE_MEMBERSHIP", path, str(read_exc)))
+
+            try:
+                pre_children_strict(group)
+            except Exception as read_exc:
+                children_read = "UNREADABLE: %s" % read_exc
+                events.append(("UNREADABLE_CHILDREN", path, str(read_exc)))
+
+            try:
+                visible = is_visible(group)
+                child_groups = children(group)
+                controls = [
+                    (
+                        to_unicode(name(control)),
+                        handle(control),
+                        to_unicode(typ(control)),
+                    )
+                    for control in direct_controls(group)
+                ]
+                try:
+                    element_id = to_unicode(group.GetId())
+                except Exception:
+                    element_id = None
+                occurrence = {
+                    "path": path,
+                    "handle": group_handle,
+                    "element_id": element_id,
+                    "parent": parent_handle,
+                    "visible": visible,
+                    "effective_visible": bool(ancestor_visible and visible),
+                    "selectable": is_selectable(group),
+                    "snappable": is_snappable(group),
+                    "color": group_color_rgba(group),
+                    "controls": controls,
+                    "children": [],
+                    "child_names": [to_unicode(name(child)) for child in child_groups],
+                    "membership_read": membership_read,
+                    "children_read": children_read,
+                }
+            except Exception as exc:
+                events.append(("UNREADABLE_GROUP", path, str(exc)))
+                continue
+
+            occurrences.append(occurrence)
+            by_handle[group_handle] = occurrence
+
+            if parent_handle is not None and parent_handle in by_handle:
+                by_handle[parent_handle]["children"].append(group_handle)
+
+            for child in reversed(child_groups):
+                stack.append(
+                    (
+                        child,
+                        parts + [to_unicode(name(child))],
+                        group_handle,
+                        ancestors + (group_handle,),
+                        occurrence["effective_visible"],
+                    )
+                )
+
+        if stack:
+            events.append(("TRUNCATED", "%d occurrences read" % len(occurrences), None))
+
+        by_path = {}
+        for occurrence in occurrences:
+            by_path.setdefault(occurrence["path"], []).append(occurrence)
+
+        repeated = sorted(path for path, rows in by_path.items() if len(rows) > 1)
+        event_paths = set(event[1] for event in events)
+
+        def subtree(occurrence):
+            rows = []
+            pending = [occurrence]
+            while pending:
+                current = pending.pop()
+                rows.extend(current["controls"])
+                pending.extend(by_handle[h] for h in current["children"])
+            return rows
+
+        def relevant(occurrence):
+            path = occurrence["path"]
+            if path in by_path and len(by_path[path]) > 1:
+                return True
+            if path.split(u"/")[0] in PRE_BRIDGE_FAMILIES:
+                return True
+            if any(p == path or p.startswith(path + u"/") for p in event_paths):
+                return True
+            return any(child_path.startswith(path + u"/") and len(by_path[child_path]) > 1
+                       for child_path in repeated)
+
+        lines.append(
+            "PRE_DIAG_TREE occurrences=%d distinct_paths=%d repeated_paths=%r events=%r"
+            % (len(occurrences), len(by_path), repeated, events[:50])
+        )
+
+        reported = 0
+
+        for occurrence in occurrences:
+            if not relevant(occurrence):
+                continue
+
+            if reported >= PRE_DIAGNOSTIC_MAX_REPORTED_OCCURRENCES:
+                lines.append("PRE_DIAG_OCCURRENCES_TRUNCATED")
+                break
+
+            reported += 1
+            rows = subtree(occurrence)
+
+            if any(row[1] in owned for row in rows):
+                kind = "RIG"
+            elif not rows:
+                kind = "EMPTY"
+            else:
+                kind = "RESIDUAL"
+
+            controls = []
+
+            for control_name, control_handle, control_type in occurrence["controls"][
+                    :PRE_DIAGNOSTIC_MAX_CONTROLS_PER_GROUP]:
+                try:
+                    lookup = master_lookup(master, control_name)
+                    destination = (
+                        to_unicode(lookup["destination"])
+                        if lookup["known"]
+                        else None
+                    )
+                except Exception:
+                    destination = "<lookup unavailable>"
+
+                controls.append(
+                    (
+                        control_name,
+                        control_handle,
+                        control_type,
+                        "owned" if control_handle in owned else "not-owned",
+                        destination,
+                    )
+                )
+
+            lines.append(
+                "PRE_DIAG_GROUP path=%r handle=%r element_id=%r parent_handle=%r "
+                "occurrence=%d/%d class=%s subtree_controls=%d subtree_owned=%d "
+                "visible=%r effective_visible=%r selectable=%r snappable=%r color=%r "
+                "children=%r children_read=%r direct_controls=%r membership_read=%r%s"
+                % (
+                    occurrence["path"],
+                    occurrence["handle"],
+                    occurrence["element_id"],
+                    occurrence["parent"],
+                    by_path[occurrence["path"]].index(occurrence) + 1,
+                    len(by_path[occurrence["path"]]),
+                    kind,
+                    len(rows),
+                    len([row for row in rows if row[1] in owned]),
+                    occurrence["visible"],
+                    occurrence["effective_visible"],
+                    occurrence["selectable"],
+                    occurrence["snappable"],
+                    occurrence["color"],
+                    occurrence["child_names"],
+                    occurrence["children_read"],
+                    controls,
+                    occurrence["membership_read"],
+                    " (direct controls truncated)"
+                    if len(occurrence["controls"]) > PRE_DIAGNOSTIC_MAX_CONTROLS_PER_GROUP
+                    else "",
+                )
+            )
+    except Exception as exc:
+        lines.append(
+            "PRE_DIAG_UNAVAILABLE reason=%r" % str(exc)
+        )
+
+    return lines
+
+
+PRE_REFUSAL_REPORT_INSTRUCTION = (
+    "To report this issue, click Show Log File and send the "
+    "highlighted file to the developer."
+)
+
+
+def show_log_file_in_explorer(log_path):
+    """Open Windows Explorer with this execution's report selected."""
+    if not log_path or not os.path.isfile(log_path):
+        return False
+
+    try:
+        subprocess.Popen(
+            'explorer.exe /select,"%s"' % os.path.normpath(log_path)
+        )
+        return True
+    except Exception:
+        return False
+
+
+def show_resource_stop_dialog(title, text, log_path, show_log=True):
+    """The resource safe-stop warning. A routine protective stop has only
+    Close; Show Log File | Close when the report needs attention."""
+    try:
+        box = QtGui.QMessageBox(
+            _scope_dialog_parent()
+        )
+        box.setIcon(QtGui.QMessageBox.Warning)
+        box.setWindowTitle(title)
+        box.setText(text)
+        show_button = (
+            box.addButton(
+                "Show Log File",
+                QtGui.QMessageBox.ActionRole,
+            )
+            if show_log
+            else None
+        )
+        close_button = box.addButton(
+            "Close",
+            QtGui.QMessageBox.RejectRole,
+        )
+        box.setDefaultButton(close_button)
+        box.setEscapeButton(close_button)
+        box.exec_()
+        show_clicked = show_button is not None and box.clickedButton() is show_button
+    except Exception:
+        _show_process_guard_message(
+            title,
+            text,
+        )
+        show_clicked = False
+
+    if show_clicked and not show_log_file_in_explorer(log_path):
+        _show_process_guard_message(
+            title,
+            u"The log file could not be shown automatically.\n\nFile: %s\nFolder: %s"
+            % (
+                to_unicode(os.path.basename(log_path or u"")),
+                to_unicode(os.path.dirname(log_path or u"")),
+            ),
+        )
+
+
+def show_refusal_report_dialog(body, log_path):
+    """The refusal warning with a Show Log File button. Runs after the run
+    has finished; nothing here can affect a transaction."""
+    text = to_unicode(body) + u"\n\n" + to_unicode(PRE_REFUSAL_REPORT_INSTRUCTION)
+
+    try:
+        box = QtGui.QMessageBox(
+            _scope_dialog_parent()
+        )
+        box.setIcon(QtGui.QMessageBox.Warning)
+        box.setWindowTitle("Rebuild Control Groups")
+        box.setText(text)
+        show_button = box.addButton(
+            "Show Log File",
+            QtGui.QMessageBox.ActionRole,
+        )
+        close_button = box.addButton(
+            "Close",
+            QtGui.QMessageBox.RejectRole,
+        )
+        box.setDefaultButton(close_button)
+        box.setEscapeButton(close_button)
+        box.exec_()
+        show_clicked = box.clickedButton() is show_button
+    except Exception:
+        _show_process_guard_message(
+            "Rebuild Control Groups",
+            text,
+        )
+        show_clicked = False
+
+    if show_clicked and not show_log_file_in_explorer(log_path):
+        _show_process_guard_message(
+            "Rebuild Control Groups",
+            u"The log file could not be shown automatically.\n\nFile: %s\nFolder: %s"
+            % (
+                to_unicode(os.path.basename(log_path or u"")),
+                to_unicode(os.path.dirname(log_path or u"")),
+            ),
+        )
+
+
+def pre_bridge_family_evidence(pre, post):
+    """Fresh active-rig evidence per rig-side family: a rig-owned control of
+    the supported active rig presented in that family in the resolved PRE
+    view, or placed there visibly by native POST. Remnant groups holding no
+    rig-owned control are never evidence."""
+    owned = set([
+        to_unicode(x)
+        for x in pre["owned_control_name_set"]
+    ])
+    evidence = {}
+
+    for family in PRE_BRIDGE_FAMILIES:
+        witnesses = []
+
+        for snapshot, need_visible in (
+                (pre, False),
+                (post, True)):
+            for control_name in sorted(owned):
+                for path in snapshot["memberships"].get(control_name, []):
+                    path = to_unicode(path)
+
+                    if not (
+                            path == family
+                            or path.startswith(family + u"/")):
+                        continue
+
+                    if (
+                        need_visible
+                        and not snapshot["groups"][path]["effective_visible"]
+                    ):
+                        continue
+
+                    witnesses.append(control_name)
+
+        evidence[family] = sorted(set(witnesses))
+
+    return evidence
+
+
+def validate_end_state_accessibility(shot, aset, pre, uniformity_plan, master):
+    """Required controls must end effectively visible in exactly one group:
+    rig-owned transform controls that were effectively visible in fresh PRE
+    (RigHelpers excepted); finger, carpal and toe controls that were
+    effectively visible in fresh PRE, including those of non-rig occurrences
+    the PRE bridge left out of the view; and every model control translated
+    into a rig-side family."""
+    rig_context = discover_rig_context(
+        shot,
+        aset,
+    )
+    final = capture_snapshot_explicit(
+        shot,
+        aset,
+        "ACCESSIBILITY",
+        rig_context,
+    )
+    required = {}
+
+    for control_name in pre["owned_control_name_set"]:
+        control_name = to_unicode(control_name)
+
+        if to_unicode(
+                pre["control_types"].get(control_name, u"")
+                ) != u"DmeTransformControl":
+            continue
+
+        pre_paths = pre["memberships"].get(control_name, [])
+
+        if not any([
+                pre["groups"][path]["effective_visible"]
+                for path in pre_paths]):
+            continue
+
+        final_paths = final["memberships"].get(control_name, [])
+
+        if (
+            len(final_paths) == 1
+            and first_path_part(final_paths[0]) == u"RigHelpers"
+        ):
+            continue
+
+        required[control_name] = u"ACTIVE_RIG_CONTROL"
+
+    for control_name, pre_paths in pre["memberships"].items():
+        control_name = to_unicode(control_name)
+
+        if not any([
+                pre["groups"][path]["effective_visible"]
+                for path in pre_paths]):
+            continue
+
+        lookup = master_lookup(
+            master,
+            control_name,
+        )
+
+        if (
+            lookup["known"]
+            and to_unicode(lookup["destination"])
+            in PRE_BRIDGE_RESIDUAL_MASTER_DESTINATIONS
+        ):
+            required.setdefault(
+                control_name,
+                u"PRE_VISIBLE_FINGER_CARPAL_TOE",
+            )
+
+    for control_name in pre.get(
+            "pre_bridge",
+            {}).get(
+            "visible_residual_controls",
+            []):
+        required.setdefault(
+            to_unicode(control_name),
+            u"PRE_VISIBLE_BRIDGE_RESIDUAL",
+        )
+
+    for target_path, names in uniformity_plan["model_translations"].items():
+        for control_name in names:
+            required.setdefault(
+                to_unicode(control_name),
+                u"MODEL_TRANSLATION:%s" % to_unicode(target_path),
+            )
+
+    failures = []
+
+    for control_name in sorted(required.keys()):
+        final_paths = final["memberships"].get(control_name, [])
+
+        if (
+            len(final_paths) != 1
+            or not final["groups"][final_paths[0]]["effective_visible"]
+        ):
+            failures.append(
+                (
+                    control_name,
+                    required[control_name],
+                    list(final_paths),
+                )
+            )
+
+    for identity_failure in control_identity_failures(
+            final,
+            pre):
+        failures.append(
+            ("control_identity",) + tuple(identity_failure)
+        )
+
+    return {
+        "required": len(required),
+        "failures": failures,
     }
 
 
@@ -5652,20 +7897,30 @@ def get_loaded_module_path(
 
 
 def _find_existing_run(main_window):
+    # Returns the active run's QObject, or None only when confirmed absent.
+    # Raises NormalizerProcessAttemptMarkerError when the lookup cannot be
+    # trusted: a failed lookup is never treated as "no active run" and never
+    # verifies a released run lock.
     try:
         objects = main_window.findChildren(
             QtCore.QObject
         )
-    except Exception:
-        return None
+    except Exception as exc:
+        raise NormalizerProcessAttemptMarkerError(
+            "active-run lookup failed: %s"
+            % to_unicode(exc)
+        )
 
     for obj in objects:
         try:
             object_name = unicode(
                 obj.objectName()
             )
-        except Exception:
-            continue
+        except Exception as exc:
+            raise NormalizerProcessAttemptMarkerError(
+                "active-run lookup failed reading an objectName: %s"
+                % to_unicode(exc)
+            )
 
         if object_name == RUN_LOCK_NAME:
             return obj
@@ -5719,12 +7974,10 @@ def _find_named_process_marker(main_window, marker_name):
 
 
 def _install_named_process_marker(main_window, marker_name):
-    # Installs and verifies a process-lifetime scope-state marker named
-    # marker_name. Raises NormalizerProcessAttemptMarkerError on any
-    # installation or verification failure (fail closed). Never call
-    # this from a refusal path -- only from the single arming site
-    # immediately before substantial scope traversal, so repeated
-    # refusals never accumulate markers or keepalive references.
+    # Installs and verifies a process-lifetime marker named marker_name.
+    # Raises NormalizerProcessAttemptMarkerError on any installation or
+    # verification failure (fail closed). Used only to record a restart
+    # requirement; refusal paths never install markers.
     try:
         marker = QtCore.QObject(
             main_window
@@ -5772,57 +8025,110 @@ def _install_named_process_marker(main_window, marker_name):
     return marker
 
 
-PROCESS_SCOPE_STATE_UNUSED = u"UNUSED"
-PROCESS_SCOPE_STATE_SELECTED_USED = u"SELECTED_USED"
-PROCESS_SCOPE_STATE_FULL_SCOPE_STARTED = u"FULL_SCOPE_STARTED"
-
 SCOPE_REQUEST_CLASS_SELECTED_SCOPE = u"SELECTED_SCOPE"
 SCOPE_REQUEST_CLASS_FULL_SCOPE = u"FULL_SCOPE"
 
 
-def _read_process_scope_state(main_window):
-    # Returns one of PROCESS_SCOPE_STATE_UNUSED /
-    # PROCESS_SCOPE_STATE_SELECTED_USED /
-    # PROCESS_SCOPE_STATE_FULL_SCOPE_STARTED. Raises
-    # NormalizerProcessAttemptMarkerError (fail closed -- always means
-    # "require restart", never a guessed state) if: the legacy marker
-    # from the superseded broad guard is present (its boolean semantics
-    # cannot distinguish Selected use from All-Shots use); both new-
-    # scheme state markers are present at once (conflicting/malformed);
-    # or any underlying lookup cannot be trusted.
-    legacy_found = _find_named_process_marker(
-        main_window,
-        NORMALIZER_PROCESS_ATTEMPT_MARKER_NAME_LEGACY
-    )
-    if legacy_found is not None:
+def _read_restart_requirement(main_window):
+    # Returns None, RESTART_REASON_LOW_MEMORY or
+    # RESTART_REASON_UNVERIFIED_CLEANUP (low memory wins when both are
+    # recorded). Raises NormalizerProcessAttemptMarkerError when either record
+    # cannot be read or is malformed -- callers fail closed.
+    if main_window is None:
         raise NormalizerProcessAttemptMarkerError(
-            "legacy process-attempt marker found without valid "
-            "new-scheme scope state -- this process's own Normalizer "
-            "usage history cannot be safely reconstructed."
+            "restart-requirement lookup: SFM main window unavailable."
         )
 
-    selected_used_found = _find_named_process_marker(
-        main_window,
-        NORMALIZER_PROCESS_STATE_SELECTED_USED_MARKER_NAME
-    )
-    full_scope_found = _find_named_process_marker(
-        main_window,
-        NORMALIZER_PROCESS_STATE_FULL_SCOPE_STARTED_MARKER_NAME
-    )
+    reasons = set()
 
-    if selected_used_found is not None and full_scope_found is not None:
+    try:
+        recorded = getattr(
+            sys,
+            RESTART_PROCESS_ATTRIBUTE,
+            None
+        )
+    except Exception as exc:
         raise NormalizerProcessAttemptMarkerError(
-            "both SELECTED_USED and FULL_SCOPE_STARTED process-state "
-            "markers are present at once -- conflicting state."
+            "restart-requirement process record unreadable: %s"
+            % to_unicode(exc)
         )
 
-    if full_scope_found is not None:
-        return PROCESS_SCOPE_STATE_FULL_SCOPE_STARTED
+    if recorded is not None:
+        if recorded not in RESTART_MARKER_NAMES:
+            raise NormalizerProcessAttemptMarkerError(
+                "restart-requirement process record malformed: %r"
+                % (recorded,)
+            )
+        reasons.add(
+            recorded
+        )
 
-    if selected_used_found is not None:
-        return PROCESS_SCOPE_STATE_SELECTED_USED
+    for reason, marker_name in RESTART_MARKER_NAMES.items():
+        if _find_named_process_marker(
+                main_window,
+                marker_name) is not None:
+            reasons.add(
+                reason
+            )
 
-    return PROCESS_SCOPE_STATE_UNUSED
+    if RESTART_REASON_LOW_MEMORY in reasons:
+        return RESTART_REASON_LOW_MEMORY
+
+    if reasons:
+        return RESTART_REASON_UNVERIFIED_CLEANUP
+
+    return None
+
+
+def _record_restart_requirement(main_window, reason):
+    # Records that SFM must be restarted before Normalizer runs again. Never
+    # cleared (only process exit removes it); a low-memory requirement is
+    # never downgraded. Returns (main_window_marker_verified,
+    # process_record_verified); each is True only when read back. Never
+    # raises: a failed record is reported, never treated as recorded.
+    process_ok = False
+
+    try:
+        if getattr(
+                sys,
+                RESTART_PROCESS_ATTRIBUTE,
+                None) != RESTART_REASON_LOW_MEMORY:
+            setattr(
+                sys,
+                RESTART_PROCESS_ATTRIBUTE,
+                reason
+            )
+        process_ok = getattr(
+            sys,
+            RESTART_PROCESS_ATTRIBUTE,
+            None
+        ) in (reason, RESTART_REASON_LOW_MEMORY)
+    except Exception:
+        process_ok = False
+
+    marker_ok = False
+
+    try:
+        if main_window is not None:
+            marker_name = RESTART_MARKER_NAMES[reason]
+            if _find_named_process_marker(
+                    main_window,
+                    marker_name) is None:
+                _install_named_process_marker(
+                    main_window,
+                    marker_name
+                )
+            marker_ok = _find_named_process_marker(
+                main_window,
+                marker_name
+            ) is not None
+    except Exception:
+        marker_ok = False
+
+    return (
+        marker_ok,
+        process_ok,
+    )
 
 
 def _resolve_shot_canonical_identity_for_classification(
@@ -5993,11 +8299,95 @@ def _classify_scope_request(scope_mode, scope_shots):
 
 
 
-def _canonicalize_context_path(path):
+# Rig-side groups. Rig scripts create the legacy side names under RigArms/RigLegs.
+# A Master that declares the four-name layout (LeftRigArm, RightRigArm,
+# LeftRigLeg, RightRigLeg) makes those its canonical rig-side destinations;
+# native Rebuild resolves group leaf names, so the anatomical Arms/Legs side
+# groups must not share a leaf name with the rig-side groups. Any other Master
+# keeps the legacy layout, exactly as before.
+RIG_SIDE_LEGACY_PATHS = (
+    u"RigArms/LeftArm",
+    u"RigArms/RightArm",
+    u"RigLegs/LeftLeg",
+    u"RigLegs/RightLeg",
+)
+
+RIG_SIDE_FOUR_NAME_PATHS = (
+    u"RigArms/LeftRigArm",
+    u"RigArms/RightRigArm",
+    u"RigLegs/LeftRigLeg",
+    u"RigLegs/RightRigLeg",
+)
+
+RIG_SIDE_ANATOMICAL_PATHS = (
+    u"Arms/LeftArm",
+    u"Arms/RightArm",
+    u"Legs/LeftLeg",
+    u"Legs/RightLeg",
+)
+
+
+def _rig_side_rewrite(path, old_paths, new_paths):
+    for old, new in zip(old_paths, new_paths):
+        if path == old or path.startswith(old + u"/"):
+            return new + path[len(old):]
+
+    return path
+
+
+def master_uses_four_name_rig_sides(master):
+    if not master:
+        return False
+
+    metadata = master.get(
+        "group_metadata",
+        {},
+    )
+
+    return all([
+        path in metadata
+        for path in RIG_SIDE_FOUR_NAME_PATHS
+    ])
+
+
+def rig_side_legacy_path(path):
+    """Legacy (rig-script) spelling of a four-name rig-side path."""
+    return _rig_side_rewrite(
+        to_unicode(path),
+        RIG_SIDE_FOUR_NAME_PATHS,
+        RIG_SIDE_LEGACY_PATHS,
+    )
+
+
+def rig_side_anatomical_path(path):
+    """Ordinary anatomical Master counterpart of a rig-side path (either
+    layout), or None when the path is not inside a rig-side group."""
+    path = to_unicode(path)
+    legacy = rig_side_legacy_path(path)
+    anatomical = _rig_side_rewrite(
+        legacy,
+        RIG_SIDE_LEGACY_PATHS,
+        RIG_SIDE_ANATOMICAL_PATHS,
+    )
+
+    if anatomical == legacy:
+        return None
+
+    return anatomical
+
+
+def _canonicalize_context_path(path, master=None):
     if path is None:
         return None
 
     path = to_unicode(path)
+
+    if master_uses_four_name_rig_sides(master):
+        path = _rig_side_rewrite(
+            path,
+            RIG_SIDE_LEGACY_PATHS,
+            RIG_SIDE_FOUR_NAME_PATHS,
+        )
 
     replacements = {
         u"RigArms/LeftArm/Left_Fingers":
@@ -6008,6 +8398,14 @@ def _canonicalize_context_path(path):
             u"RigLegs/LeftLeg/LeftToes",
         u"RigLegs/RightLeg/Right_Toes":
             u"RigLegs/RightLeg/RightToes",
+        u"RigArms/LeftRigArm/Left_Fingers":
+            u"RigArms/LeftRigArm/LeftFingers",
+        u"RigArms/RightRigArm/Right_Fingers":
+            u"RigArms/RightRigArm/RightFingers",
+        u"RigLegs/LeftRigLeg/Left_Toes":
+            u"RigLegs/LeftRigLeg/LeftToes",
+        u"RigLegs/RightRigLeg/Right_Toes":
+            u"RigLegs/RightRigLeg/RightToes",
     }
 
     return replacements.get(
@@ -6020,7 +8418,8 @@ def _active_rig_counterpart_destination(
         master_destination,
         source_path,
         has_rigarms,
-        has_riglegs):
+        has_riglegs,
+        master=None):
     if master_destination is None:
         return None
 
@@ -6028,7 +8427,8 @@ def _active_rig_counterpart_destination(
         master_destination
     )
     source_path = _canonicalize_context_path(
-        source_path
+        source_path,
+        master,
     )
 
     # Explicit active-rig Master destinations are already authoritative.
@@ -6043,7 +8443,8 @@ def _active_rig_counterpart_destination(
         or destination.startswith(u"RigHelpers/")
     ):
         result = _canonicalize_context_path(
-            destination
+            destination,
+            master,
         )
     else:
         result = destination
@@ -6120,7 +8521,8 @@ def _active_rig_counterpart_destination(
             result = u"RigLegs/RightLeg/RightToes"
 
     result = _canonicalize_context_path(
-        result
+        result,
+        master,
     )
 
     # If current Master gives only a broad active-rig root while fresh PRE
@@ -6174,6 +8576,19 @@ def derive_generic_uniformity_plan(
         for path in source_paths
     ])
 
+    # Bridged PRE: only fresh active-rig evidence establishes a family.
+    family_evidence = plan.get(
+        "bridge_family_evidence"
+    )
+
+    if family_evidence is not None:
+        has_rigarms = bool(
+            family_evidence.get(u"RigArms")
+        )
+        has_riglegs = bool(
+            family_evidence.get(u"RigLegs")
+        )
+
     model_leaf_specs = []
 
     if has_rigarms:
@@ -6207,6 +8622,17 @@ def derive_generic_uniformity_plan(
                 u"RigLegs/RightLeg/RightToes",
             ),
         ])
+
+    model_leaf_specs = [
+        (
+            source_path,
+            _canonicalize_context_path(
+                target_path,
+                master,
+            ),
+        )
+        for source_path, target_path in model_leaf_specs
+    ]
 
     model_translations = {}
     model_candidate_names = set()
@@ -6292,7 +8718,8 @@ def derive_generic_uniformity_plan(
         )
 
         source_path = _canonicalize_context_path(
-            row.get("relative_path")
+            row.get("relative_path"),
+            master,
         )
 
         if source_path is None:
@@ -6312,6 +8739,7 @@ def derive_generic_uniformity_plan(
                 source_path,
                 has_rigarms,
                 has_riglegs,
+                master,
             )
             authority = u"MASTER_PLUS_ACTIVE_RIG_COUNTERPART"
 
@@ -6421,11 +8849,14 @@ def derive_generic_uniformity_plan(
         # Runtime Toe-constraint evidence may refine a side-leg destination
         # into the nested active Toe presentation.
         side = None
+        side_target = rig_side_legacy_path(
+            target_path
+        )
 
-        if target_path == u"RigLegs/LeftLeg":
+        if side_target == u"RigLegs/LeftLeg":
             side = "Left"
 
-        elif target_path == u"RigLegs/RightLeg":
+        elif side_target == u"RigLegs/RightLeg":
             side = "Right"
 
         if side is not None:
@@ -6455,7 +8886,8 @@ def derive_generic_uniformity_plan(
                 )
 
         target_path = _canonicalize_context_path(
-            target_path
+            target_path,
+            master,
         )
 
         rig_destinations[
@@ -6568,7 +9000,8 @@ def derive_generic_uniformity_plan(
             continue
 
         master_destination = _canonicalize_context_path(
-            lookup["destination"]
+            lookup["destination"],
+            master,
         )
 
         if master_destination is None:
@@ -6672,7 +9105,8 @@ def derive_generic_uniformity_plan(
             )
 
         target_path = _canonicalize_context_path(
-            target_path
+            target_path,
+            master,
         )
 
         if target_path is None:
@@ -6764,7 +9198,9 @@ def production_master_metadata_path(
 
     if target_path.startswith(
             u"RigArms/"):
-        candidate = (
+        candidate = rig_side_anatomical_path(
+            target_path
+        ) or (
             u"Arms/"
             + target_path[
                 len(u"RigArms/"):
@@ -6793,7 +9229,7 @@ def production_master_metadata_path(
                 "group_metadata"]:
             return u"Legs"
 
-    if target_path in (
+    if rig_side_legacy_path(target_path) in (
             u"RigLegs/LeftLeg/LeftToes",
             u"RigLegs/RightLeg/RightToes"):
         candidate = (
@@ -6819,6 +9255,18 @@ def production_source_paths_for_target(
     result = [
         target_path
     ]
+
+    # A four-name rig-side target is presented by rig scripts under its
+    # legacy name; that live presentation is evidence for the same group.
+    legacy_target_path = rig_side_legacy_path(
+        target_path
+    )
+
+    if legacy_target_path != target_path:
+        result.append(
+            legacy_target_path
+        )
+        target_path = legacy_target_path
 
     if target_path == u"RigArms":
         result.append(
@@ -7352,6 +9800,22 @@ def production_reorder_contextual_tree(
             u"RigLegs/RightLeg",
             u"RigLegs/RightLeg",
         ),
+        (
+            u"RigArms/LeftRigArm",
+            u"Arms/LeftArm",
+        ),
+        (
+            u"RigArms/RightRigArm",
+            u"Arms/RightArm",
+        ),
+        (
+            u"RigLegs/LeftRigLeg",
+            u"RigLegs/LeftRigLeg",
+        ),
+        (
+            u"RigLegs/RightRigLeg",
+            u"RigLegs/RightRigLeg",
+        ),
     ]
 
     for live_path, master_path in specs:
@@ -7474,7 +9938,8 @@ def production_apply_exact_master_destination_total_order(
                 _canonicalize_context_path(
                     lookup[
                         "destination"
-                    ]
+                    ],
+                    master,
                 )
             )
 
@@ -7834,7 +10299,7 @@ def production_generic_composer(
     toe_targets = [
         path
         for path in required_paths
-        if path in (
+        if rig_side_legacy_path(path) in (
             u"RigLegs/LeftLeg/LeftToes",
             u"RigLegs/RightLeg/RightToes",
         )
@@ -8233,6 +10698,14 @@ def production_generic_composer(
             (
                 u"RigArms/RightArm",
                 u"Arms/RightArm",
+            ),
+            (
+                u"RigArms/LeftRigArm",
+                u"Arms/LeftArm",
+            ),
+            (
+                u"RigArms/RightRigArm",
+                u"Arms/RightArm",
             )):
         meta = after[
             "groups"
@@ -8376,6 +10849,13 @@ def production_generic_composer(
                 "rig_status"
             ],
         ))
+
+    for identity_failure in control_identity_failures(
+            after,
+            pre):
+        failures.append(
+            ("control_identity",) + tuple(identity_failure)
+        )
 
     if failures:
         raise ProbeError(
@@ -9423,39 +11903,37 @@ PROCESS_GUARD_MESSAGE_STATE_UNVERIFIABLE = (
     u"Save your project, restart SFM, reopen it, then try again.",
 )
 
-PROCESS_GUARD_MESSAGE_FULL_SCOPE_ALREADY_STARTED = (
+PROCESS_GUARD_MESSAGE_ACTIVE_RUN_UNVERIFIABLE = (
+    u"Restart SFM to Continue",
+    u"The Normalizer couldn't check whether it is already running.\n\n"
+    u"Save your project, restart SFM, reopen it, then try again.",
+)
+
+RESTART_REQUIRED_MESSAGE_LOW_MEMORY = (
     u"Restart SFM Before Using the Normalizer Again",
-    u"SFM may not have enough memory left for another Normalizer run "
-    u"after processing the entire project.\n\n"
+    u"An earlier Normalizer run stopped because SFM was running low on "
+    u"available memory.\n\n"
     u"Save your project, restart SFM, then try again.",
 )
 
-PROCESS_GUARD_MESSAGE_RESTART_FOR_ALL_SHOTS = (
-    u"Restart SFM Before All Shots",
-    u"All Shots can use a lot of memory. Because you've already "
-    u"used the Normalizer in this SFM session, there may not be "
-    u"enough memory left for All Shots to finish.\n\n"
-    u"Save your project, restart SFM, then run All Shots.",
+RESTART_REQUIRED_MESSAGE_UNVERIFIED = (
+    u"Restart SFM Before Using the Normalizer Again",
+    u"An earlier Normalizer run couldn't confirm that it finished "
+    u"cleanly.\n\n"
+    u"Save your project, restart SFM, then try again.",
 )
 
-PROCESS_GUARD_MESSAGE_RESTART_FOR_FULL_PROJECT_SELECTED = (
-    u"Restart SFM Before Continuing",
-    u"This selection covers everything in the project, which can use "
-    u"a lot of memory. Because you've already used the Normalizer "
-    u"in this SFM session, there may not be enough memory left to "
-    u"finish.\n\n"
+RESTART_REQUIRED_MESSAGE_THIS_RUN = (
+    u"Restart SFM Before Using the Normalizer Again",
+    u"The Normalizer couldn't confirm that this run finished cleanly.\n\n"
     u"Save your project, restart SFM, then try again.",
 )
 
 
-def _process_guard_full_scope_refusal_message(scope_mode):
-    # scope_mode is only meaningfully known at the post-dialog refusal
-    # point; the pre-dialog FULL_SCOPE_STARTED refusal always uses the
-    # generic "already started" wording since no request has been made
-    # yet.
-    if scope_mode == SCOPE_ALL:
-        return PROCESS_GUARD_MESSAGE_RESTART_FOR_ALL_SHOTS
-    return PROCESS_GUARD_MESSAGE_RESTART_FOR_FULL_PROJECT_SELECTED
+def _restart_required_message(reason):
+    if reason == RESTART_REASON_LOW_MEMORY:
+        return RESTART_REQUIRED_MESSAGE_LOW_MEMORY
+    return RESTART_REQUIRED_MESSAGE_UNVERIFIED
 
 
 class RebuildControlGroupsProductionRun(
@@ -9587,6 +12065,20 @@ class RebuildControlGroupsProductionRun(
         self.total_ambiguous_rig = 0
         self.total_reconciled = 0
         self.total_native_only = 0
+        self.total_pre_bridged = 0
+        self.total_pre_refusals = 0
+        self.log_path = None
+        self.report_clean = False
+        self.report_problem_targets = []
+        self.resource_floors = resource_safe_stop_floors()
+        self.resource_stop = None
+        self.resource_closure_started = False
+        self.resource_closure_checks = []
+        self.resource_admission_counts = {}
+        self.inventory_shots = None
+        self.native_protect_acquired = 0
+        self.native_protect_released = 0
+        self.production_pre_refusals = {}
         self.total_policy_fallback = 0
         self.production_supported_plan_pairs = set()
         self.production_policy_plan_passes = 0
@@ -10146,7 +12638,7 @@ class RebuildControlGroupsProductionRun(
         command lifetime left to retry across.
         """
         if self._master_index_lease is None:
-            return
+            return True
 
         lease = self._master_index_lease
         broker = self._master_index_broker
@@ -10154,6 +12646,7 @@ class RebuildControlGroupsProductionRun(
 
         try:
             broker.release_view_lease(lease)
+            return True
         except Exception as exc:
             try:
                 broker.register_unreleased_lease(
@@ -10165,6 +12658,8 @@ class RebuildControlGroupsProductionRun(
                 )
             except Exception:
                 pass
+
+            return False
 
 
     def contextualizer_assert_master_stable_for_index_use(
@@ -10290,6 +12785,7 @@ class RebuildControlGroupsProductionRun(
 
     def snapshot_work(self):
         records = []
+        self.inventory_shots = []
 
         shots = list(
             self.scope_shots
@@ -10318,6 +12814,13 @@ class RebuildControlGroupsProductionRun(
                         exc,
                     )
                 )
+                self.inventory_shots.append({
+                    "name": to_unicode(name(shot)),
+                    "ptr": None,
+                    "start": None,
+                    "status": "NOT_INSPECTED",
+                    "eligible": None,
+                })
                 continue
 
             shot_ptr = native_ptr(
@@ -10325,6 +12828,13 @@ class RebuildControlGroupsProductionRun(
             )
 
             if not shot_ptr:
+                self.inventory_shots.append({
+                    "name": to_unicode(name(shot)),
+                    "ptr": None,
+                    "start": None,
+                    "status": "NOT_INSPECTED",
+                    "eligible": None,
+                })
                 continue
 
             shot_name = to_unicode(
@@ -10646,6 +13156,14 @@ class RebuildControlGroupsProductionRun(
                 })
 
                 self.total_targets += 1
+
+            self.inventory_shots.append({
+                "name": shot_name,
+                "ptr": shot_ptr,
+                "start": start,
+                "status": "INSPECTED",
+                "eligible": len(targets),
+            })
 
             if targets:
                 records.append({
@@ -11717,26 +14235,105 @@ class RebuildControlGroupsProductionRun(
                 % (exact_pair,)
             )
 
-        pre_capture_ok = True
-        pre_capture_error = None
-        pre = None
-        pre_rig = None
+        pre_preparation = prepare_pre_snapshot(
+            shot,
+            aset,
+            root,
+            self.master_index,
+        )
+        pre_rig = pre_preparation["pre_rig"]
+        pre = pre_preparation["pre"]
+        pre_capture_ok = pre_preparation["mode"] in (
+            "STRICT",
+            "BRIDGED",
+        )
+        pre_capture_error = pre_preparation["error"]
+        pre_refusal = None
+        pre_code = pre_reason_code(
+            pre_capture_error
+        )
+        native_rebuild_invoked = False
+        accessibility_result = "NOT_APPLICABLE"
+        refusal_unchanged_result = "NOT_APPLICABLE"
 
-        try:
-            pre_rig = discover_rig_context(
-                shot,
-                aset,
+        self.log(
+            "PRE_ADMISSION target=%r mode=%s reason_code=%s facts=%r"
+            % (
+                exact_pair,
+                pre_preparation["mode"],
+                pre_code,
+                pre_preparation.get("admission"),
             )
-            pre = capture_snapshot_explicit(
-                shot,
-                aset,
-                "PRE",
-                pre_rig,
+        )
+
+        if pre_preparation["mode"] in (
+                "BRIDGED",
+                "REFUSE",
+                "NATIVE_ONLY"):
+            self.log(
+                "PRE_DIAG_BEGIN target=%r pre_mode=%s reason_code=%s reason=%r"
+                % (
+                    exact_pair,
+                    pre_preparation["mode"],
+                    pre_code,
+                    pre_capture_error,
+                )
             )
-        except Exception as exc:
-            pre_capture_ok = False
-            pre_capture_error = str(
-                exc
+
+            for diagnostic_line in capture_pre_diagnostic_evidence(
+                    root,
+                    pre_rig,
+                    self.master_index):
+                self.log(
+                    diagnostic_line
+                )
+
+            self.log(
+                "PRE_DIAG_END target=%r" % (exact_pair,)
+            )
+
+        if pre_preparation["mode"] == "BRIDGED":
+            self.total_pre_bridged += 1
+            self.log(
+                "PRE_BRIDGE = RESOLVED target=%r strict_error=%r occurrences=%d "
+                "repeated_paths=%r excluded=%r"
+                % (
+                    exact_pair,
+                    pre_capture_error,
+                    pre_preparation["bridge"]["occurrences"],
+                    pre_preparation["bridge"]["duplicate_paths"],
+                    pre_preparation["bridge"]["excluded"],
+                )
+            )
+            self.log(
+                "PRE_BRIDGE_EXCLUDED_MEMBERSHIPS target=%r rows=%r"
+                % (
+                    exact_pair,
+                    pre_preparation["bridge"]["excluded_memberships"][:400],
+                )
+            )
+
+        elif pre_preparation["mode"] == "REFUSE":
+            pre_refusal = pre_capture_error
+            self.log(
+                "PRE_REFUSAL_BEFORE_NATIVE target=%r reason_code=%s rig_status=%r reason=%r"
+                % (
+                    exact_pair,
+                    pre_code,
+                    (
+                        None
+                        if pre_rig is None
+                        else pre_rig.get("status")
+                    ),
+                    pre_refusal,
+                )
+            )
+            self.log(
+                "PRE_REFUSAL_USER_MESSAGE target=%r message=%s"
+                % (
+                    exact_pair,
+                    PRE_REFUSAL_USER_MESSAGE,
+                )
             )
 
         if pre_capture_ok:
@@ -11759,7 +14356,7 @@ class RebuildControlGroupsProductionRun(
                     ),
                 )
             )
-        else:
+        elif pre_refusal is None:
             self.log(
                 "PRE semantic capture unsupported; native-only fallback: %s"
                 % pre_capture_error
@@ -11838,6 +14435,9 @@ class RebuildControlGroupsProductionRun(
             self.master_path
         )
 
+        if native_master_protect_handle is not None:
+            self.native_protect_acquired += 1
+
         if native_master_protect_handle is None:
             raise ProbeError(
                 "CONTEXTUALIZER could not acquire the required native "
@@ -11855,6 +14455,22 @@ class RebuildControlGroupsProductionRun(
             # (previously this check ran outside any try that released
             # it).
             self.assert_master_stable()
+
+            if pre_refusal is not None:
+                # Refused before any native mutation: undo is never disabled
+                # and native Rebuild is never called for this target.
+                raise PreCaptureRefusal(
+                    pre_refusal
+                )
+
+            # Final resource admission: after PRE and the protected-Master
+            # check, before undo is disabled; nothing yields to Qt between
+            # here and native entry.
+            self.resource_admission(
+                "NATIVE_ENTRY",
+                exact_pair,
+                (shot_record["ptr"], target["ptr"], aset),
+            )
 
             dm.SetUndoEnabled(
                 False
@@ -11924,6 +14540,8 @@ class RebuildControlGroupsProductionRun(
                 )
             )
 
+            native_rebuild_invoked = True
+
             self.rebuild(
                 ctypes.c_void_p(
                     aset_ptr
@@ -11988,6 +14606,17 @@ class RebuildControlGroupsProductionRun(
                 )
 
             self.total_supported_active_rig += 1
+
+            native_identity_failures = control_identity_failures(
+                post,
+                pre,
+            )
+
+            if native_identity_failures:
+                raise ProbeError(
+                    "Control identity changed across native Rebuild: %r"
+                    % (native_identity_failures[:10],)
+                )
 
             if (
                 post[
@@ -12228,6 +14857,19 @@ class RebuildControlGroupsProductionRun(
                     )
                 )
 
+            if pre_preparation["mode"] == "BRIDGED":
+                plan["bridge_family_evidence"] = pre_bridge_family_evidence(
+                    pre,
+                    post,
+                )
+                self.log(
+                    "PRE_BRIDGE_FAMILY_EVIDENCE target=%r evidence=%r"
+                    % (
+                        exact_pair,
+                        plan["bridge_family_evidence"],
+                    )
+                )
+
             uniformity_plan = derive_generic_uniformity_plan(
                 pre,
                 post,
@@ -12314,7 +14956,7 @@ class RebuildControlGroupsProductionRun(
                     ) in uniformity_plan[
                         "rig_toe_promotions"
                         ].items():
-                if promoted_path not in (
+                if rig_side_legacy_path(promoted_path) not in (
                         u"RigLegs/LeftLeg/LeftToes",
                         u"RigLegs/RightLeg/RightToes"):
                     raise ProbeError(
@@ -12414,6 +15056,36 @@ class RebuildControlGroupsProductionRun(
                 )
             )
 
+            accessibility = validate_end_state_accessibility(
+                shot,
+                aset,
+                pre,
+                uniformity_plan,
+                master,
+            )
+            self.log(
+                "PRODUCTION_END_STATE_ACCESSIBILITY target=%r required=%d failures=%r"
+                % (
+                    exact_pair,
+                    accessibility["required"],
+                    accessibility["failures"][:20],
+                )
+            )
+
+            if accessibility["failures"]:
+                raise ProbeError(
+                    "End-state accessibility failed for %r: %r."
+                    % (
+                        exact_pair,
+                        accessibility["failures"][:20],
+                    )
+                )
+
+            self.log(
+                "PRODUCTION_END_STATE_ACCESSIBILITY = PASS"
+            )
+            accessibility_result = "PASS"
+
             self.production_composer_pairs.add(
                 exact_pair
             )
@@ -12456,11 +15128,24 @@ class RebuildControlGroupsProductionRun(
                 % terminal_status
             )
 
+        except PreCaptureRefusal as refusal:
+            terminal_status = PRE_REFUSAL_TERMINAL_STATUS
+            self.total_pre_refusals += 1
+            self.production_pre_refusals[
+                exact_pair
+            ] = str(
+                refusal
+            )
+            self.log(
+                "TARGET_CONTEXTUAL_RESULT = %s"
+                % terminal_status
+            )
+
         finally:
             try:
-                native_master_protect_release(
-                    native_master_protect_handle
-                )
+                if native_master_protect_release(
+                        native_master_protect_handle) is not False:
+                    self.native_protect_released += 1
             except Exception:
                 pass
 
@@ -12589,10 +15274,13 @@ class RebuildControlGroupsProductionRun(
         #
         # The prior rich dictionary values had no downstream consumer; final
         # accounting consumed only one successful capture per terminal target.
-        semantic_now = semantic_target_fingerprint(
-            shot,
-            aset,
-        )
+        if terminal_status == PRE_REFUSAL_TERMINAL_STATUS:
+            semantic_now = target_fingerprint
+        else:
+            semantic_now = semantic_target_fingerprint(
+                shot,
+                aset,
+            )
 
         if semantic_now is None:
             raise ProbeError(
@@ -12619,6 +15307,22 @@ class RebuildControlGroupsProductionRun(
             )
         )
 
+        if terminal_status == PRE_REFUSAL_TERMINAL_STATUS:
+            if (
+                key not in self.session_expected
+                or self.session_expected[key] != target_digest
+            ):
+                raise ProbeError(
+                    "Refused target changed before or during its refusal: %r."
+                    % (exact_pair,)
+                )
+
+            self.log(
+                "PRE_REFUSAL_TARGET_UNCHANGED = PASS target=%r"
+                % (exact_pair,)
+            )
+            refusal_unchanged_result = "PASS"
+
         self.session_expected[
             key
         ] = target_digest
@@ -12633,6 +15337,28 @@ class RebuildControlGroupsProductionRun(
             shot_record,
             target,
         )
+
+        self.log(
+            "TARGET_DIAGNOSTIC_SUMMARY target=%r pre_mode=%s reason_code=%s "
+            "native_rebuild_invoked=%r contextual_reconciliation=%r "
+            "end_state_accessibility=%s refusal_target_unchanged=%s "
+            "peer_isolation=PASS outcome=%s"
+            % (
+                exact_pair,
+                pre_preparation["mode"],
+                pre_code,
+                native_rebuild_invoked,
+                terminal_status == "RECONCILED",
+                accessibility_result,
+                refusal_unchanged_result,
+                terminal_status,
+            )
+        )
+
+        if terminal_status not in REPORT_CLEAN_TARGET_OUTCOMES:
+            self.report_problem_targets.append(
+                (exact_pair, terminal_status)
+            )
 
         self.telemetry_completed_targets += 1
 
@@ -12711,9 +15437,17 @@ class RebuildControlGroupsProductionRun(
                 "CONTEXTUALIZER target resume run-lock object name changed."
             )
 
-        if _find_existing_run(
+        try:
+            existing_run = _find_existing_run(
                 main_window
-        ) is None:
+            )
+        except NormalizerProcessAttemptMarkerError as exc:
+            raise ProbeError(
+                "CONTEXTUALIZER target resume could not verify the production run lock: %s"
+                % to_unicode(exc)
+            )
+
+        if existing_run is None:
             raise ProbeError(
                 "CONTEXTUALIZER target resume could not rediscover the production run lock."
             )
@@ -12919,8 +15653,672 @@ class RebuildControlGroupsProductionRun(
         self.activate_next_shot()
 
 
+    def resource_admission(self, boundary, pair=None, target_ref=None):
+        """One fresh complete census at one boundary. Returns on ADMIT;
+        latches STOP/UNKNOWN for the command and raises ResourceStopSignal.
+        Does nothing while the policy is disabled (floors not approved)."""
+        if self.resource_floors is None:
+            return
+
+        if self.resource_stop is not None:
+            raise ResourceStopSignal("resource stop already latched")
+
+        census = resource_vas_census()
+        decision = resource_admission_decision(census, self.resource_floors)
+        self.resource_admission_counts[(boundary, decision["decision"])] = (
+            self.resource_admission_counts.get((boundary, decision["decision"]), 0) + 1
+        )
+        self.log(
+            "RESOURCE_ADMISSION boundary=%s target=%r decision=%s trigger=%s "
+            "free=%r largest_free=%r free_floor=%d largest_floor=%d complete=%r "
+            "queries=%r elapsed=%.4f reason=%r"
+            % (
+                boundary,
+                pair,
+                decision["decision"],
+                decision["trigger"],
+                census["free"],
+                census["largest_free"],
+                self.resource_floors[0],
+                self.resource_floors[1],
+                census["complete"],
+                census["query_count"],
+                census["elapsed"] or 0.0,
+                decision["reason"],
+            )
+        )
+
+        if decision["decision"] == "ADMIT":
+            return
+
+        self.resource_stop = {
+            "boundary": boundary,
+            "decision": decision["decision"],
+            "trigger": decision["trigger"],
+            "reason": decision["reason"],
+            "free": census["free"],
+            "largest_free": census["largest_free"],
+            "census_error": census["error"],
+            "pair": pair,
+            "target_ref": target_ref,
+            "work_index": (
+                None
+                if boundary == "COMMAND_PREPARATION"
+                else self.work_index
+            ),
+            "target_index": self.current_target_index,
+            "native_attempts": self.telemetry_native_attempts,
+            "native_rebuilt": self.total_native_rebuilt,
+        }
+        raise ResourceStopSignal(
+            "resource %s before %s" % (decision["decision"], boundary)
+        )
+
+
+    def resource_stop_closure(self):
+        """Verified partial-run closure after a latched STOP/UNKNOWN. The
+        stopped target never entered native Rebuild; completed transactions
+        are kept; the whole session is checked against its expected state;
+        the playhead is restored and final_report releases the Master-index
+        lease, closes the report and releases the run lock. Only checks the
+        stop requires are run (no extra diagnostic traversal)."""
+        if self.finished or self.resource_closure_started:
+            return
+
+        self.resource_closure_started = True
+        stop = self.resource_stop
+        checks = []
+
+        def check(label, passed, detail=""):
+            checks.append((label, bool(passed)))
+            self.log(
+                "RESOURCE_CLOSURE_CHECK %s = %s %s"
+                % (label, "PASS" if passed else "FAIL", detail)
+            )
+
+        try:
+            self.section(
+                "RESOURCE SAFE-STOP: VERIFIED PARTIAL-RUN CLOSURE"
+            )
+            self.log(
+                "RESOURCE_STOP boundary=%s decision=%s trigger=%s target=%r "
+                "free=%r largest_free=%r reason=%r census_error=%r"
+                % (
+                    stop["boundary"],
+                    stop["decision"],
+                    stop["trigger"],
+                    stop["pair"],
+                    stop["free"],
+                    stop["largest_free"],
+                    stop["reason"],
+                    stop["census_error"],
+                )
+            )
+            check(
+                "STOPPED_TARGET_NEVER_ENTERED_NATIVE",
+                self.telemetry_native_attempts == stop["native_attempts"]
+                and self.total_native_rebuilt == stop["native_rebuilt"]
+                and (
+                    stop["pair"] is None
+                    or stop["pair"] not in self.production_terminal_results
+                ),
+                "native_attempts=%d native_rebuilt=%d"
+                % (self.telemetry_native_attempts, self.total_native_rebuilt),
+            )
+            check(
+                "EVERY_NATIVE_ENTRY_RETURNED",
+                self.telemetry_native_attempts == self.total_native_rebuilt,
+            )
+
+            if self.session_expected:
+                if stop["target_ref"] is not None:
+                    shot_ptr, aset_ptr, aset = stop["target_ref"]
+                    key = (shot_ptr, aset_ptr)
+                    check(
+                        "STOPPED_TARGET_UNCHANGED",
+                        key in self.session_expected
+                        and isolation_fingerprint_digest(
+                            isolation_fingerprint(aset)
+                        ) == self.session_expected[key],
+                    )
+                check(
+                    "COMPACT_SESSION_IDENTITY",
+                    capture_session_identity_census()
+                    == self.session_identity_expected,
+                )
+                try:
+                    self.verify_session_isolation_end()
+                    isolation_pass = True
+                except Exception as exc:
+                    self.log("RESOURCE_CLOSURE_ISOLATION_ERROR %r" % (exc,))
+                    isolation_pass = False
+                check(
+                    "WHOLE_SESSION_ISOLATION",
+                    isolation_pass,
+                )
+            else:
+                check(
+                    "NO_SCENE_WORK_BEFORE_STOP",
+                    not self.production_terminal_results
+                    and self.telemetry_native_attempts == 0,
+                )
+        except Exception as exc:
+            try:
+                self.log(traceback.format_exc())
+            except Exception:
+                pass
+            checks.append(("CLOSURE_EXCEPTION", False))
+
+        self.resource_closure_checks = checks
+
+        if not all([passed for unused, passed in checks]):
+            if self.failure_message is None:
+                self.failure_message = (
+                    "Resource safe-stop closure could not be verified: %r"
+                    % [label for label, passed in checks if not passed]
+                )
+
+        if self.original_head is None:
+            self.final_report(
+                self.failure_message is None
+            )
+        else:
+            self.request_restore_and_finish()
+
+
+    def resource_shot_accounting(self):
+        """Shot outcomes from verified execution records, in processing
+        order. COMPLETED: at least one eligible character and every one
+        completed cleanly. NO_ELIGIBLE: inspected, nothing to normalize.
+        NEEDS_ATTENTION: nothing left to attempt but a refusal or failure.
+        REMAINING: unattempted work or not adequately inspected; the
+        stopping shot is always REMAINING (unfinished)."""
+        stop = self.resource_stop
+        terminal = self.production_terminal_results
+        rows = []
+        consistent = True
+
+        if self.inventory_shots is None:
+            for shot in self.scope_shots:
+                rows.append({
+                    "name": to_unicode(name(shot)),
+                    "category": "REMAINING",
+                    "reason": "NOT_INSPECTED",
+                    "unfinished": False,
+                    "attention": [],
+                    "completed_targets": [],
+                    "remaining_targets": [],
+                })
+            return {"rows": rows, "consistent": consistent}
+
+        ordered = sorted(
+            [row for row in self.inventory_shots if row["status"] == "INSPECTED"],
+            key=lambda row: row["start"],
+        ) + [
+            row for row in self.inventory_shots if row["status"] != "INSPECTED"
+        ]
+        work_by_ptr = dict([
+            (record["ptr"], (index, record))
+            for index, record in enumerate(self.work)
+        ])
+
+        for row in ordered:
+            entry = {
+                "name": row["name"],
+                "unfinished": False,
+                "attention": [],
+                "completed_targets": [],
+                "remaining_targets": [],
+            }
+
+            if row["status"] != "INSPECTED":
+                entry.update({"category": "REMAINING", "reason": "NOT_INSPECTED"})
+                rows.append(entry)
+                continue
+
+            if row["ptr"] not in work_by_ptr:
+                if row["eligible"] != 0:
+                    consistent = False
+                entry.update({"category": "NO_ELIGIBLE", "reason": "INSPECTED_NO_ELIGIBLE_CHARACTERS"})
+                rows.append(entry)
+                continue
+
+            index, record = work_by_ptr[row["ptr"]]
+            pairs = [
+                (to_unicode(record["name"]), to_unicode(target["name"]))
+                for target in record["targets"]
+            ]
+            done = [pair for pair in pairs if pair in terminal]
+            entry["completed_targets"] = done
+            entry["remaining_targets"] = [pair for pair in pairs if pair not in terminal]
+            entry["attention"] = [
+                (pair, terminal[pair])
+                for pair in done
+                if terminal[pair] in RESOURCE_ATTENTION_OUTCOMES
+            ]
+
+            stopping = bool(stop["work_index"] is not None and index == stop["work_index"])
+
+            if stop["work_index"] is not None:
+                if index < stop["work_index"] and len(done) != len(pairs):
+                    consistent = False
+                if index > stop["work_index"] and done:
+                    consistent = False
+                if stopping and len(done) != stop["target_index"]:
+                    consistent = False
+
+            if stopping or entry["remaining_targets"]:
+                entry.update({
+                    "category": "REMAINING",
+                    "reason": "STOPPED_HERE" if stopping else "NOT_STARTED",
+                    "unfinished": stopping,
+                })
+            elif entry["attention"]:
+                entry.update({"category": "NEEDS_ATTENTION", "reason": "REFUSAL_OR_FAILURE"})
+            else:
+                entry.update({"category": "COMPLETED", "reason": "ALL_TARGETS_COMPLETED"})
+
+            rows.append(entry)
+
+        if len(rows) != len(self.scope_shots):
+            consistent = False
+
+        return {"rows": rows, "consistent": consistent}
+
+
+    def resource_stop_dialog_text(self, accounting):
+        """(title, text) for a verified stop, from verified accounting."""
+        rows = accounting["rows"]
+        total = len(rows)
+        counts = dict([
+            (category, len([row for row in rows if row["category"] == category]))
+            for category in ("COMPLETED", "NO_ELIGIBLE", "NEEDS_ATTENTION", "REMAINING")
+        ])
+        stopped = [row for row in rows if row["unfinished"]]
+        attention_shots = len([row for row in rows if row["attention"]])
+        plural = lambda n: u"" if n == 1 else u"s"
+        low_memory = self.resource_stop["decision"] == "STOP"
+        processed_any = bool(self.production_terminal_results)
+        partial = bool(stopped and stopped[0]["completed_targets"])
+        lines = [
+            RESOURCE_STOP_BODY_LOW_MEMORY if low_memory else RESOURCE_UNKNOWN_BODY,
+            u"",
+        ]
+
+        if processed_any and stopped:
+            lines.extend([
+                u"%d of %d shots completed" % (counts["COMPLETED"], total),
+                u"Stopped at: %s (unfinished)" % stopped[0]["name"],
+                u"%d shot%s remaining, including %s"
+                % (counts["REMAINING"], plural(counts["REMAINING"]), stopped[0]["name"]),
+            ])
+        else:
+            lines.append(RESOURCE_PROGRESS_NONE)
+
+        if counts["NO_ELIGIBLE"]:
+            lines.append(
+                u"%d shot%s contained no characters that needed normalization."
+                % (counts["NO_ELIGIBLE"], plural(counts["NO_ELIGIBLE"]))
+            )
+
+        if attention_shots:
+            lines.append(
+                u"%d shot%s couldn't be fully normalized."
+                % (attention_shots, plural(attention_shots))
+            )
+            lines.append(RESOURCE_ATTENTION_ACTION)
+        elif self.production_pre_refusals or self.report_problem_targets:
+            # The same problem classification that keeps the Send to Developer
+            # report and the Show Log File button.
+            lines.append(RESOURCE_ATTENTION_ACTION)
+
+        if low_memory:
+            instruction = (
+                RESOURCE_STOP_INSTRUCTION
+                if processed_any and stopped
+                else RESOURCE_INSTRUCTION_REMAINING
+            )
+        elif partial:
+            instruction = RESOURCE_UNKNOWN_INSTRUCTION_UNFINISHED
+        elif processed_any:
+            instruction = RESOURCE_UNKNOWN_INSTRUCTION_REMAINING
+        else:
+            instruction = RESOURCE_UNKNOWN_INSTRUCTION_RETRY
+
+        lines.extend([u"", instruction])
+        return (
+            RESOURCE_STOP_TITLE if low_memory else RESOURCE_UNKNOWN_TITLE,
+            u"\n".join(lines),
+        )
+
+    def resource_stop_final_report(self, success):
+        """final_report for a latched resource stop. Partial-run accounting
+        and shot progress are logged; then every closure obligation is
+        performed and checked (Master-index lease, protected-Master handles,
+        run lock, Phase F marker, report finalization and retention). The
+        verdict is written last, to the finalized report, and the stop
+        dialog is shown only for a verified stop."""
+        self.finished = True
+
+        try:
+            main_window = self.parent()
+        except Exception:
+            main_window = None
+
+        accounting = None
+        accounting_ok = False
+
+        try:
+            self.section(
+                "FINAL RESULT (RESOURCE SAFE-STOP)"
+            )
+            terminal = self.production_terminal_results
+            attempted = set(terminal.keys())
+            accounting = self.resource_shot_accounting()
+            rows = accounting["rows"]
+
+            if self.failure_message is not None:
+                self.log("failure=%s" % self.failure_message)
+
+            checks = [
+                ("CLOSURE_VERIFIED", bool(self.resource_closure_checks) and all([
+                    passed for unused, passed in self.resource_closure_checks])),
+                ("COMPLETED_TARGETS_WITHIN_INVENTORY", attempted <= self.production_inventory_pairs
+                    or not attempted),
+                ("FINAL_SEMANTIC_CAPTURE_PER_COMPLETED_TARGET",
+                    self.production_final_semantic_capture_pairs == attempted),
+                ("DYNAMIC_ACCOUNTING_COMPLETED_TARGETS",
+                    self.total_native_rebuilt + self.total_pre_refusals == len(attempted)
+                    and self.total_reconciled + self.total_native_only + self.total_pre_refusals
+                    == len(attempted)),
+                ("PEER_ISOLATION_PER_COMPLETED_TARGET", self.layer_peer_checks == len(attempted)),
+                ("SHOT_ACCOUNTING_CONSISTENT", accounting["consistent"]),
+            ]
+
+            for label, passed in checks:
+                self.log("RESOURCE_STOP_ACCOUNTING %s = %s" % (label, "PASS" if passed else "FAIL"))
+
+            counts = dict([
+                (category, len([row for row in rows if row["category"] == category]))
+                for category in ("COMPLETED", "NO_ELIGIBLE", "NEEDS_ATTENTION", "REMAINING")
+            ])
+            self.log(
+                "RESOURCE_SHOT_PROGRESS total=%d completed=%d no_eligible=%d "
+                "needs_attention=%d remaining=%d stopped_at=%r"
+                % (
+                    len(rows),
+                    counts["COMPLETED"],
+                    counts["NO_ELIGIBLE"],
+                    counts["NEEDS_ATTENTION"],
+                    counts["REMAINING"],
+                    [row["name"] for row in rows if row["unfinished"]],
+                )
+            )
+
+            for position, row in enumerate(rows):
+                self.log(
+                    "RESOURCE_SHOT order=%d name=%r category=%s reason=%s unfinished=%r "
+                    "completed_targets=%r remaining_targets=%r attention=%r"
+                    % (
+                        position + 1,
+                        row["name"],
+                        row["category"],
+                        row["reason"],
+                        row["unfinished"],
+                        [pair[1] for pair in row["completed_targets"]],
+                        [pair[1] for pair in row["remaining_targets"]],
+                        row["attention"],
+                    )
+                )
+
+            self.log(
+                "RESOURCE_REMAINING_SHOTS_ORDERED %r"
+                % [row["name"] for row in rows if row["category"] == "REMAINING"]
+            )
+            self.log(
+                "RESOURCE_REMAINING_TARGETS %r"
+                % [
+                    pair
+                    for row in rows
+                    for pair in row["remaining_targets"]
+                ]
+            )
+            self.log(
+                "RESOURCE_TARGET_RESULTS %r"
+                % sorted(terminal.items())
+            )
+            self.log(
+                "RESOURCE_ADMISSION_COUNTS %r"
+                % sorted(self.resource_admission_counts.items())
+            )
+            accounting_ok = all([passed for unused, passed in checks])
+        except Exception:
+            try:
+                self.log(traceback.format_exc())
+            except Exception:
+                pass
+
+        # Closure obligations, each performed and checked before the verdict.
+        obligations = []
+
+        def obligation(label, passed):
+            obligations.append((label, bool(passed)))
+            try:
+                self.log(
+                    "RESOURCE_TEARDOWN_CHECK %s = %s"
+                    % (label, "PASS" if passed else "FAIL")
+                )
+            except Exception:
+                pass
+
+        obligation(
+            "PLAYHEAD_RESTORED_OR_NEVER_MOVED",
+            success and self.failure_message is None,
+        )
+
+        try:
+            obligation(
+                "MASTER_INDEX_LEASE_RELEASED",
+                self._release_master_index_lease_durable() is not False,
+            )
+        except Exception:
+            obligation("MASTER_INDEX_LEASE_RELEASED", False)
+
+        obligation(
+            "PROTECTED_MASTER_HANDLES_RELEASED",
+            self.native_protect_acquired == self.native_protect_released,
+        )
+
+        try:
+            self.release_run_lock()
+            obligation(
+                "RUN_LOCK_RELEASED",
+                main_window is not None
+                and _find_existing_run(main_window) is None,
+            )
+        except Exception:
+            obligation("RUN_LOCK_RELEASED", False)
+
+        restart_reason = (
+            RESTART_REASON_LOW_MEMORY
+            if self.resource_stop["decision"] == "STOP"
+            else None
+        )
+
+        try:
+            if restart_reason is not None:
+                recorded = _record_restart_requirement(
+                    main_window,
+                    restart_reason,
+                )
+                self.log(
+                    "RESTART_REQUIREMENT = %s main_window_marker=%r process_record=%r"
+                    % (restart_reason, recorded[0], recorded[1])
+                )
+            obligation(
+                "RESTART_STATE_RECORDED",
+                _read_restart_requirement(main_window) == restart_reason,
+            )
+        except Exception:
+            obligation("RESTART_STATE_RECORDED", False)
+
+        self.report_clean = False
+        verified = bool(
+            accounting_ok
+            and success
+            and self.failure_message is None
+            and all([passed for unused, passed in obligations])
+        )
+        dialog = None
+
+        if verified:
+            try:
+                dialog = self.resource_stop_dialog_text(accounting)
+            except Exception:
+                dialog = None
+                verified = False
+
+        # A routine protective stop: verified, low memory, and no refusal or
+        # other normalization problem anywhere in the run. Anything else keeps
+        # the developer report and the Show Log File button.
+        problem = bool(
+            self.production_pre_refusals
+            or self.report_problem_targets
+        )
+        routine_stop = bool(
+            verified
+            and self.resource_stop["decision"] == "STOP"
+            and not problem
+        )
+        show_log = not routine_stop
+
+        try:
+            self.log(
+                "REPORT_RETENTION = %s problem_targets=%r"
+                % (
+                    "RESOURCE_STOP (verified protective stop; saved as %s<date-time>.log)"
+                    % OUTPUT_RESOURCE_STOP_PREFIX
+                    if routine_stop
+                    else "KEPT_FOR_DEVELOPER",
+                    self.report_problem_targets,
+                )
+            )
+        except Exception:
+            pass
+
+        report_retained = False
+
+        try:
+            if self.fp is not None:
+                self.fp.flush()
+                self.fp.close()
+            self.fp = None
+            self.log_path = finalize_run_log_file(
+                self.log_path,
+                False,
+                routine_stop,
+            )
+            report_retained = bool(
+                self.log_path
+                and os.path.isfile(self.log_path)
+                and os.path.basename(self.log_path).startswith((
+                    OUTPUT_NAME_PREFIX,
+                    OUTPUT_RESOURCE_STOP_PREFIX,
+                ))
+            )
+        except Exception:
+            self.fp = None
+
+        verified = bool(verified and report_retained)
+
+        verdict_written = False
+
+        try:
+            verdict = open(self.log_path, "a")
+            try:
+                verdict.write(
+                    "RESOURCE_TEARDOWN_CHECK REPORT_FINALIZED_AND_RETAINED = %s\n"
+                    "REPORT_CLASSIFICATION = %s\n"
+                    "RESOURCE_STOP_DIALOG_BUTTONS = %s\n"
+                    "RESOURCE_SAFE_STOP = %s decision=%s boundary=%s\n"
+                    "PRODUCTION_REBUILD_CONTROL_GROUPS = %s\n"
+                    "RESOURCE_STOP_DIALOG %r\n"
+                    % (
+                        "PASS" if report_retained else "FAIL",
+                        "RESOURCE_STOP" if routine_stop and verified else "SEND_TO_DEVELOPER",
+                        "Show Log File | Close" if show_log else "Close",
+                        "VERIFIED" if verified else "NOT_VERIFIED",
+                        self.resource_stop["decision"],
+                        self.resource_stop["boundary"],
+                        "STOPPED_RESOURCE" if verified else "FAIL",
+                        dialog,
+                    )
+                )
+            finally:
+                verdict.close()
+            verdict_written = True
+        except Exception:
+            verdict_written = False
+
+        if routine_stop and not (verified and verdict_written):
+            # Without a durable VERIFIED verdict it is not a routine stop.
+            self.log_path = _rename_dated_report(
+                self.log_path,
+                OUTPUT_RESOURCE_STOP_PREFIX,
+                OUTPUT_NAME_PREFIX,
+            )
+
+        restart_this_run = False
+
+        if not (verified and verdict_written):
+            # An unverified closure requires a restart. A recorded low-memory
+            # requirement is never downgraded.
+            restart_this_run = True
+            recorded = _record_restart_requirement(
+                main_window,
+                RESTART_REASON_UNVERIFIED_CLEANUP,
+            )
+            try:
+                note = open(self.log_path, "a")
+                try:
+                    note.write(
+                        "RESTART_REQUIREMENT = UNVERIFIED_CLEANUP main_window_marker=%r process_record=%r\n"
+                        % (recorded[0], recorded[1])
+                    )
+                finally:
+                    note.close()
+            except Exception:
+                pass
+
+        if verified and verdict_written and dialog is not None:
+            show_resource_stop_dialog(
+                dialog[0],
+                dialog[1],
+                self.log_path,
+                show_log,
+            )
+        elif self.production_pre_refusals:
+            show_refusal_report_dialog(
+                PRE_REFUSAL_USER_MESSAGE
+                + "\n\n"
+                + "\n".join([
+                    u"%s / %s" % refused_pair
+                    for refused_pair in sorted(
+                        self.production_pre_refusals.keys()
+                    )
+                ]),
+                self.log_path,
+            )
+
+        if restart_this_run:
+            title, body = RESTART_REQUIRED_MESSAGE_THIS_RUN
+            _show_process_guard_message(
+                title,
+                body
+            )
+
     def process_current_target(self):
-        if self.finished:
+        if self.finished or self.resource_stop is not None:
             return
 
         try:
@@ -12944,6 +16342,15 @@ class RebuildControlGroupsProductionRun(
             ][
                 self.current_target_index
             ]
+
+            self.resource_admission(
+                "TARGET_PREPARATION",
+                (
+                    to_unicode(record["name"]),
+                    to_unicode(target["name"]),
+                ),
+                (record["ptr"], target["ptr"], target["anim_set"]),
+            )
 
             if self.current_target_index > 0:
                 self.target_resume_callbacks += 1
@@ -13024,6 +16431,9 @@ class RebuildControlGroupsProductionRun(
 
             self.contextualizer_finish_current_shot()
 
+        except ResourceStopSignal:
+            self.resource_stop_closure()
+
         except Exception as exc:
             self.log(
                 traceback.format_exc()
@@ -13035,7 +16445,7 @@ class RebuildControlGroupsProductionRun(
 
 
     def activate_next_shot(self):
-        if self.finished:
+        if self.finished or self.resource_stop is not None:
             return
 
         if self.work_index >= len(self.work):
@@ -13113,7 +16523,7 @@ class RebuildControlGroupsProductionRun(
 
 
     def process_current_shot(self):
-        if self.finished:
+        if self.finished or self.resource_stop is not None:
             return
 
         try:
@@ -13295,6 +16705,10 @@ class RebuildControlGroupsProductionRun(
         if self.finished:
             return
 
+        if self.resource_stop is not None:
+            self.resource_stop_final_report(success)
+            return
+
         self.finished = True
 
         try:
@@ -13427,11 +16841,38 @@ class RebuildControlGroupsProductionRun(
             )
 
             dynamic_accounting_pass = bool(
-                self.total_native_rebuilt == self.total_targets
-                and (self.total_reconciled + self.total_native_only)
+                self.total_native_rebuilt + self.total_pre_refusals
+                == self.total_targets
+                and (
+                    self.total_reconciled
+                    + self.total_native_only
+                    + self.total_pre_refusals
+                )
                 == self.total_targets
                 and self.total_policy_fallback <= self.total_native_only
+                and self.total_pre_refusals
+                == len(self.production_pre_refusals)
             )
+
+            self.log(
+                "PRE_BRIDGE_ACCOUNTING bridged=%d refused=%d"
+                % (
+                    self.total_pre_bridged,
+                    self.total_pre_refusals,
+                )
+            )
+
+            for refused_pair, refused_reason in sorted(
+                    self.production_pre_refusals.items()):
+                self.log(
+                    "PRE_REFUSED_TARGET target=%r reason_code=%s reason=%r message=%s"
+                    % (
+                        refused_pair,
+                        pre_reason_code(refused_reason),
+                        refused_reason,
+                        PRE_REFUSAL_USER_MESSAGE,
+                    )
+                )
 
             eligibility_accounting_pass = bool(
                 self.total_model_backed
@@ -13779,6 +17220,23 @@ class RebuildControlGroupsProductionRun(
                 % ("PASS" if success else "FAIL")
             )
 
+            self.report_clean = bool(
+                success
+                and not self.production_pre_refusals
+                and not self.report_problem_targets
+            )
+
+            self.log(
+                "REPORT_RETENTION = %s problem_targets=%r"
+                % (
+                    "LAST_RUN (clean run; saved as %s)"
+                    % OUTPUT_LAST_RUN_NAME
+                    if self.report_clean
+                    else "KEPT_FOR_DEVELOPER",
+                    self.report_problem_targets,
+                )
+            )
+
             if success:
                 self.log(
                     "PASS means the production candidate completed the requested shot scope, every eligible target reached a terminal state, responsive Qt callback resumption remained guarded, and all semantic, isolation, undo, Master-index, eligibility, playhead, and accounting guarantees passed."
@@ -13786,9 +17244,59 @@ class RebuildControlGroupsProductionRun(
 
         finally:
             try:
-                self._release_master_index_lease_durable()
+                restart_main_window = self.parent()
             except Exception:
-                pass
+                restart_main_window = None
+
+            try:
+                lease_released = (
+                    self._release_master_index_lease_durable() is not False
+                )
+            except Exception:
+                lease_released = False
+
+            self.release_run_lock()
+
+            try:
+                lock_released = bool(
+                    restart_main_window is not None
+                    and _find_existing_run(restart_main_window) is None
+                )
+            except Exception:
+                lock_released = False
+
+            handles_released = bool(
+                self.native_protect_acquired
+                == self.native_protect_released
+            )
+            mutation_started = self.telemetry_native_attempts > 0
+            restart_this_run = bool(
+                (not success and mutation_started)
+                or not lease_released
+                or not lock_released
+                or not handles_released
+            )
+            recorded = None
+
+            if restart_this_run:
+                recorded = _record_restart_requirement(
+                    restart_main_window,
+                    RESTART_REASON_UNVERIFIED_CLEANUP,
+                )
+                self.report_clean = False
+
+            self.log(
+                "RESTART_REQUIREMENT = %s mutation_started=%r lease_released=%r "
+                "run_lock_released=%r protected_handles_released=%r recorded=%r"
+                % (
+                    RESTART_REASON_UNVERIFIED_CLEANUP if restart_this_run else "NONE",
+                    mutation_started,
+                    lease_released,
+                    lock_released,
+                    handles_released,
+                    recorded,
+                )
+            )
 
             try:
                 if self.fp is not None:
@@ -13798,7 +17306,34 @@ class RebuildControlGroupsProductionRun(
                 pass
 
             self.fp = None
-            self.release_run_lock()
+
+            try:
+                self.log_path = finalize_run_log_file(
+                    self.log_path,
+                    self.report_clean,
+                )
+            except Exception:
+                pass
+
+        if self.production_pre_refusals:
+            show_refusal_report_dialog(
+                PRE_REFUSAL_USER_MESSAGE
+                + "\n\n"
+                + "\n".join([
+                    u"%s / %s" % refused_pair
+                    for refused_pair in sorted(
+                        self.production_pre_refusals.keys()
+                    )
+                ]),
+                self.log_path,
+            )
+
+        if restart_this_run:
+            title, body = RESTART_REQUIRED_MESSAGE_THIS_RUN
+            _show_process_guard_message(
+                title,
+                body
+            )
 
 
     def start(self):
@@ -13808,10 +17343,7 @@ class RebuildControlGroupsProductionRun(
                     "No SFM document is open."
                 )
 
-            self.fp = open(
-                OUTPUT_PATH,
-                "w"
-            )
+            self.log_path, self.fp = create_run_log_file()
 
             self.run_started_wall = (
                 time.time()
@@ -13823,6 +17355,10 @@ class RebuildControlGroupsProductionRun(
             self.log(
                 "PRODUCTION_REVISION = %s"
                 % PRODUCTION_REVISION
+            )
+            self.log(
+                "REPORT_FILE_NAME = %s"
+                % os.path.basename(self.log_path)
             )
             self.log(
                 "MUTATION STATUS: MUTATING PRODUCTION CANDIDATE"
@@ -13875,6 +17411,21 @@ class RebuildControlGroupsProductionRun(
             )
             self.log(
                 "CONTEXTUALIZER VIRTUALQUERY POLICY: LOW-CADENCE ONLY; NEVER CALLED PER TARGET OR IMMEDIATELY BEFORE NATIVE REBUILD"
+                if self.resource_floors is None
+                else "CONTEXTUALIZER VIRTUALQUERY POLICY: LOW-CADENCE TELEMETRY PLUS A COMPLETE ADMISSION CENSUS AT COMMAND, TARGET AND NATIVE-ENTRY BOUNDARIES"
+            )
+            self.log(
+                "RESOURCE_SAFE_STOP_POLICY = %s"
+                % (
+                    "DISABLED (production floors not approved; no admission census)"
+                    if self.resource_floors is None
+                    else "ENABLED free_floor=%d largest_floor=%d source=%s"
+                    % (
+                        self.resource_floors[0],
+                        self.resource_floors[1],
+                        RESOURCE_SAFE_STOP_FLOORS_SOURCE,
+                    )
+                )
             )
             self.log(
                 "scope_mode=%s scope_shots=%d"
@@ -13979,113 +17530,52 @@ class RebuildControlGroupsProductionRun(
             )
 
             self.section(
-                "CONTEXTUALIZER PROCESS-LIFETIME SCOPE-STATE GUARD"
+                "CONTEXTUALIZER RESTART-REQUIREMENT CHECK"
             )
 
-            # Arming boundary: final recheck + admission revalidation +
-            # install (if needed) + verification, immediately before
-            # substantial scope traversal begins, with no intervening Qt
-            # event-loop yield (this is a plain sequence of function
-            # calls -- no processEvents()/exec_() between here and
-            # collect_scope_master_wanted_folds() below). _choose_scope()
-            # 's own nested Qt event loop already completed before this
-            # run object was even constructed, so the public-entry checks
-            # in StartRebuildControlGroups() are not durable authorization
-            # by themselves -- this recheck is.
+            # Immediately before substantial scope traversal, with no
+            # intervening Qt event-loop yield: the entry-point checks ran
+            # before the scope dialog's nested event loop, so this recheck is
+            # the durable authorization.
             guard_main_window = (
                 sfmApp.GetMainWindow()
             )
 
             if guard_main_window is None:
                 raise ProbeError(
-                    "Process-lifetime scope-state guard: SFM main "
-                    "window unavailable immediately before scope "
-                    "traversal."
+                    "Restart-requirement check: SFM main window "
+                    "unavailable immediately before scope traversal."
                 )
 
             try:
-                guard_state = (
-                    _read_process_scope_state(
-                        guard_main_window
-                    )
+                restart_reason = _read_restart_requirement(
+                    guard_main_window
                 )
             except NormalizerProcessAttemptMarkerError as exc:
                 raise ProbeError(
-                    "Process-lifetime scope-state guard could not "
-                    "verify process state immediately before scope "
-                    "traversal (failing closed): %s"
+                    "Restart-requirement check could not verify process "
+                    "state immediately before scope traversal (failing "
+                    "closed): %s"
                     % to_unicode(exc)
                 )
 
-            if guard_state == PROCESS_SCOPE_STATE_FULL_SCOPE_STARTED:
+            if restart_reason is not None:
                 raise ProbeError(
-                    "Process-lifetime scope-state guard: full-scope "
-                    "work already started in this SFM process; "
-                    "refusing to begin further scope traversal."
-                )
-
-            if (
-                guard_state == PROCESS_SCOPE_STATE_SELECTED_USED
-                and self.requested_scope_class
-                == SCOPE_REQUEST_CLASS_FULL_SCOPE
-            ):
-                raise ProbeError(
-                    "Process-lifetime scope-state guard: this process "
-                    "has already used the Normalizer for a Selected "
-                    "Shot(s) request; refusing this full-scope request "
-                    "(restart is required before full-scope use)."
-                )
-
-            if guard_state == PROCESS_SCOPE_STATE_UNUSED:
-                target_marker_name = (
-                    NORMALIZER_PROCESS_STATE_FULL_SCOPE_STARTED_MARKER_NAME
-                    if self.requested_scope_class
-                    == SCOPE_REQUEST_CLASS_FULL_SCOPE
-                    else NORMALIZER_PROCESS_STATE_SELECTED_USED_MARKER_NAME
-                )
-
-                try:
-                    _install_named_process_marker(
-                        guard_main_window,
-                        target_marker_name
-                    )
-                except NormalizerProcessAttemptMarkerError as exc:
-                    raise ProbeError(
-                        "Process-lifetime scope-state guard could not "
-                        "install or verify its marker immediately "
-                        "before scope traversal (failing closed): %s"
-                        % to_unicode(exc)
-                    )
-
-                self.log(
-                    "CONTEXTUALIZER_PROCESS_SCOPE_STATE_TRANSITION = "
-                    "%s -> %s"
-                    % (
-                        guard_state,
-                        self.requested_scope_class,
-                    )
-                )
-            else:
-                # guard_state == PROCESS_SCOPE_STATE_SELECTED_USED and
-                # this request is itself SELECTED_SCOPE -- the marker is
-                # already installed from an earlier request in this
-                # process; state never rolls backward and is never
-                # reinstalled/updated for an unchanged transition.
-                self.log(
-                    "CONTEXTUALIZER_PROCESS_SCOPE_STATE_TRANSITION = "
-                    "%s -> %s (unchanged)"
-                    % (
-                        guard_state,
-                        guard_state,
-                    )
+                    "SFM restart required by an earlier Normalizer run "
+                    "(%s); refusing to begin scope traversal."
+                    % restart_reason
                 )
 
             self.log(
-                "CONTEXTUALIZER_PROCESS_SCOPE_STATE_ARMED = True"
+                "CONTEXTUALIZER_RESTART_REQUIREMENT = NONE"
             )
             self.log(
                 "CONTEXTUALIZER_REQUESTED_SCOPE_CLASS = %s"
                 % self.requested_scope_class
+            )
+
+            self.resource_admission(
+                "COMMAND_PREPARATION"
             )
 
             self.section(
@@ -14192,6 +17682,35 @@ class RebuildControlGroupsProductionRun(
             self.log(
                 "CONTEXTUALIZER_MASTER_INDEX_RUNTIME_STATE_CACHE = NONE"
             )
+
+            try:
+                manifest_path = os.path.join(
+                    os.path.dirname(self.master_path),
+                    "sfm_shared_authority",
+                    "manifest.json",
+                )
+                manifest_bytes = open(manifest_path, "rb").read()
+                manifest = json.loads(manifest_bytes.decode("utf-8"))
+                self.log(
+                    "AUTHORITY_IDENTITY api=%s build=%s manifest_sha256=%s sidecar=%s "
+                    "sidecar_sha256=%s manifest_source_sha256=%s "
+                    "manifest_matches_live_master=%r format_contract=%r semantics=%r"
+                    % (
+                        _AUTHORITY_EXPECTED_API_VERSION,
+                        _AUTHORITY_EXPECTED_BUILD_ID,
+                        hashlib.sha256(manifest_bytes).hexdigest(),
+                        manifest.get("generation_basename"),
+                        manifest.get("sidecar_sha256"),
+                        manifest.get("source_sha256"),
+                        manifest.get("source_sha256") == self.master_hash,
+                        manifest.get("format_contract_version"),
+                        manifest.get("authority_semantics_version"),
+                    )
+                )
+            except Exception as exc:
+                self.log(
+                    "AUTHORITY_IDENTITY_UNAVAILABLE reason=%r" % str(exc)
+                )
 
             self.contextualizer_resource_checkpoint(
                 "CP_INDEX_READY",
@@ -14431,6 +17950,9 @@ class RebuildControlGroupsProductionRun(
 
             self.activate_next_shot()
 
+        except ResourceStopSignal:
+            self.resource_stop_closure()
+
         except Exception as exc:
             try:
                 self.log(
@@ -14454,6 +17976,40 @@ class RebuildControlGroupsProductionRun(
                 )
 
 
+def _entry_admission_refusal(main_window):
+    # (title, body) of the entry-point refusal, or None to admit. Fails
+    # closed when either check cannot be trusted.
+    try:
+        existing_run = _find_existing_run(
+            main_window
+        )
+    except NormalizerProcessAttemptMarkerError:
+        return PROCESS_GUARD_MESSAGE_ACTIVE_RUN_UNVERIFIABLE
+
+    if existing_run is not None:
+        try:
+            sys.stdout.write(
+                "Rebuild Control Groups is already running.\n"
+            )
+        except Exception:
+            pass
+        return ()
+
+    try:
+        restart_reason = _read_restart_requirement(
+            main_window
+        )
+    except NormalizerProcessAttemptMarkerError:
+        return PROCESS_GUARD_MESSAGE_STATE_UNVERIFIABLE
+
+    if restart_reason is not None:
+        return _restart_required_message(
+            restart_reason
+        )
+
+    return None
+
+
 def StartRebuildControlGroups():
     main_window = (
         sfmApp.GetMainWindow()
@@ -14468,51 +18024,16 @@ def StartRebuildControlGroups():
             pass
         return
 
-    if (
-        _find_existing_run(
-            main_window
-        )
-        is not None
-    ):
-        try:
-            sys.stdout.write(
-                "Rebuild Control Groups is already running.\n"
+    refusal = _entry_admission_refusal(
+        main_window
+    )
+
+    if refusal is not None:
+        if refusal:
+            _show_process_guard_message(
+                refusal[0],
+                refusal[1]
             )
-        except Exception:
-            pass
-        return
-
-    # Process-lifetime scope-aware admission guard: refusal boundary,
-    # checked BEFORE _choose_scope() so a refused invocation performs
-    # zero scope-control collection, work inventory, fresh scene
-    # discovery, broker/provider acquisition, native Rebuild, production-
-    # run construction/start, or production-log truncation (the log file
-    # is not opened until RebuildControlGroupsProductionRun.start(),
-    # which is never reached from either refusal path below). Selected
-    # Shot(s) over any proper subset of project shots is NOT gated here
-    # -- only a process that already started full-scope work is refused
-    # at this point; a SELECTED_USED process is still allowed to open
-    # the scope dialog (a later full-scope REQUEST from a SELECTED_USED
-    # process is instead caught after scope resolution, below, since
-    # only then is the request's own scope class known).
-    try:
-        pre_dialog_state = _read_process_scope_state(
-            main_window
-        )
-    except NormalizerProcessAttemptMarkerError:
-        title, body = PROCESS_GUARD_MESSAGE_STATE_UNVERIFIABLE
-        _show_process_guard_message(
-            title,
-            body
-        )
-        return
-
-    if pre_dialog_state == PROCESS_SCOPE_STATE_FULL_SCOPE_STARTED:
-        title, body = PROCESS_GUARD_MESSAGE_FULL_SCOPE_ALREADY_STARTED
-        _show_process_guard_message(
-            title,
-            body
-        )
         return
 
     try:
@@ -14532,6 +18053,10 @@ def StartRebuildControlGroups():
     if scope_mode is None:
         return
 
+    # Canonical shot-identity validation: every selected shot is re-resolved
+    # against a fresh project shot list after the scope dialog's nested event
+    # loop. The resulting class is recorded in the report; it no longer
+    # restricts use.
     try:
         requested_scope_class = _classify_scope_request(
             scope_mode,
@@ -14545,40 +18070,17 @@ def StartRebuildControlGroups():
         )
         return
 
-    # Reread process state: _choose_scope() ran its own nested Qt event
-    # loop while the dialog was open, so state captured before it opened
-    # cannot be trusted as still current.
-    try:
-        post_dialog_state = _read_process_scope_state(
-            main_window
-        )
-    except NormalizerProcessAttemptMarkerError:
-        title, body = PROCESS_GUARD_MESSAGE_STATE_UNVERIFIABLE
-        _show_process_guard_message(
-            title,
-            body
-        )
-        return
+    # Recheck after the scope dialog's nested event loop.
+    refusal = _entry_admission_refusal(
+        main_window
+    )
 
-    if post_dialog_state == PROCESS_SCOPE_STATE_FULL_SCOPE_STARTED:
-        title, body = PROCESS_GUARD_MESSAGE_FULL_SCOPE_ALREADY_STARTED
-        _show_process_guard_message(
-            title,
-            body
-        )
-        return
-
-    if (
-        post_dialog_state == PROCESS_SCOPE_STATE_SELECTED_USED
-        and requested_scope_class == SCOPE_REQUEST_CLASS_FULL_SCOPE
-    ):
-        title, body = _process_guard_full_scope_refusal_message(
-            scope_mode
-        )
-        _show_process_guard_message(
-            title,
-            body
-        )
+    if refusal is not None:
+        if refusal:
+            _show_process_guard_message(
+                refusal[0],
+                refusal[1]
+            )
         return
 
     run = (
