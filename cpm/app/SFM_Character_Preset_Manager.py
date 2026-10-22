@@ -13365,6 +13365,27 @@ def g09a_candidates():
     )
 
 
+PROD_EMPTY_STATE_GUIDANCE = {
+    u"no-session": u"Open an SFM session to use Character Preset Manager.",
+    u"no-shot": u"Move the playhead into a shot to choose a character model.",
+    u"no-models": u"Add a character model in the Animation Set Editor to get started.",
+}
+
+
+def prod_model_candidates():
+    """(candidates, empty_reason) for the production window's model list.
+    Ordinary empty states are returned rather than raised: no-session (no SFM
+    document), no-shot (playhead outside every shot) and no-models (no
+    supported character model in the current shot). Genuine failures still
+    raise to the caller."""
+    if not sfmApp.HasDocument():
+        return [], u"no-session"
+    if sfmApp.GetShotAtCurrentTime() is None:
+        return [], u"no-shot"
+    candidates = g09a_candidates()
+    return candidates, (None if candidates else u"no-models")
+
+
 def g09a_resolve(identity):
     shot = sfmApp.GetShotAtCurrentTime()
     if shot is None:
@@ -27719,7 +27740,7 @@ class ProdWindow(QtGui.QDialog):
         self,
     ):
         def work():
-            self.candidates = g09a_candidates()
+            self.candidates, empty_reason = prod_model_candidates()
 
             self.combo.blockSignals(
                 True
@@ -27831,30 +27852,40 @@ class ProdWindow(QtGui.QDialog):
             )
             self.sync_review_tab()
 
+            guidance = PROD_EMPTY_STATE_GUIDANCE.get(
+                empty_reason,
+                u"Choose a character model.",
+            )
             self.coverage.setText(
-                "Choose a character model."
+                guidance
             )
             self.body_summary.setText(
-                "Choose a character model."
+                guidance
             )
             self.expr_summary.setText(
-                "Choose a character model."
+                guidance
             )
-            self.set_status(
-                "%d model(s) found. Choose a character model."
-                % len(
-                    self.candidates
+            if empty_reason is None:
+                self.set_status(
+                    "%d model(s) found. Choose a character model."
+                    % len(
+                        self.candidates
+                    )
                 )
-            )
+            else:
+                self.set_status(
+                    guidance
+                )
 
             try:
                 log_line(
-                    "PROD_MODELS count=%d initial_index=%d"
+                    "PROD_MODELS count=%d initial_index=%d empty_reason=%r"
                     % (
                         len(
                             self.candidates
                         ),
                         self.combo.currentIndex(),
+                        empty_reason,
                     )
                 )
             except Exception:

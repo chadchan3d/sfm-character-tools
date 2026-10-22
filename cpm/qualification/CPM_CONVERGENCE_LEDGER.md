@@ -234,6 +234,40 @@ adjudication.** Amendment §6 items 2 and 5.
   4. L-6 on the exact shipping candidate, with the amendment §5 reconciliation.
 
   Item 5, the bounded live-SFM check of Phase F, is DONE (real SFM, 2026-10-22; see above).
+- **CPM empty-state UX correction: COMPLETE, owner-accepted (2026-10-22). The new application identity is PENDING
+  final software-inventory reconciliation (item 3).**
+  - **Identity:** `cpm/app/SFM_Character_Preset_Manager.py` is
+    `d7a8a37402c4ac6d88012b05b7e1fa3d8ef96351f8545d4b707855167f808000` (793,215 B). Previously `4e35f292…`, the K-
+    and L-5-qualified identity, which remains the inventory spec pin and the historical K, R15 and UI-polish record.
+    The spec pin is not updated yet.
+  - **Behavior:** a production-only `prod_model_candidates()` turns ordinary empty states into neutral guidance
+    (grey status, no popup):
+
+    | State | Guidance |
+    |---|---|
+    | no SFM document | "Open an SFM session to use Character Preset Manager." |
+    | no current shot | "Move the playhead into a shot to choose a character model." |
+    | no supported character model | "Add a character model in the Animation Set Editor to get started." |
+
+    Models found keep the existing behavior. Genuine failures, including a `HasDocument()` failure, keep the
+    existing error popup, red status and traceback logging. Discovery, authority, scope handling and the probe windows
+    are unchanged.
+  - **Offline:** `cpm/convergence/tests/test_cpm_app_empty_states.py`, 15/15 under SFM Python 2.7.5 + PySide. The
+    unchanged `4e35f292…` scores 5/15, reproducing the reported popup.
+    - **R15 namespace suite:** no longer runnable on the current tree. It pins the old Normalizer and Master, and its
+      fake `sfmApp` has no `HasDocument()`.
+    - **UI-polish suite:** derives and pins `4e35f292…` by design.
+
+    Both are historical and unedited.
+  - **Real SFM (2026-10-22, one SFM process, build `12b3b7b3…`):** the four states were observed, each with no
+    popup and no `PROD_ACTION_ERROR`: `no-session`, `no-models` (File → New, playhead in the shot), `no-shot`
+    (playhead past the shot) and, in `testscripts_krysandnika.dmx` at shot10, 3 models found.
+    - That build differs from the final one only in the no-models sentence. The final wording is verified offline;
+      the live test was not repeated.
+    - The CPM log records model discovery but no model selection in that session.
+  - **Installed:** the final `d7a8a374…` is installed and retained, byte-identical to the repository. The historical
+    `4e35f292…` is backed up locally. Quick Launch, the Normalizer `1f4ec5a2…`, G1, Extended ASE and Autoinit are
+    unchanged.
 - **Unchanged:** the L-5 items below (production trust, the L-6 test-trust conflict, inventory deployment).
 - **L-6:** NOT STARTED / NOT AUTHORIZED.
 
