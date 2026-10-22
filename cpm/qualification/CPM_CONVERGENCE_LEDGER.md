@@ -30,21 +30,23 @@ QL-3 is not started.
   Neither recurred in later repeated floating and docking.
 
 **v1 Release Baseline Amendment — Normalizer integration, corrected Candidate C Master promotion and Phase F
-post-governor simplification: OFFLINE-COMPLETE (owner-accepted, 2026-10-22); repository checkpoint committed.
-Real-SFM verification of `6b5d2941…` and of the corrected Candidate C combination is PENDING (see Pending below).**
+post-governor simplification: OFFLINE-COMPLETE and REAL-SFM QUALIFIED (bounded; Astra's final adjudication
+accepted, 2026-10-22); repository checkpoint committed.** Amendment §6 items 2 and 5 are done; see "Real-SFM
+qualification of `6b5d2941…` with corrected Candidate C" below. Items 3 (changed inventory and packaging) and 4
+(L-6) remain.
 The owner approved two changed first-release identities (record:
 `updater_qualification/design/V1_RELEASE_BASELINE_AMENDMENT.md`, `a33d8b3b…`):
 - **Decision A:** the Normalizer.
   - **Current:** `6b5d294116765aa1941e0f98394b4b6e35ad0acd2f80c90aba418b13c9b6130d` (496,210 B), the amendment §8
-    Phase F simplification. **Offline-verified; pending the bounded live-SFM check.**
-  - **Historical:** `25a5e3cd2ccf62dad00df7122d5f1b1d62aea63a2069459993acc3e44feaa343` (496,624 B), the
-    real-SFM-qualified build. The qualifications below were recorded on it.
+    Phase F simplification. **Offline-verified; real-SFM qualified (bounded) on 2026-10-22.**
+  - **Historical:** `25a5e3cd2ccf62dad00df7122d5f1b1d62aea63a2069459993acc3e44feaa343` (496,624 B), the earlier
+    real-SFM-qualified build. The "Accepted Normalizer qualifications" below were recorded on it.
 - **Decision B, amended by option (b):** the corrected Candidate C.
   - **Master:** `1d855cd34b90a2e6254d97eb4c6ac4b08ccc64d994b8e6a754ddac8466b155ec`.
   - **Sidecar:** `3791677522119a6ca45c1092743041dc07014cfa1fd0891526db995bcf526a16`.
   - **Manifest:** `6c7568063a69de2a22c05f55df066db369f3340e68d0208f9f36a4c017c3c7ae`.
   - **Historical:** original Candidate C (`00df6304…` / `43572fd2…` / `c646f1da…`) is the identity used by every
-    real-SFM qualification.
+    real-SFM qualification before 2026-10-22. The corrected identities were real-SFM qualified on 2026-10-22.
 
 G1 and the Normalizer `1f4ec5a2…` remain historical qualification and regression references. This is a narrow
 exception to the L card §1 frozen-Normalizer scope; R2, the L card, the Contract Amendment and R15 are unchanged.
@@ -80,7 +82,7 @@ exception to the L card §1 frozen-Normalizer scope; R2, the L card, the Contrac
     | PRE regression | identical |
 
     Private evidence: the manifest of the Phase F work folder (see the amendment).
-  - **Not SFM-tested:** `6b5d2941…` has not been run in SFM.
+  - **Real SFM:** qualified (bounded) on 2026-10-22; see below.
 - `updater/release_tools/character_tools_software_v1.json` pins the new hash and length; its `qualification` note
   records the amendment. All 31 spec sources match their pins. Roles, profile `2bbd93d0…`, the inventory verifier
   and the updater package are unchanged.
@@ -119,10 +121,11 @@ exception to the L card §1 frozen-Normalizer scope; R2, the L card, the Contrac
     - colours and indentation match the rules;
     - G1 was backed up, the file atomically replaced, then re-opened and re-validated;
     - compiled from the repository copy: `37916775…` / `6c756806…`.
-  - **Not SFM-tested:** the corrected byte identities have not been run in SFM.
+  - **Real SFM:** the corrected identities were acquired by both the Normalizer and CPM in real SFM on 2026-10-22;
+    see below.
 
-**Accepted Normalizer qualifications (private evidence, local only; all real-SFM runs used original Candidate C
-`00df6304…`):**
+**Accepted Normalizer qualifications on `25a5e3cd…` (historical; private evidence, local only; these real-SFM runs
+used original Candidate C `00df6304…`):**
 - **Four-name rig sides and PRE bridge:** real-SFM PASS (`RESULT.md` `742ac9fd…`).
 - **PRE admission:** qualified. Strict membership reads `0e4c982e…`, with the real-SFM legacy `shot228` PASS
   (`QUALIFICATION_RESULT.md` `602d4881…`).
@@ -165,19 +168,72 @@ exception to the L card §1 frozen-Normalizer scope; R2, the L card, the Contrac
   | Diagnostics | 74/74 |
   | PRE regression | identical to the qualified record |
 
+**Real-SFM qualification of `6b5d2941…` with corrected Candidate C (2026-10-22): ACCEPTED (bounded), Astra's final
+adjudication.** Amendment §6 items 2 and 5.
+- **Method:**
+  - the corrected Candidate C authority and the Phase F Normalizer were staged reversibly, with SFM closed;
+  - the clean UNKNOWN and the STOP were produced by the approved 2026-10-21 injection applied to Phase F, as two
+    qualification-only menu entries (UNKNOWN `8d355165…`, STOP `e609c2d4…`), checked offline first (9/9);
+  - production floors were unchanged (112 MiB / 24 MiB);
+  - the runbooks are `RUNBOOK.md` `7856c47f…` and `RUNBOOK_CONTINUATION.md` `f56509d1…` (private evidence, local
+    only; work-folder manifest `b4ec12e8…`).
+- **Attempt 1 (rsq disposable fixture, 15 shots): INCOMPLETE, stopped by a genuine protective STOP.**
+  - **Selected (4 shots, 9 targets):** PASS, on corrected Candidate C (report `8786de01…`).
+  - **Selected → All admission:** PASS. All was admitted in the same process with no history restriction.
+  - **All completion:** NOT DEMONSTRATED. A genuine STOP occurred at `TARGET_PREPARATION`, trigger `LARGEST_FREE`
+    (largest block 21.75 MiB; free memory 112.08 MiB), at shot11 after 9 of 15 shots and 17 native operations.
+  - **The protective STOP and its verified closure:** PASS. Every closure, isolation and teardown check passed;
+    `LOW_MEMORY` was recorded on the main window and in the process; the window had Close only; the report was
+    classified RESOURCE_STOP (`b0937566…`).
+  - **Not tested in this attempt:** the subsequent restart refusal, the clean UNKNOWN retry and the CPM
+    alternation.
+  - **Disposition:** `PROCESS1_DISPOSITION.md` `0ca8a505…`. The installation was then restored exactly.
+- **Continuation (Astra's bounded two-process plan):**
+  - **Process A** (rsq fixture, single-shot selections):
+    - **Clean UNKNOWN:** PASS. Injected UNKNOWN at shot3; closure verified; no restart requirement recorded; no
+      native work; a Send to Developer report (`bd308c30…`).
+    - **UNKNOWN retry:** PASS. The next invocations were admitted with no restart requirement.
+    - **Controlled STOP:** PASS. Injected at shot2/mia1; verified; `LOW_MEMORY` on both records; Close only;
+      RESOURCE_STOP report (`a73fee4c…`).
+    - **Restart refusal:** PASS. The next production invocation was refused with the restart message before any
+      preparation, which writes no report.
+  - **Process B** (existing smaller 11-shot fixture `testscripts_krysandnika.dmx`, one SFM process):
+    - **Selected, then All:** completed normally, **operator-observed.** Their reports were overwritten: every clean
+      run replaces the single `Normalizer - Last Run.log`, and the runbook did not copy each clean report before the
+      next run. No native-operation count for All is recorded. No dated problem report exists for either run.
+    - **CPM Save on `krystal20201`:** authorized against `1d855cd3…`.
+    - **Normalizer Selected with the same CPM window and scope open:** PASS (report `a774a7f0…`). Corrected Candidate
+      C authority; all targets completed; `protected_handles_released=True`.
+    - **CPM Apply in the same window and scope:** authorized against `1d855cd3…`. It was a **valid no-op** (preset
+      already matched; undo count unchanged), so **no mutating Apply/Undo is claimed.**
+    - **Temporary preset:** deleted.
+    - **CPM's scope** was retained across the Normalizer run, with no refusal and no rebuild (`c2f5ab08…`).
+  - **Accepted:**
+    - Phase F Selected, Selected → All admission, the protective STOP, the UNKNOWN retry and the restart refusal;
+    - CPM/Normalizer coexistence on corrected Candidate C;
+    - Master protection: handles released, and the Candidate C Master unchanged, verified when restoring;
+    - successful All on the 11-shot fixture, as operator-observed.
+  - **Disposition:** `CONTINUATION_DISPOSITION.md` `ca62b5b1…`.
+- **Restoration (verified exact, after each attempt):**
+  - G1 authority, hash and modification times equal to the backup;
+  - the production Normalizer `1f4ec5a2…` with its modification time;
+  - both qualification entries removed;
+  - the CPM preset library returned exactly to its pre-test snapshot (the only differences had been the temporary
+    preset's Trash copy and the Krystal library's index and `character.json` files);
+  - fixtures and autosave unchanged;
+  - Quick Launch, CPM, Extended ASE and Autoinit unchanged (`restoration_verification.json` `529a0dfc…`).
+
+  The live installation is again exact G1 with the production Normalizer `1f4ec5a2…`.
+- **No further SFM testing is required for these items.**
+
 **Pending (not yet performed):**
-- **Phase F build `6b5d2941…`:** PENDING the bounded live-SFM check (amendment §6 item 5):
-  - Selected and All use in one process;
-  - one low-memory STOP refusing the next invocation until SFM restarts;
-  - one clean UNKNOWN permitting the next invocation.
-- **Revised CPM/Normalizer release combination:** PENDING bounded coexistence verification of the Normalizer
-  `6b5d2941…` with the corrected Candidate C (`1d855cd3…` / `37916775…` / `6c756806…`).
 - **The amendment §6 qualification delta:**
   1. Candidate C structural and compiled-authority validation: DONE (offline, 2026-10-21; see above);
-  2. focused K-level coexistence with the corrected Candidate C. Its byte identities have not been run in SFM;
-     the existing real-SFM evidence used original C;
+  2. focused K-level coexistence with the corrected Candidate C: DONE (real SFM, 2026-10-22; see above);
   3. changed-inventory identity, compatibility and packaging checks;
   4. L-6 on the exact shipping candidate, with the amendment §5 reconciliation.
+
+  Item 5, the bounded live-SFM check of Phase F, is DONE (real SFM, 2026-10-22; see above).
 - **Unchanged:** the L-5 items below (production trust, the L-6 test-trust conflict, inventory deployment).
 - **L-6:** NOT STARTED / NOT AUTHORIZED.
 
