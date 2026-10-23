@@ -43,7 +43,8 @@ accepted Menu Visibility Check).** Starting checkpoint `fe6a5718…`. Record: se
   | `tests/integration/profile2` | **27/27 PASS**, first run |
   | `test_production_trust.py` | 18/18 |
   | CPM canonical route | 84/85, identical digests; historical `derivation.added_top_level_is_bounded`; no new names |
-  | Quick Launch, before commit | 232/233 (run), 31/32 (static); only the intended "CPM app unchanged from HEAD" guard; rerun after commit |
+  | Quick Launch, before commit | 232/233 (run), 31/32 (static); only the intended "CPM app unchanged from HEAD" guard |
+  | **Quick Launch, rerun at `2af989f0…`** | **233/233 (run), 32/32 (static) PASS** |
 
   The new profile-2 checks:
   - exactly three `.py` files in the installed menu tree (SFM's recursive rule);
