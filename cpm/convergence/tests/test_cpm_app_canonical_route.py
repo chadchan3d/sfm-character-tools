@@ -771,7 +771,7 @@ print("CHILD_RESULT " + json.dumps(out))
 
 def section_import(app):
     game = os.path.join(FIXTURE_ROOT, "fake_sfm", "game")
-    mainmenu = os.path.join(game, "usermod", "scripts", "sfm", "mainmenu", "ChadChan3D")
+    mainmenu = os.path.join(game, "usermod", "scripts", "sfm", "mainmenu", "SFM Character Tools")
     if not os.path.isdir(mainmenu):
         os.makedirs(mainmenu)
     for name in ("cpm_authority_adapter.py", "cpm_compat_v1_projection.py"):

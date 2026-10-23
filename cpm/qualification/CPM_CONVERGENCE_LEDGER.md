@@ -8,6 +8,80 @@ Blueprint, or expands scope, report the conflict before dependent edits.
 Otherwise proceed with the assigned milestone.
 
 ## Current milestone
+**v1.0.0 integration correction (Scripts > SFM Character Tools, bundled data, profile 2): source COMPLETE /
+verified offline (2026-10-23; owner-approved, incorporating Astra's integration adjudication).** Starting
+checkpoint `25860bac…`. Record: `updater_qualification/design/V1_PROFILE2_INTEGRATION_CORRECTION.md`.
+- **Behavior:**
+  - one ZIP (both programs, the updater, the official data, optional Quick Launch);
+  - one root `usermod` copy installs software and data;
+  - Scripts > **SFM Character Tools** holds the three existing entries;
+  - the install overwrites `usermod\cfg\sfm_defaultanimationgroups.txt` (owner-approved, README-warned).
+- **Changed sources:** only the menu-directory literal, plus one CPM message.
+  - CPM app `d7a8a374…` → `b2c383bd…`;
+  - adapter `e96e21b5…` → `9c3c0351…`;
+  - Normalizer `6b5d2941…` → `52e3e777…`;
+  - authority `bootstrap.py` `acad28b6…` → `06f746cf…`;
+  - Quick Launch controller `4558d296…` → `7a01bd5e…` (optional, not inventoried).
+- **Unchanged:**
+  - the R15 launcher `996ca483…` and the updater launcher `99f27260…` (only their comments name the old folder);
+  - the Quick Launch bootstrap `23e3a881…`;
+  - every other inventoried file;
+  - `scripts/ChadChan3D_CPM/`, `autoinit/ChadChan3D/`, private identities and attribution.
+- **Profile and inventory:**
+  - `sct-authority-profile-2` (`e0a9b64e0d947314f4382e417865fdeba72b0607366babcb89f86e6935cb33e4`) is profile 1
+    (`2bbd93d0…`, unchanged) with layout `sct-layout-2`, `software_dir`, and the inventory under the new folder;
+  - the updater implements profile 2 only, and refuses the earlier profile-1 inventory (`SOFTWARE_UNSUPPORTED`);
+  - the spec (`4dfe06f8…`) has 31 files, 30 of them under the new folder, and only the four identities above
+    changed;
+  - **unsigned production inventory** (version 1.0.0, key `ed25519-5d879134807dff6d`):
+    `08c9e78e753c84260ce6124611f76b0cb7a2e6df693d69d4e13fad5fca696f2f` (7,246 B), in
+    `release/v1.0.0/profile2/`.
+- **Updater sources:** `official.py` `12d28f27…`, `compat/profile.py` `3a7537f0…`, `compat/inventory.py`
+  `2c475812…`, `runtime_check.py` `ec4c1291…`, `packaging/build.py` `b02e18c9…`. `updater/SHA256SUMS.txt` is
+  current.
+- **Overlay finding (documented, not a blocker):** merging over an earlier installation keeps its old sidecar.
+  - CPM and the Normalizer still acquire the new generation, because they select by source hash.
+  - The updater status reports "expected exactly one active sidecar, found 2", and its GUI says to choose Update
+    Using SFM's TXT.
+  - That one action (SFM closed) completes a protected transaction. It retires the old sidecar into recovery
+    storage, deletes nothing, and leaves the data consistent.
+  - A fresh installation is consistent immediately. No silent cleanup was added.
+- **Legacy menu:** old suite files in `mainmenu\ChadChan3D` would stay active, and in one session whichever copy
+  loads first wins; the other refuses (verified both ways). The README lists the exact items to delete, and
+  unrelated scripts are preserved.
+- **Focused verification:**
+
+  | Suite | Result |
+  |---|---|
+  | `tests/integration/profile2` (Python 3.10 + test key; SFM Python 2.7.5 probes), scratch only | **24/24 PASS** |
+  | Quick Launch, SFM Python 2.7.5 + PySide | 232/233 |
+  | Quick Launch static | 31/32 |
+  | CPM canonical route | 84/85 (Python 3 and 2.7 digests identical) |
+  | `updater/tests/test_production_trust.py` (profile-2 expectations) | 18/18 |
+
+  - **Profile-2 suite** covers the profile and spec, the locators on a path with spaces, the Quick Launch path,
+    the shared broker and generation (fresh and overlay), the profile-1 refusal, the fresh status and NOOP, the
+    overlay finding and remedy, both mixed-location refusals, and the documented migration.
+  - **Harness note:** the first profile-2 run had 7 harness failures (Python 2.7 `ast` decoding, the Normalizer
+    block start, the `COMPLETE` outcome name). It was rerun clean in new scratch.
+  - **Quick Launch:** the single failure in both phases is the "CPM app unchanged from HEAD" guard, tripped by this
+    intended change; it is rerun after commit.
+  - **CPM canonical route:** the new folder passes. Its one failure is earlier-milestone top-level drift.
+- **Superseded (historical, not failures):**
+  - the updater build `34aa4d0d…` (must be rebuilt: `official.py` changed);
+  - inventory `9672e00e…` (profile 1);
+  - `data-v1.0.0` sequence 1 (`58752b33…`, profile 1; never published);
+  - single ZIP `5aa968b7…`;
+  - the QL-3 standalone archive (its test pins controller `4558d296…`).
+- **README:** `release/v1.0.0/README_CANDIDATE.txt` (`e6718f3f…`) is a candidate for owner review, not final.
+- **Owner inputs next, each separately authorized:**
+  1. rebuild the updater from this commit;
+  2. owner-sign the profile-2 inventory, which must reproduce `08c9e78e…`;
+  3. owner-build and sign `data-v1.0.0` **sequence 2** for profile 2 (same payload identities);
+  4. approve the final README;
+  5. assemble the final ZIP with bundled `cfg` data;
+  6. then L-6, including a real-SFM check of the new menu folder.
+
 **Final README corrections: COMPLETE / PASS (2026-10-23; owner-directed). The single-ZIP distribution, including the
 optional CPM button, is owner-accepted.** Starting checkpoint `38ec2e4a…`. Documentation-only change.
 - **Main README:**

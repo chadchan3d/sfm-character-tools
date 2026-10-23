@@ -221,7 +221,7 @@ def make_install(case, master="G1", gens=("g1",), legacy_lock=True, manifest="g1
 
 SOFTWARE_SPEC = os.path.join(UPDATER, "release_tools", "character_tools_software_v1.json")
 SOFTWARE_PRODUCER = os.path.join(UPDATER, "release_tools", "make_software_inventory.py")
-INVENTORY_REL = os.path.join("scripts", "sfm", "mainmenu", "ChadChan3D", "sfm_character_tools_inventory")
+INVENTORY_REL = os.path.join("scripts", "sfm", "mainmenu", "SFM Character Tools", "sfm_character_tools_inventory")
 
 
 def software_dir(*p):
@@ -3847,7 +3847,7 @@ def group_P():
         wbytes(p, data + b"\n# local change\n")
 
     def drop_normalizer(u):
-        os.remove(os.path.join(u, "scripts", "sfm", "mainmenu", "ChadChan3D", "Rebuild_Control_Groups_Normalizer.py"))
+        os.remove(os.path.join(u, "scripts", "sfm", "mainmenu", "SFM Character Tools", "Rebuild_Control_Groups_Normalizer.py"))
 
     def flip_sig(u):
         p = os.path.join(u, INVENTORY_REL + ".sig")
@@ -3885,7 +3885,7 @@ def group_P():
                   variant=software_variant("v_runtime", lambda d: d.update(runtime_build_id="other-build")))
 
     def mutable_noise(u):
-        md = os.path.join(u, "scripts", "sfm", "mainmenu", "ChadChan3D")
+        md = os.path.join(u, "scripts", "sfm", "mainmenu", "SFM Character Tools")
         wbytes(os.path.join(md, "cpm_authority_adapter.pyc"), b"\x03\xf3\r\nstale bytecode")
         wbytes(os.path.join(u, "scripts", "ChadChan3D_CPM", "presets", "library.json"), b"{}")
         wbytes(os.path.join(u, "cfg", "SFM_Character_Preset_Manager.log"), b"log")

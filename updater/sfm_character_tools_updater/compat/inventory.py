@@ -4,8 +4,8 @@
 The Character Tools software release installs, beside its menu scripts, a signed inventory of its
 immutable shipping files:
 
-    usermod\\scripts\\sfm\\mainmenu\\ChadChan3D\\sfm_character_tools_inventory.json
-    usermod\\scripts\\sfm\\mainmenu\\ChadChan3D\\sfm_character_tools_inventory.sig
+    usermod\\scripts\\sfm\\mainmenu\\SFM Character Tools\\sfm_character_tools_inventory.json
+    usermod\\scripts\\sfm\\mainmenu\\SFM Character Tools\\sfm_character_tools_inventory.sig
 
 `.sig` is a raw 64-byte Ed25519 signature over the exact JSON bytes, made with a key trusted by this
 updater (official.trusted_keys(): the same release trust as official data). The updater verifies the
@@ -28,7 +28,7 @@ from ..messages import Stop
 from . import profile as prof
 
 OBJECT_TYPE = "sfm-character-tools-software-inventory"
-INVENTORY_REL = os.path.join("scripts", "sfm", "mainmenu", "ChadChan3D", "sfm_character_tools_inventory.json")
+INVENTORY_REL = os.path.join(*prof.CURRENT["installation_layout"]["software_inventory"].split("/"))
 SIGNATURE_REL = INVENTORY_REL[:-len(".json")] + ".sig"
 MAX_INVENTORY_BYTES = 256 * 1024
 MAX_FILES = 512

@@ -4,6 +4,16 @@
 owner-approved and recorded in `V1_RELEASE_ADJUDICATION_ADDENDUM.md`; where it differs from a recommendation
 below, the addendum governs. Approval of the plan authorizes no step: each step in §5 needs its own authorization.
 Starting checkpoint `4c8d165d…`.
+**Integration correction (2026-10-23):** `V1_PROFILE2_INTEGRATION_CORRECTION.md` moves the software to Scripts >
+SFM Character Tools under `sct-authority-profile-2`, and bundles the Candidate C data in the single ZIP. It
+supersedes these identities:
+- step 5's build, which must be rebuilt;
+- step 6's profile-1 inventory, which must be re-signed (unsigned `08c9e78e…`);
+- step 7's sequence-1 package, replaced by sequence 2 for profile 2;
+- the single ZIP `5aa968b7…`.
+
+The entries below are historical where so marked.
+
 **Completed:**
 - step 2: the production key, owner-held (key id `ed25519-5d879134807dff6d`, public key
   `7f2b9a53fcad0a7818ef5be52ed9fdc8826ac51e3923db30461ddbc96539dba1`);

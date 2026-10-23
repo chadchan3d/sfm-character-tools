@@ -166,7 +166,7 @@ class Env(object):
         self.game = os.path.join(root, "game")
         self.autoinit_dir = os.path.join(self.game, "usermod", "scripts", "sfm", "autoinit", "ChadChan3D")
         self.private_dir = os.path.join(self.game, "usermod", "scripts", "ChadChan3D_CPM")
-        self.menu_dir = os.path.join(self.game, "usermod", "scripts", "sfm", "mainmenu", "ChadChan3D")
+        self.menu_dir = os.path.join(self.game, "usermod", "scripts", "sfm", "mainmenu", "SFM Character Tools")
         for path in (self.autoinit_dir, self.private_dir, self.menu_dir):
             os.makedirs(path)
         self.boot_path = os.path.join(self.autoinit_dir, "ChadChan3D_CPM_ASE_Button.py")

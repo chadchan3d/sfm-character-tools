@@ -99,7 +99,7 @@ def bootstrap_import_path():
     location; this is the PACKAGE CODE's own location) -- the two need
     not be the same directory, and are kept as two separate, independently
     documented constants rather than one overloaded path."""
-    return os.path.join(game_root(), "usermod", "scripts", "sfm", "mainmenu", "ChadChan3D")
+    return os.path.join(game_root(), "usermod", "scripts", "sfm", "mainmenu", "SFM Character Tools")
 
 
 def ownership_report():

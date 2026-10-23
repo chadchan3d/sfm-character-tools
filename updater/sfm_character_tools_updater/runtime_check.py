@@ -76,11 +76,11 @@ def run(layout):
         checks["tls"] = {"ok": False, "error": "%s: %s" % (type(e).__name__, str(e)[:300])}
     pins = {os.path.relpath(p, candidate.TOOLS if p.startswith(candidate.TOOLS) else candidate.AUTH_PKG)
             .replace("\\", "/"): h for p, h in candidate.PINS.items()}
-    expected = dict(prof.PROFILE_1["compiler"])
-    expected.update({k: v for k, v in prof.PROFILE_1["validator_provider"].items() if k.endswith(".py")})
+    expected = dict(prof.CURRENT["compiler"])
+    expected.update({k: v for k, v in prof.CURRENT["validator_provider"].items() if k.endswith(".py")})
     checks["profile_matches_pins"] = {"ok": sorted(pins.values()) == sorted(expected.values()),
-                                      "profile": prof.PROFILE_1["profile_id"],
-                                      "contract_sha256": prof.PROFILE_SHA256[prof.PROFILE_1["profile_id"]]}
+                                      "profile": prof.CURRENT["profile_id"],
+                                      "contract_sha256": prof.PROFILE_SHA256[prof.CURRENT["profile_id"]]}
     res["module_origins"] = _origins()
     ok = all(c.get("ok") for c in checks.values())
     res.update(outcome="RUNTIME_OK" if ok else "RUNTIME_FAILED",

@@ -86,7 +86,7 @@ NATIVE_BUTTON_CLASS = "CQTabbedToolButton"
 NATIVE_ADD_TOOLTIP = "Add"
 
 LAUNCHER_RELATIVE_PARTS = (
-    "usermod", "scripts", "sfm", "mainmenu", "ChadChan3D",
+    "usermod", "scripts", "sfm", "mainmenu", "SFM Character Tools",
     "SFM_Character_Preset_Manager.py",
 )
 

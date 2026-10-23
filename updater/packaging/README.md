@@ -94,6 +94,9 @@ is part of the executables. The exact file list is `bundle_manifest.json` of eac
 ### Profile
 
 `compat/profile.py` defines `sct-authority-profile-1` as canonical JSON. Its identity is the SHA-256 of that JSON.
+The updater implements **`sct-authority-profile-2`** (`e0a9b64e…`, 2026-10-23). It is profile 1 (`2bbd93d0…`) with
+the software and its signed inventory under `scripts/sfm/mainmenu/SFM Character Tools` (layout contract
+`sct-layout-2`). Every other contract is unchanged, and profile 1 is no longer accepted.
 It binds:
 - the installation layout and the Master path resolution;
 - sidecar format and semantics 0;
@@ -109,8 +112,8 @@ It binds:
 The Character Tools software release installs a signed inventory beside its menu scripts:
 
 ```
-usermod\scripts\sfm\mainmenu\ChadChan3D\sfm_character_tools_inventory.json
-usermod\scripts\sfm\mainmenu\ChadChan3D\sfm_character_tools_inventory.sig
+usermod\scripts\sfm\mainmenu\SFM Character Tools\sfm_character_tools_inventory.json
+usermod\scripts\sfm\mainmenu\SFM Character Tools\sfm_character_tools_inventory.sig
 ```
 
 - **Contents:** the inventory lists the 31 immutable software files (CPM app and launcher, Normalizer, CPM adapter
@@ -145,7 +148,8 @@ usermod\scripts\sfm\mainmenu\ChadChan3D\sfm_character_tools_inventory.sig
   the menu entry starts it from. It is never placed in `usermod\scripts`, where SFM would treat files as scripts.
   Started directly, the updater also works from any folder.
 - **SFM menu entry (implemented):** `updater/menu/SFM_Control_Group_Updater.py`, installed as
-  `usermod\scripts\sfm\mainmenu\ChadChan3D\SFM_Control_Group_Updater.py`.
+  `usermod\scripts\sfm\mainmenu\SFM Character Tools\SFM_Control_Group_Updater.py` (Scripts > SFM Character Tools;
+  profile 2, 2026-10-23).
   - It runs under SFM's Python 2.7.
   - It resolves the SFM `game` folder from `sys.executable`, then starts
     `usermod\tools\SFM Control Group Updater\SFM Control Group Updater.exe` with

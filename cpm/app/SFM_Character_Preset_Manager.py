@@ -25,7 +25,7 @@ if not (
 ):
     raise RuntimeError(
         "SFM Character Preset Manager: this file is the private implementation "
-        "module. Launch it through the ChadChan3D > SFM_Character_Preset_Manager "
+        "module. Launch it through the SFM Character Tools > SFM_Character_Preset_Manager "
         "Scripts menu entry."
     )
 
@@ -16193,7 +16193,7 @@ PROD_MASTER_REVIEW_WARNING_COPY = (
 # ProdCpmUnmigratedProvider instead of reaching any provider.
 # ---------------------------------------------------------------------------
 
-PROD_CPM_MAINMENU_RELATIVE_PARTS = ("usermod", "scripts", "sfm", "mainmenu", "ChadChan3D")
+PROD_CPM_MAINMENU_RELATIVE_PARTS = ("usermod", "scripts", "sfm", "mainmenu", "SFM Character Tools")
 PROD_CPM_ADAPTER_MODULES = ("cpm_authority_adapter", "cpm_compat_v1_projection")
 
 

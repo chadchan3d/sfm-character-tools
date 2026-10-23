@@ -431,7 +431,7 @@ def _authority_locate_mainmenu_dir():
     )
     return os.path.join(
         game_root,
-        "usermod", "scripts", "sfm", "mainmenu", "ChadChan3D",
+        "usermod", "scripts", "sfm", "mainmenu", "SFM Character Tools",
     )
 
 

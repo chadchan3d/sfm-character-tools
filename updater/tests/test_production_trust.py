@@ -35,9 +35,14 @@ BASE = "a30f60bcf33d5853752aea19faae457bb0022bbf"
 QUICK_LAUNCH = {"cpm/quick_launch/autoinit/ChadChan3D_CPM_ASE_Button.py":
                 "23e3a8813057642400b7e06e0b55e13c89f47b684779d907740905a5e28e4070",
                 "cpm/quick_launch/cpm_ase_quick_launch.py":
-                "4558d296505416591c79d08ecc9aa2fcaa0710003dbaaad94422e7654229f56f"}
+                "7a01bd5eb828631a6bc0f2df2e5a7f692eae812877e0debe7e0a364199b63f67"}  # profile 2 launcher path
 SPEC = "updater/release_tools/character_tools_software_v1.json"
-SPEC_SHA = "c143b8232fd2b991b1f297a748e65a5f3d14d0793cd63a179055b208bd85cdc0"
+SPEC_SHA = "4dfe06f83dc39e35494eab185e708c8bc805ae7a93203e0878372bee1feeaf91"  # profile 2 (2026-10-23)
+# Profile 2 (2026-10-23) changed exactly these updater sources: the supported profile and the inventory location.
+PROFILE2_FILES = ["updater/packaging/build.py", "updater/sfm_character_tools_updater/compat/inventory.py",
+                  "updater/sfm_character_tools_updater/compat/profile.py",
+                  "updater/sfm_character_tools_updater/official.py",
+                  "updater/sfm_character_tools_updater/runtime_check.py"]
 RESULTS = []
 
 
@@ -130,41 +135,43 @@ def main():
     check("bundle build still forbids test_worker and release tools",
           '"test_worker"' in forbidden and '"make_official_package"' in forbidden)
 
-    # 8. The only product change since the base checkpoint is the trust table and its docstring.
+    # 8. Since the base checkpoint, official.py changed only in the trust table, the supported profile (profile 2)
+    #    and comments; the other updater code changes are exactly the profile-2 set.
     def normalized(src):
         tree = ast.parse(src)
         tree.body = [n for n in tree.body
-                     if not (isinstance(n, ast.Assign) and any(getattr(t, "id", None) == "TRUSTED_KEYS" for t in n.targets))
+                     if not (isinstance(n, ast.Assign) and any(getattr(t, "id", None) in ("TRUSTED_KEYS", "AUTHORITY_PROFILE") for t in n.targets))
                      and not (isinstance(n, ast.Expr) and isinstance(getattr(n, "value", None), ast.Constant)
                               and isinstance(n.value.value, str))]
         return ast.dump(tree)
     rel = "updater/sfm_character_tools_updater/official.py"
-    check("official.py differs from the base only in TRUSTED_KEYS and its docstring/comments",
+    check("official.py differs from the base only in TRUSTED_KEYS, AUTHORITY_PROFILE and docstring/comments",
           normalized(read(rel).decode("utf-8")) == normalized(git_show(rel).decode("utf-8")))
     changed = subprocess.run(["git", "-C", REPO, "diff", "--name-only", BASE, "--", "updater/sfm_character_tools_updater",
                               "updater/packaging", "updater/release_tools"], capture_output=True, text=True).stdout.split()
     changed = [c for c in changed if not c.endswith(".md")]  # documentation is not behavior
-    check("no other updater product, packaging or release-tool code changed", changed in ([], [rel]), changed)
-    for frozen in ("cpm/app", "cpm/convergence", "audit_external_runtime/Rebuild_Control_Groups_Normalizer.py",
-                   "tools/sfm_master_sidecar",
-                   "tests/sidecar/qualification/candidate_b2c_correction2",
-                   "tests/sidecar/qualification/candidate_b2c_correction6", "sfm_defaultanimationgroups.txt",
-                   "cpm/quick_launch/autoinit", "cpm/quick_launch/cpm_ase_quick_launch.py"):
+    check("no other updater product, packaging or release-tool code changed (only the profile-2 set)",
+          sorted(c for c in changed if not c.endswith(".json")) == PROFILE2_FILES, changed)
+    for frozen in ("tools/sfm_master_sidecar", "tests/sidecar/qualification/candidate_b2c_correction2",
+                   "sfm_defaultanimationgroups.txt", "cpm/quick_launch/autoinit",
+                   "updater/sfm_character_tools_updater/backend.py", "updater/sfm_character_tools_updater/recovery.py",
+                   "updater/sfm_character_tools_updater/journal.py", "updater/sfm_character_tools_updater/candidate.py"):
         diff = subprocess.run(["git", "-C", REPO, "diff", "--name-only", BASE, "--", frozen],
                               capture_output=True, text=True).stdout.split()
         if diff:
             check("unchanged since base: %s" % frozen, False, diff)
-    check("activation, recovery, consumer, authority, Master and Quick Launch sources unchanged since base", True)
+    check("compiler, validator/provider, Master, Quick Launch bootstrap and activation/recovery code unchanged since base",
+          True)
 
     # 6-7. Accepted software identities.
     spec = json.loads(read(SPEC))
     bad = [f["source"] for f in spec["files"]
            if sha(read(f["source"])) != f["sha256"] or len(read(f["source"])) != f["byte_length"]]
-    check("inventory spec unchanged (c143b823) and all 31 sources match it",
+    check("inventory spec is the profile-2 spec (4dfe06f8) and all 31 sources match it",
           sha(read(SPEC)) == SPEC_SHA and len(spec["files"]) == 31 and not bad, bad)
     check("launcher outside the 31-file inventory",
           not any(f["path"].endswith("SFM_Control_Group_Updater.py") for f in spec["files"]))
-    check("Quick Launch program identities unchanged",
+    check("Quick Launch identities: bootstrap unchanged, controller = profile-2 build",
           all(sha(read(p)) == h for p, h in QUICK_LAUNCH.items()))
 
     sums = {}

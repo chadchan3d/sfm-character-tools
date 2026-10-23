@@ -63,8 +63,8 @@ def pinned():
     bad = {p: h for p, h in candidate.PINS.items() if sha(open(p, "rb").read()) != h}
     if bad:
         raise SystemExit("pinned dependency sources differ from their pins: %s" % sorted(bad))
-    expected = set(profile.PROFILE_1["compiler"].values()) | {
-        v for k, v in profile.PROFILE_1["validator_provider"].items() if k.endswith(".py")}
+    expected = set(profile.CURRENT["compiler"].values()) | {
+        v for k, v in profile.CURRENT["validator_provider"].items() if k.endswith(".py")}
     if set(candidate.PINS.values()) != expected:
         raise SystemExit("candidate pins and authority profile disagree")
     by_name = {}
