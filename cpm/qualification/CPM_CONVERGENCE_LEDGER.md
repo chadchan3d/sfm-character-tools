@@ -8,6 +8,50 @@ Blueprint, or expands scope, report the conflict before dependent edits.
 Otherwise proceed with the assigned milestone.
 
 ## Current milestone
+**Signed software inventory (release-assembly step 6, inventory part): COMPLETE / PASS (2026-10-23;
+owner-authorized; owner-signed).** Starting checkpoint `8784b205…`.
+- **Staging:** a new release-staging folder outside the repository and SFM.
+  - The existing `make_software_inventory.py stage` with the spec `c143b823…` staged exactly the 31 files under
+    `core\usermod\scripts\…`.
+  - Each matches its spec hash and size and is byte-identical to its repository source.
+  - Nine roles: `authority_package` 21, `sidecar_reader` 3, one each of the other seven.
+  - **Staging identity:** the SHA-256 of the sorted 31-file listing (`core_staged_SHA256.txt`) is
+    `d4f63c7b2e0ad8024f383dd9c510d981aeae5a783416b7fab8ce62a25d55e425`. It was unchanged after signing and
+    verification.
+- **Signing (owner-operated, ruling 3):**
+  - The owner ran the prepared procedure in their own PowerShell window.
+  - It read the passphrase without echo and passed it to the existing `make_software_inventory.py sign` through an
+    in-memory pipe, never a file.
+  - Before signing, it refused any key other than `ed25519-5d879134807dff6d`.
+  - Parameters: software version `1.0.0`, profile `sct-authority-profile-1`.
+  - Rehearsal beforehand: the identical procedure with a throwaway key in a private temporary folder, deleted
+    afterwards.
+  - Neither Claude nor this record accessed the key, its location or the passphrase.
+- **Signed artifacts (preserved byte-for-byte and read-only for the core ZIP):**
+
+  | File | SHA-256 | Size |
+  |---|---|---|
+  | `sfm_character_tools_inventory.json` | `9672e00e6cff38a053f5752420b90457d8cd2b2747341f8c447ddf9567515fed` | 6,976 B |
+  | `sfm_character_tools_inventory.sig` | `dafe6025f452de6f9e77a9d7f5fbdf28f6d2854bd62845858c9074bd947776d0` | 64 B |
+
+- **Independent verification (existing product verifier, shipping trust only: the embedded production key, test
+  seam unset), 9/9 PASS:**
+  - the JSON equals the owner-reported hash, and the signature is 64 bytes;
+  - the signature verifies against `ed25519-5d879134807dff6d`;
+  - the software is "SFM Character Tools", version `1.0.0`;
+  - the profile is `sct-authority-profile-1`, contract `2bbd93d0…`, runtime `1.0.0-b2a` /
+    `package-boundary-corrected-2026-09-22`;
+  - the inventory lists exactly the 31 spec entries (path, role, length, SHA-256), in canonical bytes;
+  - `verify_installation` accepts a copy of the staging laid out as an installation;
+  - a changed CPM in that copy is `SOFTWARE_MODIFIED`;
+  - the staging was unchanged by the verification.
+- **Containment:**
+  - no private-key material in the repository, scratch, the SFM `usermod\scripts` and `cfg`, or the release
+    staging (the only text match is this Ledger's custody sentence naming the PEM header);
+  - no `.pem` was created in scratch after staging began;
+  - the source and the updater candidate are unchanged.
+- **Not done:** the `data-v1.0.0` package (the next part of step 6), ZIP assembly, L-6 and publication.
+
 **Production updater build (release-assembly step 5): COMPLETE / PASS (2026-10-23; owner-authorized).** Built
 from `63cba5003e13b2c288705496b8fe7e7ff8068002` with the unchanged L-5 recipe. No product source changes were needed.
 - **Recipe:** `updater/packaging/build.py`, run in the existing L-5 build environment:
@@ -152,7 +196,7 @@ the menu launcher are done (above).
   2. public-key embedding (DONE, 2026-10-22; see above);
   3. the Scripts-menu updater launcher (DONE, 2026-10-22; see above);
   4. an updater rebuild (DONE, 2026-10-23: bundle `34aa4d0d…`; see above);
-  5. the production-signed inventory and data package;
+  5. the production-signed inventory (DONE, 2026-10-23: `9672e00e…`) and data package;
   6. unpublished release ZIPs;
   7. the approved L-6 reconciliation and Group 5 restoration plan.
 
@@ -1970,7 +2014,7 @@ owner-accepted.
      milestone). The L-6 trust conflict is resolved by the adjudication addendum (production key plus classified
      evidence; no test-trust build). Still open before L-6:
      - the updater rebuild: DONE (bundle `34aa4d0d…`, 2026-10-23);
-     - the owner-signed inventory and `data-v1.0.0`;
+     - the owner-signed inventory: DONE (`9672e00e…`, 2026-10-23); the owner-signed `data-v1.0.0`;
      - the release ZIPs with the archive manifest;
      - deployment of the inventory and menu entry in Group 5 under its restoration plan.
 - **Post-v0.1.0 research proposal (not authorized for implementation):** a CPM Pose Library.
