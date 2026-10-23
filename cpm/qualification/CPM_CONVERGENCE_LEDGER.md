@@ -8,6 +8,69 @@ Blueprint, or expands scope, report the conflict before dependent edits.
 Otherwise proceed with the assigned milestone.
 
 ## Current milestone
+**Production updater rebuild for profile 2 (release-assembly step 5, repeated): COMPLETE / PASS (2026-10-23;
+owner-authorized).** Built from `8f135eb9c09cb9d77ac0f94124463f5dfb54d8f3` with the unchanged L-5 recipe. No product
+source changes were needed.
+- **Recipe:** `updater/packaging/build.py` in the existing L-5 build environment (CPython 3.10.6 x64). `pip freeze
+  --all` equals `requirements-build.txt` apart from pip itself. The source tree was clean at the build commit, and the
+  output went to a new scratch folder outside the repository and SFM.
+- **Before the build:** a leftover background shell from the menu-isolation session was accounted for and stopped. It
+  was a read-only `grep` over the session transcript, and it wrote nothing.
+- **Candidate (preserved unchanged for release assembly; not deployed):** the one-folder
+  `SFM Control Group Updater\`, v0.1.0. It supersedes `34aa4d0d…`.
+
+  | Item | Identity |
+  |---|---|
+  | Files | 965 |
+  | Bundle identity | `cbf11e8016890a33090be0afa333df0cb0b7d7033018e0953e12b2f9b34d3a8e` |
+  | `bundle_manifest.json` | `8699296209981eacb477bb8e21364c1d6510881883ceb754cce8d4cebbcfafef` |
+  | GUI `SFM Control Group Updater.exe` | `f8750e09a95a1d49ab0d9f6ee9a8d91c00edcfdeed4d9642089d731ab76bd5fe` |
+  | Worker `sct-updater-worker.exe` | `fc571e72725a15a4945a6f325ba1b6096051308bbe815834c4cfd676b91b81f7` |
+
+- **Verification (independent of the build script): 28/28 PASS, plus a supplementary full code comparison, 6/6 PASS.**
+  - **Bundle integrity:**
+    - the bundle on disk equals its manifest, and the identity was recomputed;
+    - version 0.1.0, with no workstation path markers;
+    - the nine pinned sources equal `candidate.PINS`.
+  - **Trust:** the worker's embedded `official` trusts exactly `ed25519-5d879134807dff6d` / `7f2b9a53…`. The GUI
+    embeds no trust module or key material, by design.
+  - **No test material:** no test or development modules are embedded. A byte scan finds no test-key ID, no
+    `test_worker`, and no repository, scratch or user path. The only "PRIVATE KEY" strings are PEM labels inside
+    OpenSSL/`cryptography` binaries, byte-identical to the previous build.
+  - **Profile 2:**
+    - the worker's embedded `official.py`, `compat/profile.py`, `compat/inventory.py` and `runtime_check.py`
+      equal the committed sources (full code objects);
+    - `AUTHORITY_PROFILE` is `sct-authority-profile-2`;
+    - executing the embedded profile module gives exactly one profile, contract
+      **`d767c3d5b69d568ef53a5429ad59bf5f8d4f716cfaed0450789366fdfd48d743`**;
+    - the layout is `menu_dir` `scripts/sfm/mainmenu/SFM Character Tools`, `library_dir`
+      `scripts/SFM Character Tools`, with the inventory in the menu folder.
+  - **Packaged `runtime-check`** (clean copy, hostile `PYTHONPATH`/`PYTHONHOME`/`PATH`): `RUNTIME_OK`, frozen;
+    `profile_matches_pins` names profile 2 / `d767c3d5…`; OpenSSL 1.1.1n; Ed25519 via cryptography 50.0.2.
+  - **Test options:** the packaged worker rejects `--trust-key`, `--net-base`, `--hold-at`, `--inject` and `--token`
+    (exit 2, no result written). It refuses the L-5 test-signed package with "signing key is not trusted".
+  - **Profile-2 installations** (scratch copies of the profile-2 release `usermod`): prepare succeeds, and install is
+    refused with the TXT unchanged:
+    - test-signed inventory: "software inventory signature not verified";
+    - no inventory: "no signed software inventory in this installation";
+    - the production-signed **profile-1** inventory at the profile-2 location: "authority profile not implemented by
+      this updater". The production key verifies, and profile 2 is enforced.
+  - The clean copy was unchanged by the runs.
+- **Provenance (evidence-reuse rule):** compared with the previous production build `34aa4d0d…`:
+  - the same 965-file set; every file is byte-identical except the two executables;
+  - the GUI's embedded code is identical;
+  - the worker differs in exactly `official`, `compat.profile`, `compat.inventory` and `runtime_check`, the
+    profile-2 product changes.
+
+  The L-5 and step-5 qualification evidence is reused for everything else.
+- **Verification deviations (harness only; nothing rebuilt):**
+  - the first run (26/28, kept as `attempt1`) compared `frozenset` constants in an unstable order and flagged stdlib
+    `hashlib`, `pathlib` and `typing`. Normalized, they are identical, the same defect as the previous step 5.
+  - the constants-only module comparison does not see name-only changes, such as `runtime_check`'s
+    `PROFILE_1` → `CURRENT`. The supplementary full code-object comparison covers this.
+- **Not covered here:** acceptance of production-signed profile-2 artifacts, which needs the owner-signed inventory
+  `2e3a8036…` and `data-v1.0.0` sequence 2. Also final ZIP assembly, L-6 and publication.
+
 **Profile-2 menu isolation correction: source COMPLETE / verified offline (2026-10-23; owner-authorized after the
 accepted Menu Visibility Check).** Starting checkpoint `fe6a5718…`. Record: section 10 of
 `updater_qualification/design/V1_PROFILE2_INTEGRATION_CORRECTION.md`.

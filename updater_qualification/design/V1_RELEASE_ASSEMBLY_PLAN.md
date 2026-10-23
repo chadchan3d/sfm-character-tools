@@ -7,7 +7,7 @@ Starting checkpoint `4c8d165d…`.
 **Integration correction (2026-10-23):** `V1_PROFILE2_INTEGRATION_CORRECTION.md` moves the software to Scripts >
 SFM Character Tools under `sct-authority-profile-2`, and bundles the Candidate C data in the single ZIP. It
 supersedes these identities:
-- step 5's build, which must be rebuilt;
+- step 5's build, rebuilt for profile 2 (2026-10-23: bundle `cbf11e80…`; see the Ledger);
 - step 6's profile-1 inventory, which must be re-signed (unsigned `2e3a8036…` after the same-day menu isolation
   correction, section 10 of that record; `08c9e78e…` is superseded);
 - step 7's sequence-1 package, replaced by sequence 2 for profile 2;
@@ -19,7 +19,8 @@ The entries below are historical where so marked.
 - step 2: the production key, owner-held (key id `ed25519-5d879134807dff6d`, public key
   `7f2b9a53fcad0a7818ef5be52ed9fdc8826ac51e3923db30461ddbc96539dba1`);
 - steps 3–4: key embedding and the menu launcher (2026-10-22; see the Ledger);
-- step 5: the production updater build, v0.1.0, bundle identity `34aa4d0d…` (2026-10-23; see the Ledger);
+- step 5: the production updater build, v0.1.0, bundle identity `34aa4d0d…` (2026-10-23; see the Ledger), superseded
+  by the profile-2 rebuild `cbf11e80…` (2026-10-23);
 - step 6, inventory: owner-signed, `sfm_character_tools_inventory.json` `9672e00e…` / `.sig` `dafe6025…`
   (2026-10-23; see the Ledger);
 - step 7: owner-signed `data-v1.0.0`, sequence 1, `release.json` `58752b33…` / `release.sig` `5741eb5f…`, issued
