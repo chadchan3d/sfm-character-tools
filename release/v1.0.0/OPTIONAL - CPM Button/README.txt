@@ -3,7 +3,8 @@ OPTIONAL - CPM Button (CPM Quick Launch 1.0.0)
 
 Adds a CPM button to SFM's Animation Set Editor toolbar. The button opens
 Character Preset Manager. It is optional: Character Preset Manager always
-stays available from Scripts > ChadChan3D > SFM_Character_Preset_Manager.
+stays available from Scripts > SFM Character Tools > SFM Character Preset
+Manager.
 
 Copying the main "usermod" folder of SFM Character Tools does not install
 this button. Install it only with the steps below.
@@ -35,7 +36,7 @@ The button consists of exactly two files:
 Version 1.0.0 file fingerprints (SHA-256):
 
   A  23e3a8813057642400b7e06e0b55e13c89f47b684779d907740905a5e28e4070
-  B  4558d296505416591c79d08ecc9aa2fcaa0710003dbaaad94422e7654229f56f
+  B  7a01bd5eb828631a6bc0f2df2e5a7f692eae812877e0debe7e0a364199b63f67
 
 To see a file's fingerprint, open a Command Prompt and run:
   certutil -hashfile "<full path to the file>" SHA256

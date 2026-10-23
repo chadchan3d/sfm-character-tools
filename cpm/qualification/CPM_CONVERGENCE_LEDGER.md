@@ -8,6 +8,63 @@ Blueprint, or expands scope, report the conflict before dependent edits.
 Otherwise proceed with the assigned milestone.
 
 ## Current milestone
+**Final SFM Character Tools v1.0.0 single ZIP (profile 2, corrected CPM, bundled data): ASSEMBLED / VERIFIED, unpublished
+(2026-10-23; owner-authorized).** Starting checkpoint `586f0a52…`. No product code, signing, live SFM, L-6 or
+publication.
+- **Archive (unpublished, read-only, release staging `release-v1.0.0-p2-final-20261023\software-v1.0.0\`):**
+
+  | Artifact | SHA-256 | Size |
+  |---|---|---|
+  | **`SFM Character Tools v1.0.0.zip`** (1,006 files) | `7edf9f3b9505670886b04ff133b10bca1832bf2c3466d9092711c4a99e63a044` | 17,667,195 B |
+  | External contents manifest `ZIP_CONTENTS_SHA256.txt` | `3dc81bb32e4e22bcb027374c3053baa09594ad2f826818451190a50eb136f815` | 146,723 B |
+  | External ZIP checksum `SHA256SUMS.txt` | `0eb8caecdf1fe971869bf386fef79a0c71744b334a021ea82caed42c73ed9a3c` | 97 B |
+
+  Both evidence files and both READMEs are committed in `release/v1.0.0/`, byte-identical to the release staging.
+- **Layout:** no enclosing folder; three top-level items.
+  - `README.txt`: the owner-approved file, **`deabb6cb92677527b20a58ffccfaf84cd6adbcc54948ff68ca7a4599c36dc9d3`,
+    8,901 B**, byte-for-byte.
+  - `usermod/` (mergeable into the SFM `game` folder), 1,002 files:
+    - the 31 inventoried files (spec `769a8577…`, staging `a8e29962…`, CPM `ccbed9d7…`);
+    - in `scripts/sfm/mainmenu/SFM Character Tools/`: the replacement signed pair `ad058c15…` / `344b9fb8…` and the
+      updater launcher `99f27260…`;
+    - `cfg/`: the data-v1.0.0 sequence-2 payload (Master `1d855cd3…`, `sfm_shared_authority/manifest.json`
+      `6c756806…`, sidecar `37916775…`), checked against the signed `release.json` `8621a735…`. `release.json` and
+      `release.sig` are not in the ZIP;
+    - `tools/SFM Control Group Updater/`: the unchanged 965-file bundle `cbf11e80…`.
+  - `OPTIONAL - CPM Button/`: `README.txt` plus its own `usermod/` with the bootstrap `23e3a881…` and the controller
+    `7a01bd5e…`.
+- **Optional-button README reconciliation (owner-approved):** `7b09ad53…` becomes **`49957781…`, 4,956 B**. Two
+  factual corrections:
+  - the Scripts-menu fallback now reads "Scripts > SFM Character Tools > SFM Character Preset Manager";
+  - fingerprint B is the profile-2 controller `7a01bd5e…` (was `4558d296…`, never published).
+
+  All other wording is unchanged, including the QL-3 install, update, enable/disable, removal and safety
+  instructions.
+- **Assembly:** the accepted single-ZIP method (`d7a5c77f…`) with only the inputs changed (`assemble_single.py`
+  `df8df20e…`, outside the repository). It checks every input identity before writing, and uses fixed timestamps,
+  deflate level 9 and sorted entries. **An independent second assembly reproduced `7edf9f3b…` byte-for-byte.**
+- **Verification (`verify_single.py` `c96e5f1c…`, isolated scratch): 24/24 PASS.**
+  - Layout: exactly 1,006 entries; paths safe and unique; no case collisions; valid CRCs; no nested distribution
+    ZIP (the bundle's own `base_library.zip` only).
+  - The main README is byte-identical to the approved file.
+  - The 31 software identities match; the signature verifies under shipping trust only (embedded production key, test
+    seam unset); the installed core passes `verify_installation` (31 files, 1.0.0, profile 2).
+  - The updater folder equals the 965-file bundle; its identity, recomputed, is `cbf11e80…`.
+  - The bundled data equals the signed sequence-2 payload.
+  - The Scripts menu: exactly the three commands; no library module in the menu tree.
+  - **Simulated install** into an SFM-like `game` folder with existing user files (a model, a user cfg, another
+    author's menu script, a user script): all were kept; the launcher's target exe is in place; the optional button is
+    not installed.
+  - The optional README matches the shipped files and keeps the QL-3 safeguards.
+  - No private keys, workstation or scratch paths, test fixtures, developer tools or bytecode. No superseded
+    component (CPM `230f801d…`, inventories `2e3a8036…`/`9672e00e…`, controller `4558d296…`, earlier READMEs).
+  - The external manifest matches the extracted bytes; the checksum file matches the ZIP.
+  - The signed data package, the updater build and the release staging were unchanged; live SFM was untouched.
+- **Dry run:** before the approved README was available, the same scripts passed 24/24 with a placeholder README
+  in a throwaway folder (deleted).
+- **Superseded, historical:** the profile-1 single ZIP `5aa968b7…` (contents `c6010735…`) and its predecessors.
+- **Next (separate authorization):** L-6 on `7edf9f3b…`, then publication.
+
 **Owner-signed replacement software inventory (CPM logging correction): VERIFIED / PASS (2026-10-23;
 owner-authorized; owner-signed).** Starting checkpoint `cd6d1f46…`.
 - **Signing:** the owner ran `sign_profile2_inventory_logfix.py` in their own PowerShell window. Neither Claude nor
