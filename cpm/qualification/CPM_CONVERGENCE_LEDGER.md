@@ -8,6 +8,48 @@ Blueprint, or expands scope, report the conflict before dependent edits.
 Otherwise proceed with the assigned milestone.
 
 ## Current milestone
+**Owner-signed replacement software inventory (CPM logging correction): VERIFIED / PASS (2026-10-23;
+owner-authorized; owner-signed).** Starting checkpoint `cd6d1f46…`.
+- **Signing:** the owner ran `sign_profile2_inventory_logfix.py` in their own PowerShell window. Neither Claude nor
+  this record accessed the key, its location or the passphrase.
+- **Signed artifacts** (preserved unchanged in `release-v1.0.0-p2-logfix-20261023\inventory\`):
+
+  | File | SHA-256 | Size |
+  |---|---|---|
+  | `sfm_character_tools_inventory.json` | `ad058c15b4b9838d0827a11d0b34e15ef447b3f8f3ef7579b0e0860afafd65dd` | 6,882 B |
+  | `sfm_character_tools_inventory.sig` | `344b9fb82df2ebf724cad359647ce911fb2159b8690dafdb672783e71654a5ce` | 64 B |
+
+  Key `ed25519-5d879134807dff6d`; software `SFM Character Tools` 1.0.0; profile `sct-authority-profile-2`, contract
+  `d767c3d5…`; runtime `1.0.0-b2a` / `package-boundary-corrected-2026-09-22`. The JSON is byte-identical to the
+  prepared unsigned inventory.
+- **Independent verification: 22/22 PASS** (the accepted step-6 verifier with the new expected identities and two
+  added checks). It used shipping trust only: the embedded production key, with the test seam unset.
+  - **Signature:**
+    - the pair equals the owner-reported hashes;
+    - the Ed25519 signature verifies with the production public key;
+    - a one-bit-altered signature is refused.
+  - **Contents:**
+    - the inventory holds exactly the 31 spec entries (spec `769a8577…`) in canonical bytes;
+    - CPM is `ccbed9d7…` / 816,665 B / `cpm_app`;
+    - the other 30 entries and all header fields are identical to the previously accepted `2e3a8036…`;
+    - all 31 staged files (staging `a8e29962…`) match;
+    - the product `verify_installation` accepts the staging with the signed pair.
+  - **Rebuilt updater `cbf11e80…`:**
+    - a clean copy equals its manifest;
+    - the isolated scratch installation is the release-shaped profile-2 installation from this inventory's profile-2
+      check, carrying the corrected CPM and the bundled Candidate C data (Master `1d855cd3…`, one sidecar
+      `37916775…`, manifest `6c756806…`), with the owner-signed pair in place of the test pair;
+    - status is consistent, and Update Using SFM's TXT passes the software gate and is a verified NOOP;
+    - the Animation Groups data is byte-identical afterwards;
+    - **control:** one changed Normalizer file is refused ("installed software file differs from the signed
+      inventory");
+    - the updater copy and the release folder were unchanged by the runs.
+- **Containment:** no `.pem`/`.key` file and no private-key header in the repository, the staging or the
+  verification folder. The only text match is this Ledger's existing custody sentence.
+- **Superseded (historical evidence, unchanged):** the owner-signed `2e3a8036…` / `3fb19591…` (CPM `230f801d…`). It
+  must not ship with the corrected CPM.
+- **Not done:** the README logging section, final ZIP assembly, L-6 and publication.
+
 **Replacement profile-2 software inventory for the CPM logging correction: PREPARED, UNSIGNED (2026-10-23;
 owner-authorized: reconciliation, staging, unsigned preparation and focused verification only).** Starting checkpoint
 `da01027b…`.
