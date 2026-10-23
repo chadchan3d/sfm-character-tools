@@ -15,7 +15,9 @@ separately. This component is outside the Control Group Updater's L-series and i
 - **QL-2:** owner-accepted PASS in real SFM within the tested scope (2026-10-22): startup, appearance, launch, repeated
   use, editor close and reopen, resizing, floating and docking, Extended ASE coexistence and shutdown. The text-only
   button was replaced by the approved framed icon.
-- **QL-3** (optional packaging and installation): not started.
+- **QL-3** (optional packaging and installation): **COMPLETE / PASS**, owner-accepted 2026-10-22. Manual ZIP
+  distribution verified offline (15/15) and by an owner-operated live install/disable/enable/remove smoke check. See
+  [Distribution (QL-3)](#distribution-ql-3).
 
 Two docking incidents seen once each during QL-2 are **intermittent and unattributed**. Neither recurred in later
 repeated floating and docking:
@@ -31,6 +33,9 @@ They are not confirmed product defects, and no cause has been established.
 | Autoinit bootstrap | `cpm/quick_launch/autoinit/ChadChan3D_CPM_ASE_Button.py` | `usermod/scripts/sfm/autoinit/ChadChan3D/ChadChan3D_CPM_ASE_Button.py` |
 | Private implementation | `cpm/quick_launch/cpm_ase_quick_launch.py` | `usermod/scripts/ChadChan3D_CPM/cpm_ase_quick_launch.py` |
 | Offline tests | `cpm/quick_launch/tests/test_cpm_ase_quick_launch.py` | not installed |
+| User installation guide | `cpm/quick_launch/distribution/README.txt` | shipped in the ZIP, not installed |
+| Optional-component record | `cpm/quick_launch/distribution/quick_launch_component_v1.json` | not shipped |
+| Archive builder and its checks | `cpm/quick_launch/distribution/make_quick_launch_archive.py`, `cpm/quick_launch/tests/test_quick_launch_distribution.py` | not shipped |
 
 The bootstrap path must stay stable: Autoinit Manager records disablement by path.
 
@@ -150,3 +155,55 @@ probe that was removed after acceptance. The final live check (2026-10-22) confi
 | Launch | Character Preset Manager opens normally |
 
 The test installation's Extended ASE settings and Autoinit configuration were unchanged throughout.
+
+## Distribution (QL-3)
+
+Quick Launch ships as one optional ZIP, released alongside the base SFM Character Tools software. It is **not** part
+of the signed 31-file core software inventory, and the SFM Control Group Updater never installs, verifies or removes
+it. Base Character Tools work without it and without Autoinit Manager.
+
+- **Archive:** `SFM Character Tools - CPM Quick Launch (optional) v1.0.0.zip`, built with
+  `py -3 cpm/quick_launch/distribution/make_quick_launch_archive.py OUT.zip`.
+  - It contains exactly `README.txt`, `SHA256SUMS.txt` and the two program files at their installed paths, under
+    one root folder.
+  - The program files are byte-identical to QL-2: bootstrap `23e3a881…`, controller `4558d296…`.
+  - Entries are stored with a fixed order, timestamp and permissions, so the archive is reproducible (v1.0.0, 45,735 B,
+    SHA-256 `e3630efdc77fc2188bbd9a0eb85bf1f8372b7695a5fc90b3a97adf89824e5826`).
+  - The builder refuses other program bytes, an inconsistent README or an existing output.
+- **Installation is manual, a recorded exception to the Blueprint's §4 installer assumptions.** The user-facing
+  `README.txt` covers:
+  - the prerequisites (base Character Tools; Autoinit Manager already installed and never changed);
+  - a mandatory check of both target paths;
+  - a fresh install when neither file exists;
+  - an update only when both files match a recognized release, replacing both together;
+  - **stop without copying** on a partial or unrecognized installation;
+  - turning the button off and on in Autoinit Manager (after a restart);
+  - removal of exactly the two files, keeping the `ChadChan3D_CPM` folder (CPM itself) and Autoinit's settings;
+  - troubleshooting.
+- **Record:** `distribution/quick_launch_component_v1.json` lists the two files and the recognized releases, and
+  records the exception.
+- **Offline checks:** `py -3 cpm/quick_launch/tests/test_quick_launch_distribution.py`, 15/15:
+  - deterministic rebuild;
+  - exact layout;
+  - byte identity with the repository and QL-2;
+  - `SHA256SUMS.txt`;
+  - the README sections and their safety wording;
+  - both files absent from the core inventory spec;
+  - the builder's refusals.
+- **Live smoke check (owner-operated, 2026-10-22): PASS.** QL-1 and QL-2 evidence was reused; SFM was closed for
+  every file operation.
+
+  | Step | Observed |
+  |---|---|
+  | Remove the QL-2 files (README REMOVE steps) | No button and no Autoinit Manager entry; Scripts-menu CPM opens |
+  | Fresh install from the verified ZIP | Button appears and opens CPM |
+  | Untick in Autoinit Manager, restart | No button |
+  | Tick again, restart | Button returns |
+
+  Final state: installed and enabled, both files at the v1.0.0 hashes. Autoinit's skip and script lists are empty.
+  CPM, the R15 launcher, Extended ASE and its settings, Autoinit Manager, the Normalizer and the Master are
+  unchanged.
+
+  Evidence limitations (not failures): the skip list was not inspected while the button was disabled, only its final
+  empty state; and the reinstalled files carry the install time, not the QL-2 timestamps (contents byte-identical).
+- **Release:** the v1.0.0 ZIP is preserved for final release assembly and is not yet published.

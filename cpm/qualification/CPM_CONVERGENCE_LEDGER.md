@@ -9,8 +9,38 @@ Otherwise proceed with the assigned milestone.
 
 ## Current milestone
 **CPM Quick Launch (optional component) — QL-2 PASS in real SFM, owner-accepted within the tested scope
-(2026-10-22).** Record: `cpm/quick_launch/README.md`. It is separate from the L-series and the software inventory, and
-QL-3 is not started.
+(2026-10-22).** Record: `cpm/quick_launch/README.md`. It is separate from the L-series and the software inventory.
+**QL-3 COMPLETE / PASS (owner-accepted, 2026-10-22): manual optional-ZIP distribution, offline 15/15 and
+owner-operated live smoke check passed.**
+- **QL-3 distribution:**
+  - **Archive:** `SFM Character Tools - CPM Quick Launch (optional) v1.0.0.zip`, SHA-256
+    `e3630efdc77fc2188bbd9a0eb85bf1f8372b7695a5fc90b3a97adf89824e5826` (45,735 B), reproducible with
+    `distribution/make_quick_launch_archive.py`. It contains exactly `README.txt`, `SHA256SUMS.txt` and the two
+    QL-2 program files (byte-identical).
+  - **Scope:** outside the signed 31-file core inventory and the Control Group Updater. It requires an
+    already-installed Autoinit Manager, which is never bundled or changed.
+  - **Manual installation** is a recorded exception to the Blueprint's §4 installer assumptions. The user README
+    covers fresh install, update only from a recognized release (both files together), stopping on unrecognized or
+    partial files, turning the button off and on, removal of only the two files, and troubleshooting.
+  - **Record:** `distribution/quick_launch_component_v1.json`.
+  - **Offline:** `tests/test_quick_launch_distribution.py`, 15/15.
+  - **Live smoke check (owner-operated, SFM closed for every file operation; 2026-10-22):**
+    1. QL-2 files preserved, then removed per the README's REMOVE steps (only the two files, plus the then-empty
+       autoinit `ChadChan3D` folder): no button, no Autoinit Manager entry; Scripts-menu CPM opened normally.
+    2. Fresh install of both files from the verified ZIP (`e3630efd…`; neither target existed): the button appeared
+       and opened CPM.
+    3. Unticked in Autoinit Manager and SFM restarted: no button.
+    4. Ticked again and SFM restarted: the button returned.
+  - **Final installed state:** Quick Launch installed and enabled; bootstrap `23e3a881…` and controller
+    `4558d296…`. `autoinit_skipped.txt` and `autoinit_scripts.txt` empty (rewritten by Autoinit Manager). CPM
+    `d7a8a374…`, the R15 launcher `996ca483…`, Extended ASE (`extended.py`, `extended_options.json`), Autoinit
+    Manager, the Normalizer `1f4ec5a2…` and the G1 authority (Master `ac45e5c1…`, manifest `d810d648…`)
+    unchanged.
+  - **Evidence limitations (not failures):**
+    - `autoinit_skipped.txt` was not inspected while the button was disabled (steps 2–4 ran in one sitting); only
+      its final, empty state was recorded. The disablement itself was observed directly.
+    - The reinstalled files carry the install time rather than the QL-2 timestamps; contents are byte-identical,
+      and the QL-2 originals were preserved outside the repository.
 - **Sources:**
   - bootstrap `23e3a8813057642400b7e06e0b55e13c89f47b684779d907740905a5e28e4070`;
   - controller `4558d296505416591c79d08ecc9aa2fcaa0710003dbaaad94422e7654229f56f`;
@@ -1575,7 +1605,9 @@ Evidence:
 
     Neither recurred in later repeated floating and docking, and no cause is established.
   - Coexistence was tested with the audited Extended ASE v1.5 and Autoinit v1.2 only.
-  - QL-3 packaging is not started.
+  - QL-3: complete; the install, disable, enable and remove smoke check passed with Autoinit v1.2 and Extended ASE
+    v1.5 only. "Without Autoinit Manager" is covered by design (the bootstrap only runs through Autoinit), not
+    tested.
 - **Offline-v1 limitations (published, not qualified; Amendment §5):**
   - L-A: unexpected native SFM overlap during installation;
   - L-B: power/cache-loss persistence. No hard reset was performed; the constructed-state tests qualify
@@ -1728,8 +1760,8 @@ owner-accepted.
   1. **Normalizer behavior:** investigate and resolve the owner-reported Normalizer behavior problems. The suspected
      relationship to animation-group TXT/sidecar data is unconfirmed. Root cause and corrective scope remain
      undetermined.
-  2. **Launcher button:** CPM Quick Launch QL-1 and QL-2 PASS (2026-10-22; see Current milestone). QL-3 (optional
-     packaging and installation) is NOT STARTED / NOT AUTHORIZED.
+  2. **Launcher button:** CPM Quick Launch QL-1, QL-2 and QL-3 PASS (2026-10-22; see Current milestone). The
+     optional v1.0.0 ZIP (`e3630efd…`) is preserved for final release assembly; it is not yet published.
   3. **Release identity:** finalize the integrated software identities, the signed inventory, production trust and
      the release candidate before L-6 qualification. This includes resolving the L-5 items: the shipping candidate
      installs no data without trust, a test-trust qualification build or the production key for L-6, and deployment

@@ -2,3 +2,6 @@
 # exact LF bytes on every checkout and archive export.
 *.py text eol=lf
 *.md text eol=lf
+# QL-3 distribution files are hash-checked by the archive builder; keep exact LF bytes.
+distribution/*.txt text eol=lf
+distribution/*.json text eol=lf

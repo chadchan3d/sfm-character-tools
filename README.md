@@ -44,6 +44,12 @@ full TXT file on every query.
   (`SFM_CSP_G18AN_SaveNewCopy.py`) imported verbatim from the now-closed
   `sfm-character-preset-manager` source archive, serving as the parity
   oracle for CPM shared-authority convergence; see `cpm/baseline/MANIFEST.md`.
+- **`cpm/quick_launch/`** — CPM Quick Launch, an **optional** CPM button for SFM's
+  Animation Set Editor toolbar. It requires Autoinit Manager to be installed already
+  (never bundled or changed) and ships as a separate ZIP, outside the core Character
+  Tools software inventory and the Control Group Updater. Character Preset Manager
+  stays available from the Scripts menu without it. See
+  `cpm/quick_launch/README.md` and `cpm/quick_launch/distribution/README.txt`.
 
 ## Editing the Master
 

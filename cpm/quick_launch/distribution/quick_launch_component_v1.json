@@ -1,0 +1,46 @@
+{
+ "schema": "sct-optional-component-record-1",
+ "component": "CPM Quick Launch",
+ "version": "1.0.0",
+ "optional": true,
+ "requires": [
+  "SFM Character Tools (Character Preset Manager and its Scripts-menu launcher) already installed",
+  "Autoinit Manager already installed (Steam Workshop item 3400621327); never bundled, modified or installed by this component"
+ ],
+ "core_inventory": "NOT LISTED: Quick Launch is outside the signed 31-file installed-software inventory and is never installed, verified or removed by the SFM Control Group Updater",
+ "distribution": {
+  "method": "manual ZIP; the user copies two files with SFM closed",
+  "archive_root": "CPM Quick Launch v1.0.0",
+  "blueprint_exception": "Recorded exception to the Quick Launch Construction Blueprint section 4 (installer integration): there is no installer. Automatic dependency detection, refusal to overwrite unfamiliar or modified files, and installation records are replaced by documented manual checks in README.txt (check both target paths, compare hashes with a known release, stop on anything unrecognized) and by SHA256SUMS.txt. Owner decision, 2026-10-22."
+ },
+ "files": [
+  {
+   "role": "quick_launch_bootstrap",
+   "installed_path": "usermod/scripts/sfm/autoinit/ChadChan3D/ChadChan3D_CPM_ASE_Button.py",
+   "source": "cpm/quick_launch/autoinit/ChadChan3D_CPM_ASE_Button.py",
+   "byte_length": 7790,
+   "sha256": "23e3a8813057642400b7e06e0b55e13c89f47b684779d907740905a5e28e4070"
+  },
+  {
+   "role": "quick_launch_controller",
+   "installed_path": "usermod/scripts/ChadChan3D_CPM/cpm_ase_quick_launch.py",
+   "source": "cpm/quick_launch/cpm_ase_quick_launch.py",
+   "byte_length": 32183,
+   "sha256": "4558d296505416591c79d08ecc9aa2fcaa0710003dbaaad94422e7654229f56f"
+  }
+ ],
+ "known_releases": [
+  {
+   "version": "1.0.0",
+   "files": {
+    "usermod/scripts/sfm/autoinit/ChadChan3D/ChadChan3D_CPM_ASE_Button.py": "23e3a8813057642400b7e06e0b55e13c89f47b684779d907740905a5e28e4070",
+    "usermod/scripts/ChadChan3D_CPM/cpm_ase_quick_launch.py": "4558d296505416591c79d08ecc9aa2fcaa0710003dbaaad94422e7654229f56f"
+   }
+  }
+ ],
+ "qualification": {
+  "QL-1": "offline construction and corrections, commits cdc17f8 and 04a8cc9 (SFM Python 2.7.5 + PySide 1.2)",
+  "QL-2": "real-SFM PASS within the tested scope, owner-accepted 2026-10-22, commit e6e8801 (36x32 framed icon, placement, ownership, launch)",
+  "QL-3": "manual ZIP distribution v1.0.0 (archive SHA-256 e3630efdc77fc2188bbd9a0eb85bf1f8372b7695a5fc90b3a97adf89824e5826); offline 15/15; owner-operated live install/disable/enable/remove smoke check PASS, owner-accepted 2026-10-22"
+ }
+}
