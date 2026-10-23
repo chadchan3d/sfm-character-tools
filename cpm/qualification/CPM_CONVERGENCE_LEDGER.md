@@ -8,6 +8,50 @@ Blueprint, or expands scope, report the conflict before dependent edits.
 Otherwise proceed with the assigned milestone.
 
 ## Current milestone
+**Final README corrections: COMPLETE / PASS (2026-10-23; owner-directed). The single-ZIP distribution, including the
+optional CPM button, is owner-accepted.** Starting checkpoint `38ec2e4a…`. Documentation-only change.
+- **Main README:**
+  - **Section 2:** files with matching names are no longer presented as safe-to-overwrite earlier versions. The new
+    wording: merge without deleting the existing `usermod`; back up customized versions of these tools; cancel and
+    inspect any file Windows asks to replace that you don't recognize; "The SFM Control Group Updater is included.
+    No separate download is needed." The redundant warning paragraph was removed, keeping the three install
+    locations.
+  - **Section 7:** adds "Steam Workshop - ChadChan3D's SFM tools",
+    `https://steamcommunity.com/profiles/76561199571308867/myworkshopfiles/?appid=1840`.
+- **Owner decisions:**
+  - keep the real GUI labels;
+  - keep private and superseded repositories out;
+  - keep ChadChat as the scan destination;
+  - leave the optional button README unchanged (`7b09ad53…`, byte-identical).
+- **Final archive (unpublished, read-only, release staging; supersedes `ce3c7957…`):**
+
+  | Artifact | SHA-256 | Size |
+  |---|---|---|
+  | **`SFM Character Tools v1.0.0.zip`** | `5aa968b71934f62233505d41b560acce06cffe6f49c7732ee2da6bafe4ec06e6` | 14,347,297 B |
+  | External contents manifest (1,003 files) | `c6010735f1a1fdbd0dda26be93665f19d723ab86b1506db056227f9bb87bc4ad` | 146,380 B |
+  | External ZIP checksum file | `68e27fd68d5726069d1166b4a9203ae6bdb318081a61675b7177165b26375132` | 97 B |
+  | `README.txt` | `9fde80a29ca4347d415175f91aa6a49813d42299b248bc1c604fe6f693b0f42c` | |
+
+  The evidence and both READMEs are updated in `release/v1.0.0/`.
+- **Focused verification:**
+  - **The same assembler** (`d7a5c77f…`), with unchanged inputs. A second assembly reproduced `5aa968b7…`
+    byte-for-byte.
+  - **Only `README.txt` changed:** compared with the `ce3c7957…` contents manifest, the same 1,003 paths are
+    present, and `README.txt` is the only entry that differs. It equals the reviewed source.
+  - **The accepted single-ZIP verifier, re-pointed at this output: 18/18 PASS.** Every accepted identity is
+    unchanged:
+    - the 31 core files;
+    - inventory `9672e00e…` / `dafe6025…`;
+    - launcher `99f27260…`;
+    - GUI `4864ca0d…` and worker `7d8fc4a2…`;
+    - bundle `34aa4d0d…`;
+    - button `23e3a881…` / `4558d296…`.
+
+    The core also passes inventory verification under shipping trust, the simulated install behaves the same,
+    `data-v1.0.0` is unchanged, and the live SFM installation was untouched.
+- **Superseded, historical:** `ce3c7957…` (contents `16ce9b55…`), and the step 8 three-ZIP set.
+- **Next:** L-6 on `5aa968b7…` plus `data-v1.0.0`, then publication. Each needs separate authorization.
+
 **Single-ZIP distribution (supersedes the step 8 three-ZIP distribution): COMPLETE / PASS (2026-10-23;
 owner-requested, Astra-approved).** Starting checkpoint `336cd54f…`.
 - **Authority:** `updater_qualification/design/V1_SINGLE_ZIP_DISTRIBUTION_AMENDMENT.md` (`7f0b5e1e…`, in

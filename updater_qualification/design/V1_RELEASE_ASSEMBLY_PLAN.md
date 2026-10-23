@@ -16,8 +16,9 @@ Starting checkpoint `4c8d165d…`.
 - step 8: the unpublished ZIPs: core `7e95519f…`, updater `96067dcc…`, Quick Launch `e3630efd…` (unchanged), and
   `SHA256SUMS.txt` `9f2760e4…` (2026-10-23; see the Ledger). This is **superseded** by the single-ZIP distribution
   amendment (`V1_SINGLE_ZIP_DISTRIBUTION_AMENDMENT.md`), which keeps these as historical distribution evidence:
-  - the one archive is `SFM Character Tools v1.0.0.zip`, `ce3c7957…`;
-  - its external contents manifest is `16ce9b55…`, in `release/v1.0.0/` (2026-10-23).
+  - the one archive is `SFM Character Tools v1.0.0.zip`, finally `5aa968b7…` after the owner's README corrections
+    (it superseded `ce3c7957…`);
+  - its external contents manifest is `c6010735…`, in `release/v1.0.0/` (2026-10-23).
 
   §2.1–§2.4 and the step 8 ZIP list are superseded accordingly.
 

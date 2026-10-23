@@ -28,20 +28,17 @@ included updater installs official data or prepares your own.
    folder, for example:
        ...\steamapps\common\SourceFilmmaker\game
 
-Your game folder already has a "usermod" folder. Copying merges the two:
-your existing files stay where they are, and the tools' files are added. Do
-not delete your existing usermod folder. If Windows asks about files with
-the same name, those are earlier versions of these tools; replace them.
+Your game folder already has a "usermod" folder. Merge the folders; do not
+delete your existing "usermod" folder.
 
-The SFM Control Group Updater is included and is installed by the same copy.
-
-Before copying, back up anything you have customized. If you have edited
-these tools' files, or the folders below contain files you don't recognize,
-copy them somewhere outside the SFM folder first. Don't overwrite an
-installation you're unsure about.
+Before replacing any files, back up customized versions of these tools. If
+Windows asks to replace a file you don't recognize, cancel and inspect it
+first. The tools install into:
     game\usermod\scripts\ChadChan3D_CPM\
     game\usermod\scripts\sfm\mainmenu\ChadChan3D\
     game\usermod\tools\SFM Control Group Updater\
+
+The SFM Control Group Updater is included. No separate download is needed.
 
 
 3. SET UP ANIMATION GROUPS
@@ -136,5 +133,7 @@ Other SFM tools
     https://github.com/chadchan3d/sfm-bring-near-props
     https://github.com/chadchan3d/sfm-bring-near-lights
     https://github.com/chadchan3d/remove-remove-workshop-prompt
+Steam Workshop - ChadChan3D's SFM tools
+    https://steamcommunity.com/profiles/76561199571308867/myworkshopfiles/?appid=1840
 ChadChat
     https://chadchan3d.com/chat/
