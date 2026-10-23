@@ -8,8 +8,8 @@ Starting checkpoint `4c8d165d…`.
 SFM Character Tools under `sct-authority-profile-2`, and bundles the Candidate C data in the single ZIP. It
 supersedes these identities:
 - step 5's build, rebuilt for profile 2 (2026-10-23: bundle `cbf11e80…`; see the Ledger);
-- step 6's profile-1 inventory, which must be re-signed (unsigned `2e3a8036…` after the same-day menu isolation
-  correction, section 10 of that record; `08c9e78e…` is superseded);
+- step 6's profile-1 inventory, re-signed for profile 2 (2026-10-23: owner-signed `2e3a8036…` / `.sig`
+  `3fb19591…`, after the same-day menu isolation correction, section 10 of that record; see the Ledger);
 - step 7's sequence-1 package, replaced by sequence 2 for profile 2;
 - the single ZIP `5aa968b7…`.
 
@@ -22,7 +22,7 @@ The entries below are historical where so marked.
 - step 5: the production updater build, v0.1.0, bundle identity `34aa4d0d…` (2026-10-23; see the Ledger), superseded
   by the profile-2 rebuild `cbf11e80…` (2026-10-23);
 - step 6, inventory: owner-signed, `sfm_character_tools_inventory.json` `9672e00e…` / `.sig` `dafe6025…`
-  (2026-10-23; see the Ledger);
+  (2026-10-23; see the Ledger), superseded by the profile-2 inventory `2e3a8036…` / `3fb19591…` (2026-10-23);
 - step 7: owner-signed `data-v1.0.0`, sequence 1, `release.json` `58752b33…` / `release.sig` `5741eb5f…`, issued
   2026-10-23T03:43:34Z; accepted (non-installing) by the production updater candidate (2026-10-23; see the Ledger);
 - step 8: the unpublished ZIPs: core `7e95519f…`, updater `96067dcc…`, Quick Launch `e3630efd…` (unchanged), and

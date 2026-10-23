@@ -8,6 +8,63 @@ Blueprint, or expands scope, report the conflict before dependent edits.
 Otherwise proceed with the assigned milestone.
 
 ## Current milestone
+**Profile-2 signed software inventory (release-assembly step 6, inventory part, repeated): COMPLETE / PASS
+(2026-10-23; owner-authorized; owner-signed).** Starting checkpoint `e6922d53…`.
+- **Staging:** a new release-staging folder outside the repository and SFM (`release-v1.0.0-p2-20261023`).
+  - The existing `make_software_inventory.py stage`, with spec `dfe28855…`, staged exactly the 31 files under
+    `core\usermod\scripts\…`:
+    - 28 in `scripts\SFM Character Tools\`;
+    - the CPM launcher and the Normalizer in `scripts\sfm\mainmenu\SFM Character Tools\`;
+    - the CPM app in `scripts\ChadChan3D_CPM\`;
+    - no `mainmenu\ChadChan3D` path.
+
+    The updater menu launcher is outside the inventory by design and is added at ZIP assembly.
+  - **Staging identity** (SHA-256 of the sorted 31-file listing `core_staged_SHA256.txt`): `9b73e9d7…`. It was
+    unchanged after signing and verification.
+- **Signing (owner-operated, ruling 3):**
+  - The owner ran a prepared helper (`sign_profile2_inventory.py`, kept in the staging folder) in their own
+    PowerShell window.
+  - It read the key path and the passphrase locally (no echo) and passed the passphrase to the existing
+    `make_software_inventory.py sign` through an in-memory pipe, never a file.
+  - Before signing, it required the inventory bytes to reproduce `2e3a8036…`, profile 2 / `d767c3d5…` and key
+    `ed25519-5d879134807dff6d`.
+  - It was rehearsed beforehand with a throwaway key in a private temporary folder, deleted afterwards. The rehearsal
+    confirmed the wrong-key and wrong-identity refusals and a verified signature.
+  - Neither Claude nor this record accessed the key, its location or the passphrase.
+- **Signed artifacts (preserved read-only for release assembly, in `release-v1.0.0-p2-20261023\inventory\`):**
+
+  | File | SHA-256 | Size |
+  |---|---|---|
+  | `sfm_character_tools_inventory.json` | `2e3a8036c58ab8a98044a6c2b159debaab2942d38b072e802a929d860c5b0e8b` | 6,882 B |
+  | `sfm_character_tools_inventory.sig` | `3fb195919e5c29ace41feb6207d57092948cadca4b9d3a6d418ba18b5a31491a` | 64 B |
+
+  Key `ed25519-5d879134807dff6d`; software `SFM Character Tools` 1.0.0; profile `sct-authority-profile-2`,
+  contract `d767c3d5b69d568ef53a5429ad59bf5f8d4f716cfaed0450789366fdfd48d743`; runtime `1.0.0-b2a` /
+  `package-boundary-corrected-2026-09-22`.
+- **Independent verification: 20/20 PASS.** Shipping trust only (the embedded production key, test seam unset).
+  - **Signature:**
+    - the pair equals the owner-reported hashes;
+    - the Ed25519 signature verifies with the production public key;
+    - a one-bit-altered signature is refused.
+  - **Contents:**
+    - the profile, contract and runtime are as above;
+    - the inventory lists exactly the 31 spec entries in canonical bytes;
+    - all 31 staged files match;
+    - the product `verify_installation` accepts the staging with the signed pair.
+  - **Rebuilt updater `cbf11e80…`** (clean copy equal to its manifest; isolated scratch profile-2 installation with
+    the bundled Candidate C data and the owner-signed pair):
+    - status is consistent;
+    - **Update Using SFM's TXT passes the software gate and is a verified NOOP**. The same command on this layout
+      was refused for test-signed and missing inventories at step 5;
+    - the Animation Groups data (TXT, sidecar, manifest) is byte-identical afterwards;
+    - **control:** one changed Normalizer file is refused ("installed software file differs from the signed
+      inventory");
+    - the updater copy and the release folder were unchanged by the runs.
+- **Containment:** no `.pem`/`.key` file and no private-key header in the repository, the staging, the
+  verification or the build folders. The only text match is this Ledger's existing custody sentence.
+- **Superseded:** the profile-1 inventory `9672e00e…` / `dafe6025…` (historical; never shipped).
+- **Not done:** `data-v1.0.0` sequence 2 (the next part of step 6), ZIP assembly, L-6 and publication.
+
 **Production updater rebuild for profile 2 (release-assembly step 5, repeated): COMPLETE / PASS (2026-10-23;
 owner-authorized).** Built from `8f135eb9c09cb9d77ac0f94124463f5dfb54d8f3` with the unchanged L-5 recipe. No product
 source changes were needed.
