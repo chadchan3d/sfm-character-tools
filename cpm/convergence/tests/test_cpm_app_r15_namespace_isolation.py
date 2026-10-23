@@ -13,9 +13,9 @@ shared, process-lifetime host dictionary as globals and locals.
 Each scenario runs in its own child interpreter (one child = one "SFM
 process"). Stubs are limited to boundaries:
 - sfmApp / vs: an empty current shot (no animation sets);
-- the filesystem below C:\\Users (the CPM log in Public Documents and the
-  preset library in the user's Documents) is remapped into the fixture, so no
-  real log or preset folder is touched;
+- the filesystem below C:\\Users (the bounded CPM log folder in Public
+  Documents and the preset library in the user's Documents) is remapped into
+  the fixture, so no real log or preset folder is touched;
 - Qt: real PySide 1.2 / Qt 4.8 when importable (the embedded 2.7.5
   interpreter), and otherwise -- and additionally under 2.7.5 -- a behavioural
   Qt 4.8 model that reproduces QWidget::close / QDialog::closeEvent / reject /
@@ -66,7 +66,8 @@ LOADER_MARKER = "cpm-private-loader-v1"
 NOTICE_ATTR = "_chadchan3d_cpm_launch_notice_v1"
 NOTICE_NAME = "chadchan3d_cpm_launch_notice_v1"
 WINDOW_ATTR = "_sfm_character_slider_preset_tool_window"
-CPM_LOG = "SFM_CSP_G18AN_SaveNewCopy.log"
+CPM_LOG = "SFM_CSP_G18AN_SaveNewCopy.log"  # historical; never written by the corrected app
+CPM_LOG_DIR = "SFM Character Preset Manager Logs"
 G11A_LOG = "SFM_CSP_G11A_ProductionWindowBodyMatch.log"
 NORMALIZER_LOG = "sfm_rebuild_control_groups.txt"
 
@@ -673,6 +674,10 @@ class Env(object):
         real_makedirs, real_rename = os.makedirs, os.rename
         os.makedirs = lambda p, *a, **k: real_makedirs(remap(p), *a, **k)
         os.rename = lambda a, b: real_rename(remap(a), remap(b))
+        # The bounded CPM logger also creates, lists, sizes and prunes files.
+        for name in ("open", "listdir", "remove", "unlink", "stat", "lstat", "mkdir"):
+            fn = getattr(os, name)
+            setattr(os, name, (lambda fn: lambda p, *a, **k: fn(remap(p), *a, **k))(fn))
         self.real_open = real_open
 
     def _install_sfm_fakes(self):
@@ -680,6 +685,7 @@ class Env(object):
             animationSets = []
         sfm_app = types.ModuleType("sfmApp")
         sfm_app.GetShotAtCurrentTime = lambda: Shot()
+        sfm_app.HasDocument = lambda: True  # an open session (empty shot); no modal error dialog
         sys.modules["sfmApp"] = sfm_app
         sys.modules["vs"] = types.ModuleType("vs")
 
@@ -770,12 +776,25 @@ class Env(object):
         except Exception:
             return False
 
-    def log(self, name=CPM_LOG):
-        path = os.path.join(self.docs, name.lower())
-        if not os.path.isfile(path):
-            return None
-        with self.real_open(path, "rb") as f:
-            return f.read().decode("utf-8", "replace")
+    def log_files(self):
+        """The bounded CPM log segments, in name order."""
+        folder = os.path.join(self.docs, CPM_LOG_DIR.lower())
+        if not os.path.isdir(folder):
+            return []
+        return [os.path.join(folder, n) for n in sorted(os.listdir(folder)) if n.endswith(".log")]
+
+    def log(self, name=None):
+        if name is None:
+            paths = self.log_files()
+        else:
+            paths = [os.path.join(self.docs, name.lower())]
+        texts = []
+        for path in paths:
+            if not os.path.isfile(path):
+                continue
+            with self.real_open(path, "rb") as f:
+                texts.append(f.read().decode("utf-8", "replace"))
+        return u"".join(texts) if texts else None
 
     def log_count(self, token):
         return (self.log() or u"").count(token)
@@ -891,7 +910,13 @@ def _poison_host(env):
     if not PY2:
         env.host["unicode"] = str  # the Normalizer's own Py3 NameError fallback
     for name in ("OUTPUT_PATH", "arr", "handle", "name", "typ", "to_unicode"):
+        if name not in blocks:
+            continue
         _host_exec(compile(blocks[name], "Normalizer:%s" % name, "exec"), env.host)
+    if "OUTPUT_PATH" not in env.host:
+        # The current Normalizer no longer binds OUTPUT_PATH at top level; keep
+        # the colliding host name the scenarios were designed around.
+        env.host["OUTPUT_PATH"] = u"C:\\Users\\Public\\Documents\\host_owned_output.log"
     base_text = _read(BASELINE_PATH).decode("utf-8")
     base_blocks, _ = top_level_blocks(base_text)
     bound = []
@@ -936,7 +961,7 @@ def scenario_lifecycle(env):
         window.poll_foreign_modal, window.render)))
     c("log.cpm_log_receives_startup", env.log_count(u"PROD_R15_MODULE name='chadchan3d_cpm_app'") == 1
       and env.log_count(u"PROD_WINDOW_SHOWN=True") == 1)
-    c("log.only_cpm_log_written", env.docs_files() == [CPM_LOG.lower()], env.docs_files())
+    c("log.only_cpm_log_written", env.docs_files() == [CPM_LOG_DIR.lower()], env.docs_files())
     identities = (id(module), id(ns["ProdWindow"]), id(ns["StartProdTool"]), ns["PROD_RUN_ID"], id(window))
     counters = (ns.get("_SEMANTIC_PROVIDER_OPEN_COUNT"), ns.get("_SEMANTIC_PROVIDER"))
     telemetry.append(["initial-open", env.resources()])
@@ -960,7 +985,9 @@ def scenario_lifecycle(env):
     c("second_click.host_poison_untouched", host_snapshot(env.host) == poisoned)
     c("isolation.private_typ_handle_arr_intact", ns["typ"](None) is None and ns["handle"](None) is None
       and ns["arr"](None, "controls") == [])
-    c("isolation.private_output_path", ns["OUTPUT_PATH"] == ns["PROD_OUTPUT_PATH"] != env.host["OUTPUT_PATH"])
+    c("isolation.private_log_destination", "OUTPUT_PATH" not in ns and "OUTPUT_PATH" in env.host
+      and ns["PROD_LOG_DIR"] == u"C:\\Users\\Public\\Documents\\SFM Character Preset Manager Logs"
+      and ns["log_line"] is not env.host["log_line"])
     c("isolation.private_prod_scope_is_canonical_route", ns["prod_scope"] is not env.host["prod_scope"]
       and "prod_cpm_open_adapter" in ns["prod_scope"].__code__.co_names)
     c("isolation.callbacks_keep_private_globals", func_globals(window.poll_foreign_modal) is ns
@@ -1047,7 +1074,7 @@ def scenario_lifecycle(env):
       and ns["PROD_RUN_ID"] == identities[3] and id(ns["ProdWindow"]) == identities[1])
     c("final.exactly_one_window_one_watcher", len(env.windows()) == 1 and len(env.watchers()) == 1
       and len(env.any_prod_windows()) == 1)
-    c("final.no_foreign_log_destinations", env.docs_files() == [CPM_LOG.lower()], env.docs_files())
+    c("final.no_foreign_log_destinations", env.docs_files() == [CPM_LOG_DIR.lower()], env.docs_files())
     c("final.no_launcher_owned_authority", not any(k.startswith("sfm_master_authority_productionized") for k in sys.modules)
       and "cpm_authority_adapter" not in sys.modules)
     c("telemetry.cpm_objects_bounded", all(t[1]["cpm_windows"] <= 1 and t[1]["watchers"] <= 1 and t[1]["notices"] <= 1
@@ -1158,7 +1185,7 @@ def scenario_window_table(env):
     out = env.click()
     c("uncertain_cleared.reused", "outcome=reused" in outcome(out))
     c("table.decisions_logged_to_cpm_log", env.log_count(u"PROD_R15_LAUNCH_REFUSED") >= 4
-      and env.docs_files() == [CPM_LOG.lower()], env.docs_files())
+      and env.docs_files() == [CPM_LOG_DIR.lower()], env.docs_files())
 
 
 def scenario_startup_failures(env):

@@ -190,8 +190,33 @@ ITEM7_CHANGED_TOP = set([
 UIPASS_CHANGED_TOP = set(["PROD_WINDOW_ICON_NAME", "PROD_WINDOW_ICON_PNG_BASE64"])
 UIPASS_NEW_TOP = set(["PROD_ACTION_BUTTON_PALETTES", "tool_apply_semantic_action_button"])
 UIPASS_CHANGED_METHODS = set(["operation_default_error_copy", "review_changed"])
+# Bounded diagnostic logging (cpm/qualification/CPM_BOUNDED_LOGGING_CORRECTION.md): the
+# writer behind log_line, the retired reset, logging-only correlation/outcome helpers,
+# two imports, and the retired fixed-file destinations. Every other touched function
+# or method is already listed above (ProdWindow, StartProdTool, the abort verifiers).
+LOGFIX_CHANGED_TOP = set(["log_line", "reset_log"])
+LOGFIX_NEW_TOP = set([
+    "PROD_LOG_DIR", "PROD_LOG_FORMAT", "PROD_LOG_HEADER_MARK", "PROD_LOG_FILE_LIMIT", "PROD_LOG_MAX_FILES",
+    "PROD_LOG_TOTAL_LIMIT", "PROD_LOG_RECORD_LIMIT", "PROD_LOG_HEADER_LIMIT", "PROD_LOG_LOCK_NAME",
+    "PROD_LOG_DROPPED_CAP", "PROD_LOG_NAME_RE", "PROD_LOG_CONSOLE_NOTICE", "PROD_LOG_STATE",
+    "PROD_LOG_NON_MUTATING_LABELS", "PROD_LOG_CONTEXT", "ProdLogBusy", "prod_log_utc_stamp",
+    "prod_log_bound_record", "prod_log_prefix", "prod_log_header", "prod_log_plain_file",
+    "prod_log_owned_segments", "prod_log_open_segment", "prod_log_append", "prod_log_lock", "prod_log_unlock",
+    "prod_log_drop", "prod_log_rearm", "prod_log_window_opened", "prod_log_window_closed",
+    "prod_log_operation_begin", "prod_log_note_recovery", "prod_log_outcome", "prod_log_refused",
+    "prod_log_operation_end",
+])
+LOGFIX_REMOVED_TOP = set(["OUTPUT_PATH", "PROD_OUTPUT_PATH"])
+LOGFIX_ADDED_UNNAMED = [u"import binascii", u"import errno"]
+# Logging-only helpers placed into extraction namespaces (log_line stays stubbed there).
+LOGFIX_NAMESPACE_HELPERS = [
+    "PROD_LOG_NON_MUTATING_LABELS", "PROD_LOG_CONTEXT", "prod_log_window_opened", "prod_log_window_closed",
+    "prod_log_operation_begin", "prod_log_note_recovery", "prod_log_outcome", "prod_log_refused",
+    "prod_log_operation_end",
+]
 EXPECTED_CHANGED_TOP = (STEP2B_CHANGED_TOP | STEP3_CHANGED_TOP | STEP4_CHANGED_TOP | R14_CHANGED_TOP
-                        | R15_CHANGED_TOP | ITEM6_CHANGED_TOP | ITEM7_CHANGED_TOP | UIPASS_CHANGED_TOP)
+                        | R15_CHANGED_TOP | ITEM6_CHANGED_TOP | ITEM7_CHANGED_TOP | UIPASS_CHANGED_TOP
+                        | LOGFIX_CHANGED_TOP)
 EXPECTED_NEW_TOP = set([
     "PROD_CPM_MAINMENU_RELATIVE_PARTS", "PROD_CPM_ADAPTER_MODULES", "ProdCpmAuthorityBootstrapError",
     "ProdCpmAuthorityNotMigrated", "prod_cpm_mainmenu_dir", "prod_cpm_import_adapter", "prod_cpm_is_main_thread",
@@ -277,10 +302,11 @@ def section_derivation(app):
     added = set(app.top) - set(baseline.top)
     removed = set(baseline.top) - set(app.top)
     check("derivation.changed_top_level_is_bounded", changed == EXPECTED_CHANGED_TOP, sorted(changed))
-    check("derivation.added_top_level_is_bounded", added == EXPECTED_NEW_TOP | R15_NEW_TOP | ITEM6_NEW_TOP | UIPASS_NEW_TOP,
+    check("derivation.added_top_level_is_bounded",
+          added == EXPECTED_NEW_TOP | R15_NEW_TOP | ITEM6_NEW_TOP | UIPASS_NEW_TOP | LOGFIX_NEW_TOP,
           sorted(added))
-    check("derivation.removed_is_exactly_item6_and_item7", removed == ITEM6_REMOVED_TOP | ITEM7_REMOVED_TOP,
-          sorted(removed ^ (ITEM6_REMOVED_TOP | ITEM7_REMOVED_TOP)))
+    check("derivation.removed_is_exactly_item6_and_item7", removed == ITEM6_REMOVED_TOP | ITEM7_REMOVED_TOP
+          | LOGFIX_REMOVED_TOP, sorted(removed ^ (ITEM6_REMOVED_TOP | ITEM7_REMOVED_TOP | LOGFIX_REMOVED_TOP)))
     bm, am = baseline.methods("ProdWindow"), app.methods("ProdWindow")
     m_changed = set(n for n in am if n in bm and app.method_text("ProdWindow", n) != baseline.method_text("ProdWindow", n))
     # The shortcut binding lives in the constructor-side builder method.
@@ -297,6 +323,8 @@ def section_derivation(app):
     # after the docstring) and the removed bottom-of-file StartProdTool() call;
     # item 7 additionally removes exactly one `import time`.
     b_un, a_un = _unnamed_top_level(baseline), _unnamed_top_level(app)
+    logfix_imports_once = all(a_un.count(i) == 1 for i in LOGFIX_ADDED_UNNAMED)
+    a_un = [line for line in a_un if line not in LOGFIX_ADDED_UNNAMED]
     b_mid = list(b_un[1:-1])
     item7_import_once = b_mid.count(ITEM7_REMOVED_UNNAMED) == 1
     if item7_import_once:
@@ -304,7 +332,8 @@ def section_derivation(app):
     check("derivation.r15_unnamed_top_level_bounded",
           b_un[-1] == u"StartProdTool()" and a_un[:1] == b_un[:1] and a_un[1] == u"if not ("
           and item7_import_once and ITEM7_REMOVED_UNNAMED not in a_un
-          and a_un[2:] == b_mid, [a_un[1], b_un[-1], len(a_un), len(b_un), item7_import_once])
+          and a_un[2:] == b_mid and logfix_imports_once,
+          [a_un[1], b_un[-1], len(a_un), len(b_un), item7_import_once, logfix_imports_once])
     check("derivation.item6_historical_machinery_absent", not ITEM6_REMOVED_TOP & set(app.top)
           and "get_semantic_provider" in app.top and "ProdHistoricalAuthorityDisabled" in app.top,
           sorted(ITEM6_REMOVED_TOP & set(app.top)))
@@ -496,6 +525,9 @@ def build_namespace(app):
                  "acquire_semantic_provider_for_mode", "prod_semantic_provider_health_from_descriptor"):
         ns[name] = forbidden(name)
     ns["log_line"] = lambda *a, **k: None
+    for name in LOGFIX_NAMESPACE_HELPERS:
+        if name in app.top:  # pinned historical references predate these helpers
+            _run_source(app.top_text(name), "app:%s" % name, ns)
     ns["p01_master_path"] = lambda: os.path.join(Env.live_root, MASTER_NAME)
 
     def import_adapter():

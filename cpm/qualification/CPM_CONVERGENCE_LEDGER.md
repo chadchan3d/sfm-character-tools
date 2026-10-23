@@ -8,6 +8,47 @@ Blueprint, or expands scope, report the conflict before dependent edits.
 Otherwise proceed with the assigned milestone.
 
 ## Current milestone
+**CPM diagnostic logging correction (bounded, descriptive logs): COMPLETE / PASS offline (2026-10-23;
+owner-authorized; Astra's adjudication of 2026-10-23, approved with bounded amendments).** Starting checkpoint
+`bee77909…`. Record: `cpm/qualification/CPM_BOUNDED_LOGGING_CORRECTION.md`.
+- **Change (canonical CPM application only):**
+  - the indefinitely growing `SFM_CSP_G18AN_SaveNewCopy.log` is replaced by size-limited session segments in
+    `Public Documents\SFM Character Preset Manager Logs`;
+  - limits: 2,097,152 B per file, five owned files across all CPM processes, 10,485,760 B in total, 65,536 B per
+    record;
+  - each segment has an identification header; each record has a UTC timestamp, sequence, session, window and
+    operation;
+  - ownership-checked, reparse-safe pruning under a nonblocking lock; contained failures (dropped-record count, one
+    console notice, suspension until the next launch/reopen);
+  - outcome records at existing decision points (`PROD_OPERATION_OUTCOME` / `PROD_OPERATION_RESULT`; END is not
+    success), plus launch-result, deferred-close and pre-operation refusal records;
+  - the historical log is never written. Existing event names are preserved.
+- **CPM application:** `230f801d…` (793,310 B, the signed inventory's identity) becomes
+  **`ccbed9d794984643fc6f7d7d9c65ef90e5812eb27f85dc4a86855a17c2d3d8df`, 816,665 B**.
+- **Verification:**
+  - **Focused suite** `test_cpm_app_bounded_logging.py`: **72/72 under Python 2.7.5 (real Qt) and 72/72 under 3.10**.
+    It covers creation, exact boundaries, rotation and five-file retention, truncation, preservation, the failure
+    cases, two concurrent writers, reuse and close/reopen identity, and correlated outcomes.
+  - **Regressions**, candidate versus HEAD under identical conditions:
+    - R15 471/471 (both);
+    - empty states 15/15;
+    - operation context 108/108;
+    - Clothing Fit 95/95;
+    - canonical route 84/85, convergence gates 147/148 and R14 17/18: the same historical pins as HEAD;
+    - Quick Launch ASE 232/233: the pre-commit "app unchanged from HEAD" guard.
+  - **Harness repairs (test-only, applied identically to HEAD):** the R15 fake `sfmApp.HasDocument`, and host
+    poisoning without the Normalizer's former `OUTPUT_PATH`.
+  - **Real disk:** the real log folder was never created, and the real historical log is byte-identical.
+- **Pre-existing, unrelated:** the Quick Launch distribution check refuses because `cpm_ase_quick_launch.py` changed in
+  `bb956de` after its QL-2 identity record. HEAD refuses identically.
+- **Not changed:** the profile-2 contract, updater `cbf11e80…`, data sequence 2 (`8621a735…`), the Normalizer, the
+  CPM launcher, the optional button and the README.
+- **Next (separately authorized):**
+  1. update the inventory spec, regenerate and owner-sign the 31-file software inventory (the profile-2 check refuses
+     to stage until the spec names `ccbed9d7…`);
+  2. the README logging section;
+  3. final packaging and L-6, including the real-SFM log smoke check.
+
 **Official data package `data-v1.0.0`, sequence 2, profile 2 (release-assembly step 7, repeated): COMPLETE / PASS
 (2026-10-23; owner-authorized; owner-signed).** Starting checkpoint `80b67a52…`.
 - **Pre-signing checks:**

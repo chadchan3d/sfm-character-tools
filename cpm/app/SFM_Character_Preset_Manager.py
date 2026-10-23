@@ -36,6 +36,8 @@ import traceback
 import math
 import sys
 import base64
+import binascii
+import errno
 
 import sfmApp
 import vs
@@ -53,11 +55,6 @@ try:
 except NameError:
     long = int
 
-
-OUTPUT_PATH = (
-    "C:\\Users\\Public\\Documents\\"
-    "SFM_CSP_G11A_ProductionWindowBodyMatch.log"
-)
 
 SHOT_NAME = u"shot5"
 ANIMSET_NAME = u"nikasharkv21"
@@ -100,55 +97,504 @@ def native_attr_name(value):
 
 
 def reset_log():
-    """Best-effort diagnostic reset. Diagnostic I/O must never affect the tool."""
-    fp = None
+    """Retired. The bounded diagnostic log is never reset or truncated, and the
+    historical single-file log is never written. Kept for dormant callers."""
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Bounded diagnostic log (Astra adjudication, 2026-10-23).
+#
+# Size-limited session segments in one shared folder. Every record is
+# written open-write-flush-close, so diagnostics never depend on a clean
+# shutdown. Retention is shared by every CPM process using the folder and is
+# decided, together with each write, under a nonblocking lock. Logging is
+# best effort: failures drop records (counted) and never change product
+# control flow. No service, queue, timer or shutdown machinery.
+# ---------------------------------------------------------------------------
+PROD_LOG_DIR = u"C:\\Users\\Public\\Documents\\SFM Character Preset Manager Logs"
+PROD_LOG_FORMAT = u"cpm-log-v1"
+PROD_LOG_HEADER_MARK = b"SFM Character Preset Manager diagnostic log cpm-log-v1 |"
+PROD_LOG_FILE_LIMIT = 2097152
+PROD_LOG_MAX_FILES = 5
+PROD_LOG_TOTAL_LIMIT = 10485760
+PROD_LOG_RECORD_LIMIT = 65536
+PROD_LOG_HEADER_LIMIT = 1024
+PROD_LOG_LOCK_NAME = u"CPM - writer.lock"
+PROD_LOG_DROPPED_CAP = 1000000
+PROD_LOG_NAME_RE = re.compile(
+    r"^CPM - (\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})Z - pid(\d+) - ([0-9a-f]{6}) - (\d{3,})\.log$",
+    re.IGNORECASE,
+)
+PROD_LOG_CONSOLE_NOTICE = (
+    "CPM couldn't write its diagnostic log. You can keep using the tool. "
+    "If you need troubleshooting help, check that the log folder is writable."
+)
+
+# Logging-only process state. Never read by product decisions.
+PROD_LOG_STATE = {
+    "session": binascii.hexlify(os.urandom(3)).decode("ascii"),
+    "pid": int(os.getpid()),
+    "segment": 0,
+    "path": None,
+    "size": 0,
+    "sequence": 0,
+    "dropped": 0,
+    "drop_reason": None,
+    "suspended": False,
+    "noticed": False,
+}
+
+# Guarded operations that change neither the scene nor any file.
+PROD_LOG_NON_MUTATING_LABELS = (
+    "Refresh Models",
+    "Select Model",
+    "Clear Model",
+    "Model Info",
+    "Preset Info",
+    "Help",
+)
+
+# Logging-only correlation: current window instance and operation.
+PROD_LOG_CONTEXT = {
+    "windows": 0,
+    "window": None,
+    "operation": None,
+    "kind": None,
+    "outcome": None,
+    "recovery": None,
+}
+
+
+class ProdLogBusy(Exception):
+    """Another CPM process holds the log lock; the record is dropped."""
+    pass
+
+
+def prod_log_utc_stamp():
+    now = datetime.datetime.utcnow()
+    return u"%s.%03dZ" % (
+        now.strftime("%Y-%m-%dT%H:%M:%S"),
+        now.microsecond // 1000,
+    )
+
+
+def prod_log_bound_record(prefix, text):
+    """UTF-8 bytes of prefix + text + CRLF, never more than
+    PROD_LOG_RECORD_LIMIT. An oversized text keeps its beginning and end
+    around a visible truncation notice; it is sliced before encoding so this
+    logger's own temporary allocation stays bounded."""
+    prefix_bytes = prefix.encode("utf-8", "backslashreplace")
+    budget = PROD_LOG_RECORD_LIMIT - len(prefix_bytes) - 2
+
+    if len(text) <= budget:
+        body = text.encode("utf-8", "backslashreplace")
+
+        if len(body) <= budget:
+            return prefix_bytes + body + b"\r\n"
+
+    notice = (
+        u" ...[TRUNCATED: record over %d bytes; %d characters originally; beginning and end kept]... "
+        % (PROD_LOG_RECORD_LIMIT, len(text))
+    ).encode("ascii")
+    room = budget - len(notice)
+    head_room = room // 2
+    tail_room = room - head_room
+
+    head = bytearray(text[:head_room].encode("utf-8", "backslashreplace"))
+    cut = min(head_room, len(head))
+
+    while 0 < cut < len(head) and (head[cut] & 0xC0) == 0x80:
+        cut -= 1
+
+    tail = bytearray(text[-tail_room:].encode("utf-8", "backslashreplace"))
+    start = max(0, len(tail) - tail_room)
+
+    while start < len(tail) and (tail[start] & 0xC0) == 0x80:
+        start += 1
+
+    return prefix_bytes + bytes(head[:cut]) + notice + bytes(tail[start:]) + b"\r\n"
+
+
+def prod_log_prefix():
+    state = PROD_LOG_STATE
+    context = PROD_LOG_CONTEXT
+    state["sequence"] += 1
+    return u"%s #%06d s=%s w=%s op=%s | " % (
+        prod_log_utc_stamp(),
+        state["sequence"],
+        state["session"],
+        u"-" if context["window"] is None else u"%d" % context["window"],
+        u"-" if context["operation"] is None else u"%d" % context["operation"],
+    )
+
+
+def prod_log_header(segment, created):
+    state = PROD_LOG_STATE
+    header = (
+        u"SFM Character Preset Manager diagnostic log %s | build_sha256=%s version=%s | "
+        u"session=%s pid=%d run_id=%s | segment=%03d created=%s | python=%s | "
+        u"limits file_bytes=%d files=%d total_bytes=%d record_bytes=%d"
+        % (
+            PROD_LOG_FORMAT,
+            globals().get("__chadchan3d_cpm_build_sha256__"),
+            globals().get("PROD_VERSION"),
+            state["session"],
+            state["pid"],
+            globals().get("PROD_RUN_ID"),
+            segment,
+            created,
+            sys.version.split()[0],
+            PROD_LOG_FILE_LIMIT,
+            PROD_LOG_MAX_FILES,
+            PROD_LOG_TOTAL_LIMIT,
+            PROD_LOG_RECORD_LIMIT,
+        )
+    ).encode("utf-8", "backslashreplace")
+    return header[:PROD_LOG_HEADER_LIMIT - 2] + b"\r\n"
+
+
+def prod_log_plain_file(path):
+    """True for a regular file that is not a reparse point (symbolic link,
+    junction, mount point); None when that cannot be established."""
+    try:
+        kernel32 = prod_private_windll("kernel32")
+        get_attributes = kernel32.GetFileAttributesW
+        get_attributes.argtypes = [ctypes.c_wchar_p]
+        get_attributes.restype = ctypes.c_uint32
+        attributes = int(get_attributes(u(path)))
+    except Exception:
+        return None
+
+    if attributes == 0xFFFFFFFF:
+        return None
+
+    # FILE_ATTRIBUTE_DIRECTORY 0x10, FILE_ATTRIBUTE_REPARSE_POINT 0x400.
+    return not (attributes & 0x410)
+
+
+def prod_log_owned_segments():
+    """Owned segments, oldest first: [(path, size)]. Owned means this
+    logger's filename grammar, a regular non-reparse file, and this logger's
+    identifying header. Anything else in the folder is never touched."""
+    owned = []
+
+    for entry in os.listdir(PROD_LOG_DIR):
+        match = PROD_LOG_NAME_RE.match(entry)
+
+        if match is None:
+            continue
+
+        path = os.path.join(PROD_LOG_DIR, entry)
+
+        if not os.path.isfile(path):
+            continue
+
+        plain = prod_log_plain_file(path)
+
+        if plain is None:
+            raise RuntimeError("log file attributes unavailable: %r" % (entry,))
+
+        if not plain:
+            continue
+
+        fp = open(path, "rb")
+
+        try:
+            mark = fp.read(len(PROD_LOG_HEADER_MARK))
+        finally:
+            fp.close()
+
+        if mark != PROD_LOG_HEADER_MARK:
+            continue
+
+        info = os.stat(path)
+        owned.append(((match.group(1), info.st_mtime, entry), path, int(info.st_size)))
+
+    owned.sort(key=lambda item: item[0])
+    return [(path, size) for _key, path, size in owned]
+
+
+def prod_log_open_segment(need):
+    """Prunes the oldest owned segments, then creates the next segment of
+    this process with its header. Raises when retention cannot be enforced;
+    no file is created then."""
+    state = PROD_LOG_STATE
+    owned = prod_log_owned_segments()
+
+    while (
+        len(owned) > PROD_LOG_MAX_FILES - 1
+        or sum(size for _path, size in owned) + PROD_LOG_HEADER_LIMIT + need
+        > PROD_LOG_TOTAL_LIMIT
+    ):
+        path, _size = owned.pop(0)
+        os.remove(path)
+
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+
+    for _attempt in range(3):
+        state["segment"] += 1
+        created = datetime.datetime.utcnow()
+        name = u"CPM - %s - pid%d - %s - %03d.log" % (
+            created.strftime("%Y-%m-%d_%H-%M-%SZ"),
+            state["pid"],
+            state["session"],
+            state["segment"],
+        )
+        path = os.path.join(PROD_LOG_DIR, name)
+
+        try:
+            fd = os.open(path, flags)
+        except OSError as exc:
+            if exc.errno == errno.EEXIST:
+                continue
+            raise
+
+        header = prod_log_header(
+            state["segment"],
+            created.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        )
+
+        try:
+            os.write(fd, header)
+        finally:
+            os.close(fd)
+
+        state["path"] = path
+        state["size"] = len(header)
+        return path
+
+    raise RuntimeError("log segment name collision")
+
+
+def prod_log_append(data):
+    """Appends one prepared record to this process's current segment,
+    rotating first when it would cross the file limit. Caller holds the lock."""
+    state = PROD_LOG_STATE
+    path = state["path"]
+
+    if path is not None:
+        try:
+            if int(os.stat(path).st_size) != state["size"]:
+                # Pruned by another CPM process or modified externally.
+                path = None
+        except OSError:
+            path = None
+
+    if path is None or state["size"] + len(data) > PROD_LOG_FILE_LIMIT:
+        state["path"] = None
+        path = prod_log_open_segment(len(data))
+
+    fp = open(path, "ab")
 
     try:
-        fp = open(
-            OUTPUT_PATH,
-            "wb",
-        )
-        fp.write("")
+        fp.write(data)
         fp.flush()
-        return True
-    except Exception:
-        return False
     finally:
-        if fp is not None:
-            try:
-                fp.close()
-            except Exception:
-                pass
+        fp.close()
+
+    state["size"] += len(data)
+
+
+def prod_log_lock():
+    """Nonblocking interprocess lock: one byte of a fixed, empty lock file.
+    Returns the descriptor; raises ProdLogBusy when another process holds it."""
+    import msvcrt
+
+    fd = os.open(
+        os.path.join(PROD_LOG_DIR, PROD_LOG_LOCK_NAME),
+        os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOINHERIT", 0),
+    )
+
+    try:
+        os.lseek(fd, 0, 0)
+        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+    except (IOError, OSError):
+        os.close(fd)
+        raise ProdLogBusy()
+
+    return fd
+
+
+def prod_log_unlock(fd):
+    import msvcrt
+
+    try:
+        os.lseek(fd, 0, 0)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+    finally:
+        os.close(fd)
+
+
+def prod_log_drop(reason, failure):
+    """Counts a dropped record. A filesystem failure suspends writing until
+    the next explicit launch or reopen and prints at most one console notice
+    per failure episode; lock contention only counts the record."""
+    state = PROD_LOG_STATE
+    state["dropped"] = min(state["dropped"] + 1, PROD_LOG_DROPPED_CAP)
+    state["drop_reason"] = reason
+
+    if not failure:
+        return
+
+    state["suspended"] = True
+
+    if not state["noticed"]:
+        state["noticed"] = True
+
+        try:
+            sys.stdout.write(PROD_LOG_CONSOLE_NOTICE + "\n")
+        except Exception:
+            pass
+
+
+def prod_log_rearm():
+    """An explicit launch or reopen offers a suspended log one retry."""
+    PROD_LOG_STATE["suspended"] = False
 
 
 def log_line(text):
-    """Best-effort diagnostics only; never changes product control flow."""
-    fp = None
+    """Best-effort diagnostics only; never changes product control flow.
+    Returns whether the record was written."""
+    state = PROD_LOG_STATE
+
+    if state["suspended"]:
+        prod_log_drop(state["drop_reason"] or u"suspended", False)
+        return False
 
     try:
-        fp = open(
-            OUTPUT_PATH,
-            "ab",
-        )
-        stamp = datetime.datetime.now().strftime(
-            "%H:%M:%S.%f"
-        )
-        fp.write(
-            ("[%s] %s\r\n" % (stamp, u(text))).encode(
-                "utf-8",
-                "backslashreplace",
+        text = u(text)
+
+        if text is None:
+            text = u"None"
+
+        if not os.path.isdir(PROD_LOG_DIR):
+            os.makedirs(PROD_LOG_DIR)
+
+        fd = prod_log_lock()
+    except ProdLogBusy:
+        prod_log_drop(u"lock-busy", False)
+        return False
+    except Exception as exc:
+        prod_log_drop(u"unavailable %s" % (type(exc).__name__,), True)
+        return False
+
+    try:
+        # Records are prepared (bounded) under the lock, before writing, so
+        # sequence numbers follow write order.
+        data = b""
+
+        if state["dropped"]:
+            data = prod_log_bound_record(
+                prod_log_prefix(),
+                u"PROD_LOG_DROPPED count=%d%s last_reason=%r"
+                % (
+                    state["dropped"],
+                    u"+" if state["dropped"] >= PROD_LOG_DROPPED_CAP else u"",
+                    state["drop_reason"],
+                ),
             )
-        )
-        fp.flush()
+
+        data += prod_log_bound_record(prod_log_prefix(), text)
+        prod_log_append(data)
+        state["dropped"] = 0
+        state["drop_reason"] = None
+        state["noticed"] = False
         return True
-    except Exception:
+    except Exception as exc:
+        prod_log_drop(u"write-failed %s" % (type(exc).__name__,), True)
         return False
     finally:
-        if fp is not None:
-            try:
-                fp.close()
-            except Exception:
-                pass
+        try:
+            prod_log_unlock(fd)
+        except Exception:
+            pass
+
+
+# --- Logging-only correlation and outcome records ---------------------------
+def prod_log_window_opened():
+    context = PROD_LOG_CONTEXT
+    context["windows"] += 1
+    context["window"] = context["windows"]
+    return context["window"]
+
+
+def prod_log_window_closed(window_id):
+    if PROD_LOG_CONTEXT["window"] == window_id:
+        PROD_LOG_CONTEXT["window"] = None
+
+
+def prod_log_operation_begin(operation_id, kind):
+    context = PROD_LOG_CONTEXT
+    context["operation"] = operation_id
+    context["kind"] = kind
+    context["outcome"] = None
+    context["recovery"] = None
+
+
+def prod_log_note_recovery(restored):
+    """Records the verdict of an existing abort-and-verify step."""
+    PROD_LOG_CONTEXT["recovery"] = u"verified" if restored else u"unverified"
+
+
+def prod_log_outcome(outcome, detail=None):
+    """The actual outcome of the current operation, recorded at an existing
+    decision point. Vocabulary: verified, no-op, completed (non-mutating),
+    refused, failed-precommit, committed-unverified, recovery-verified,
+    recovery-unverified, partial (Clothing Fit)."""
+    context = PROD_LOG_CONTEXT
+    context["outcome"] = outcome
+
+    try:
+        log_line(
+            "PROD_OPERATION_OUTCOME id=%r kind=%r outcome=%r detail=%r"
+            % (
+                context["operation"],
+                context["kind"],
+                outcome,
+                detail,
+            )
+        )
+    except Exception:
+        pass
+
+
+def prod_log_refused(kind, reason):
+    """An action refused before any operation began."""
+    try:
+        log_line(
+            "PROD_OPERATION_REFUSED kind=%r reason=%r"
+            % (
+                u(kind),
+                reason,
+            )
+        )
+    except Exception:
+        pass
+
+
+def prod_log_operation_end(operation_id, kind):
+    """Closes the operation's correlation. PROD_OPERATION_END is bookkeeping
+    only; this record states the outcome recorded during the operation, or
+    that none was recorded (never success by default)."""
+    context = PROD_LOG_CONTEXT
+
+    try:
+        log_line(
+            "PROD_OPERATION_RESULT id=%d kind=%r outcome=%r"
+            % (
+                operation_id,
+                u(kind),
+                context["outcome"] or u"not-recorded",
+            )
+        )
+    except Exception:
+        pass
+
+    context["operation"] = None
+    context["kind"] = None
+    context["outcome"] = None
+    context["recovery"] = None
 
 
 def ptr(obj):
@@ -16160,7 +16606,6 @@ PROD_LIBRARY_META_FILENAME = u"library.json"
 PROD_LIBRARY_META_SCHEMA = 1
 PROD_SEMANTIC_POLICY = u"master-category-operation-scope-v1"
 PROD_APP_ATTR = "_sfm_character_slider_preset_tool_window"
-PROD_OUTPUT_PATH = "C:\\Users\\Public\\Documents\\SFM_CSP_G18AN_SaveNewCopy.log"
 PROD_RUN_ID = u"%s-pid%d" % (
     datetime.datetime.now().strftime("%Y%m%d-%H%M%S"),
     int(os.getpid()),
@@ -24910,6 +25355,10 @@ def prod_abort_apply_and_verify(
     except Exception:
         pass
 
+    prod_log_note_recovery(
+        restored
+    )
+
     if not restored:
         raise ProdRecoveryUnverifiedError(
             "Preset Apply failed and recovery could not be verified. "
@@ -24961,6 +25410,10 @@ def prod_abort_fit_and_verify(
         )
     except Exception:
         pass
+
+    prod_log_note_recovery(
+        restored
+    )
 
     if not restored:
         raise ProdRecoveryUnverifiedError(
@@ -25742,6 +26195,7 @@ class ProdWindow(QtGui.QDialog):
             self,
             parent,
         )
+        self.log_window_id = prod_log_window_opened()
         self.setAttribute(
             QtCore.Qt.WA_DeleteOnClose,
             True,
@@ -26669,6 +27123,14 @@ class ProdWindow(QtGui.QDialog):
             "closing_requested": False,
         }
         self.busy = True
+        prod_log_operation_begin(
+            self.operation[
+                "operation_id"
+            ],
+            self.operation[
+                "kind"
+            ],
+        )
 
         try:
             log_line(
@@ -26849,6 +27311,10 @@ class ProdWindow(QtGui.QDialog):
             )
         except Exception:
             pass
+        prod_log_operation_end(
+            operation_id,
+            label,
+        )
 
 
         try:
@@ -27377,6 +27843,10 @@ class ProdWindow(QtGui.QDialog):
                 "Finish the current action before starting another.",
                 u"warning",
             )
+            prod_log_refused(
+                label,
+                u"another-action-active",
+            )
             return
 
         pin_context = (
@@ -27414,9 +27884,17 @@ class ProdWindow(QtGui.QDialog):
                 "The current model context could not be verified. Reselect the model and try again.",
                 u"error",
             )
+            prod_log_refused(
+                label,
+                u"model-context-unverified",
+            )
             return
 
         if not began:
+            prod_log_refused(
+                label,
+                u"operation-not-started",
+            )
             return
 
         try:
@@ -27431,6 +27909,14 @@ class ProdWindow(QtGui.QDialog):
                 pass
 
             result = fn()
+
+            if (
+                PROD_LOG_CONTEXT["outcome"] is None
+                and label in PROD_LOG_NON_MUTATING_LABELS
+            ):
+                prod_log_outcome(
+                    u"completed"
+                )
 
             if self.operation is not None:
                 self.operation[
@@ -27461,6 +27947,67 @@ class ProdWindow(QtGui.QDialog):
                 exc
             )
             commit_state = self.operation_commit_state()
+
+            try:
+                if isinstance(
+                    exc,
+                    ProdRecoveryUnverifiedError,
+                ):
+                    log_outcome = u"recovery-unverified"
+                elif commit_state[
+                    "native_committed"
+                ]:
+                    log_outcome = u"committed-unverified"
+                elif commit_state[
+                    "durable_persisted"
+                ]:
+                    log_outcome = (
+                        u"verified"
+                        if commit_state[
+                            "durable_verified"
+                        ]
+                        else u"committed-unverified"
+                    )
+                elif PROD_LOG_CONTEXT["recovery"] == u"verified":
+                    log_outcome = u"recovery-verified"
+                elif (
+                    isinstance(
+                        exc,
+                        ProdCpmOperationAuthorityError,
+                    )
+                    or " already exists. Choose a different name." in raw
+                    or raw
+                    == u"This preset does not match the selected model's current sliders. Choose another preset or model."
+                ):
+                    log_outcome = u"refused"
+                else:
+                    log_outcome = u"failed-precommit"
+
+                prod_log_outcome(
+                    log_outcome,
+                    {
+                        "error_type": type(exc).__name__,
+                        "last_phase": (
+                            None
+                            if self.operation is None
+                            else self.operation.get(
+                                "phase"
+                            )
+                        ),
+                        "native_committed": commit_state[
+                            "native_committed"
+                        ],
+                        "durable_persisted": commit_state[
+                            "durable_persisted"
+                        ],
+                        "durable_verified": commit_state[
+                            "durable_verified"
+                        ],
+                        "recovery": PROD_LOG_CONTEXT["recovery"],
+                    },
+                )
+            except Exception:
+                pass
 
 
             if isinstance(
@@ -29282,6 +29829,10 @@ class ProdWindow(QtGui.QDialog):
                 )
             except Exception:
                 pass
+            prod_log_outcome(
+                u"verified",
+                {"returned_to_review": outcome["returned_to_review"]},
+            )
             if outcome["returned_to_review"]:
                 self.review_select_literal(
                     literal,
@@ -29388,6 +29939,10 @@ class ProdWindow(QtGui.QDialog):
                 )
             except Exception:
                 pass
+            prod_log_outcome(
+                u"verified",
+                {"decision": decision},
+            )
             self.set_status(
                 "Flex choice saved.",
                 u"success",
@@ -29486,6 +30041,10 @@ class ProdWindow(QtGui.QDialog):
             )
 
             if name_value is None:
+                prod_log_outcome(
+                    u"no-op",
+                    {"reason": u"cancelled"},
+                )
                 return
 
             # Modal return is an operation boundary.
@@ -29516,6 +30075,10 @@ class ProdWindow(QtGui.QDialog):
                 ident,
                 record,
                 kind,
+            )
+            prod_log_outcome(
+                u"verified",
+                {"preset_id": record.get("preset_id")},
             )
             preset_id = u(
                 record.get(
@@ -29603,6 +30166,10 @@ class ProdWindow(QtGui.QDialog):
                 result[
                     "enabled"
                 ]
+            )
+            prod_log_outcome(
+                u"verified",
+                {"favorite": enabled},
             )
             self.library_meta = dict(
                 result[
@@ -29722,6 +30289,10 @@ class ProdWindow(QtGui.QDialog):
                 box.deleteLater()
 
             if not confirmed:
+                prod_log_outcome(
+                    u"no-op",
+                    {"reason": u"cancelled"},
+                )
                 return
 
             self.operation_revalidate()
@@ -29759,6 +30330,10 @@ class ProdWindow(QtGui.QDialog):
                 ident,
                 fresh_record,
                 kind,
+            )
+            prod_log_outcome(
+                u"verified",
+                {"preset_id": fresh_record.get("preset_id")},
             )
 
             source_items = (
@@ -30002,6 +30577,10 @@ class ProdWindow(QtGui.QDialog):
                 box.deleteLater()
 
             if not confirmed:
+                prod_log_outcome(
+                    u"no-op",
+                    {"reason": u"cancelled"},
+                )
                 return
 
             self.operation_revalidate()
@@ -30010,6 +30589,10 @@ class ProdWindow(QtGui.QDialog):
                 ident,
                 item,
                 phase_callback=self.operation_mark_phase,
+            )
+            prod_log_outcome(
+                u"verified",
+                {"trash_move": True},
             )
             prod_resource_snapshot(
                 "DELETE_AFTER_PASS"
@@ -30125,6 +30708,22 @@ class ProdWindow(QtGui.QDialog):
                 ),
             )
 
+
+            prod_log_outcome(
+                {
+                    u"no-op": u"no-op",
+                    u"committed-unverified": u"committed-unverified",
+                    u"committed-verified": u"verified",
+                }.get(
+                    result[
+                        "phase"
+                    ],
+                    result[
+                        "phase"
+                    ],
+                ),
+                {"apply_phase": result["phase"]},
+            )
 
             if result[
                 "phase"
@@ -30446,6 +31045,10 @@ class ProdWindow(QtGui.QDialog):
                 "Finish the current action before starting Clothing Fit.",
                 u"warning",
             )
+            prod_log_refused(
+                u"Clothing Fit",
+                u"another-action-active",
+            )
             return
 
         selected = self.fit_checked_identities()
@@ -30455,6 +31058,10 @@ class ProdWindow(QtGui.QDialog):
                 "Select at least one clothing or accessory model.",
                 u"warning",
             )
+            prod_log_refused(
+                u"Clothing Fit",
+                u"no-target-selected",
+            )
             return
 
         try:
@@ -30462,6 +31069,10 @@ class ProdWindow(QtGui.QDialog):
                 "Clothing Fit",
                 pin_context=True,
             ):
+                prod_log_refused(
+                    u"Clothing Fit",
+                    u"operation-not-started",
+                )
                 return
 
             prod_resource_snapshot(
@@ -30554,6 +31165,17 @@ class ProdWindow(QtGui.QDialog):
             self.set_status(
                 "Clothing Fit could not start. Nothing changed.",
                 u"error",
+            )
+            prod_log_outcome(
+                (
+                    u"refused"
+                    if isinstance(
+                        exc,
+                        ProdCpmOperationAuthorityError,
+                    )
+                    else u"failed-precommit"
+                ),
+                {"error_type": type(exc).__name__, "stage": u"start"},
             )
             self.operation_end(
                 "Clothing Fit"
@@ -30751,6 +31373,27 @@ class ProdWindow(QtGui.QDialog):
                     )
                 except Exception:
                     pass
+                if stage_state[
+                    "committed"
+                ]:
+                    # The post-stage verification below did not run.
+                    log_outcome = u"committed-unverified"
+                elif self.fit_committed_order:
+                    log_outcome = (
+                        u"partial"
+                        if self.fit_unattempted
+                        else u"verified"
+                    )
+                else:
+                    log_outcome = u"no-op"
+                prod_log_outcome(
+                    log_outcome,
+                    {
+                        "reason": u"closed-or-superseded",
+                        "committed": len(self.fit_committed_order),
+                        "unattempted": len(self.fit_unattempted),
+                    },
+                )
                 self.operation_end(
                     "Clothing Fit"
                 )
@@ -30997,6 +31640,44 @@ class ProdWindow(QtGui.QDialog):
                         "Clothing Fit could not finish. Nothing changed.",
                         u"error",
                     )
+
+            try:
+                fit_verifications = [
+                    item.get(
+                        "verification"
+                    )
+                    for item in self.fit_failed
+                ]
+
+                if u"abort-unverified" in fit_verifications:
+                    log_outcome = u"recovery-unverified"
+                elif u"uncertain" in fit_verifications:
+                    log_outcome = u"committed-unverified"
+                elif self.fit_committed_order:
+                    log_outcome = u"partial"
+                elif PROD_LOG_CONTEXT["recovery"] == u"verified":
+                    log_outcome = u"recovery-verified"
+                elif isinstance(
+                    exc,
+                    ProdCpmOperationAuthorityError,
+                ):
+                    log_outcome = u"refused"
+                else:
+                    log_outcome = u"failed-precommit"
+
+                prod_log_outcome(
+                    log_outcome,
+                    {
+                        "error_type": type(exc).__name__,
+                        "target_index": index,
+                        "committed": len(self.fit_committed_order),
+                        "failed": len(self.fit_failed),
+                        "skipped": len(self.fit_skipped),
+                        "unattempted": len(self.fit_unattempted),
+                    },
+                )
+            except Exception:
+                pass
 
             self.operation_end(
                 "Clothing Fit"
@@ -31555,6 +32236,29 @@ class ProdWindow(QtGui.QDialog):
                     self.semantic_provider_ready(),
                 )
             )
+
+        if failed or unattempted:
+            log_outcome = (
+                u"partial"
+                if self.fit_committed_order
+                else u"failed-precommit"
+            )
+        elif changed:
+            log_outcome = u"verified"
+        else:
+            log_outcome = u"no-op"
+
+        prod_log_outcome(
+            log_outcome,
+            {
+                "changed": changed,
+                "already_matched": unchanged,
+                "partial_mappings": partial,
+                "skipped": skipped,
+                "failed": failed,
+                "unattempted": unattempted,
+            },
+        )
 
         if self.operation is not None:
             self.operation[
@@ -32245,6 +32949,12 @@ class ProdWindow(QtGui.QDialog):
                 self.hide()
             except Exception:
                 pass
+            try:
+                log_line(
+                    "PROD_CLOSE_DEFERRED reason='fit-stage-running'"
+                )
+            except Exception:
+                pass
             return
 
         if self.operation is not None:
@@ -32253,6 +32963,17 @@ class ProdWindow(QtGui.QDialog):
             ) == u"Clothing Fit":
                 # Pending queued stage: generation is already invalidated, so
                 # it can be ended without waiting for another callback.
+                prod_log_outcome(
+                    (
+                        u"partial"
+                        if self.fit_committed_order
+                        else u"no-op"
+                    ),
+                    {
+                        "reason": u"closed-before-next-stage",
+                        "committed": len(self.fit_committed_order),
+                    },
+                )
                 self.operation_end(
                     "Clothing Fit"
                 )
@@ -32260,6 +32981,12 @@ class ProdWindow(QtGui.QDialog):
             try:
                 event.ignore()
                 self.hide()
+            except Exception:
+                pass
+            try:
+                log_line(
+                    "PROD_CLOSE_DEFERRED reason='operation-active'"
+                )
             except Exception:
                 pass
             return
@@ -32287,6 +33014,13 @@ class ProdWindow(QtGui.QDialog):
 
         log_line(
             "PROD_CLOSE_FINALIZED=True"
+        )
+        prod_log_window_closed(
+            getattr(
+                self,
+                "log_window_id",
+                None,
+            )
         )
 
         # R15: finalize through the base rejection path. The base closeEvent
@@ -32380,6 +33114,19 @@ def prod_r15_result(
             )
         except Exception:
             pass
+    else:
+        try:
+            log_line(
+                "PROD_R15_LAUNCH_RESULT outcome=%r code=%r window=%r run_id=%r"
+                % (
+                    outcome,
+                    code,
+                    PROD_LOG_CONTEXT["window"],
+                    PROD_RUN_ID,
+                )
+            )
+        except Exception:
+            pass
 
     return {
         "outcome": outcome,
@@ -32395,8 +33142,7 @@ def prod_r15_launcher_refusal(
     """Logs a refusal decided by the launcher while this READY module is
     loaded (for example, changed installed bytes). The module, its window
     and its lifecycle state are left untouched."""
-    global OUTPUT_PATH
-    OUTPUT_PATH = PROD_OUTPUT_PATH
+    prod_log_rearm()
     return prod_r15_result(
         u"refused",
         code,
@@ -32546,8 +33292,7 @@ def StartProdTool():
     """CPM R15 startup. Called by the launcher only after the private module
     is READY. Returns {"outcome", "code", "notice"}; the launcher presents
     any notice. Never reloads or resets module state."""
-    global OUTPUT_PATH
-    OUTPUT_PATH = PROD_OUTPUT_PATH
+    prod_log_rearm()
 
     app = QtGui.QApplication.instance()
 
@@ -32588,7 +33333,6 @@ def StartProdTool():
     constructing = False
 
     try:
-        if not os.path.isfile(OUTPUT_PATH): reset_log()
         log_line("="*120)
         try:
             log_line("%s %s"%(TOOL_NAME,PROD_VERSION))
