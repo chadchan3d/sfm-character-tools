@@ -2,10 +2,10 @@
  "authority_profile": "sct-authority-profile-2",
  "files": [
   {
-   "byte_length": 793310,
+   "byte_length": 816665,
    "path": "scripts/ChadChan3D_CPM/SFM_Character_Preset_Manager.py",
    "role": "cpm_app",
-   "sha256": "230f801dfe5c243c327ed397e76b1d467e9514874732d1ffecafa381d56c69fa",
+   "sha256": "ccbed9d794984643fc6f7d7d9c65ef90e5812eb27f85dc4a86855a17c2d3d8df",
    "source": "cpm/app/SFM_Character_Preset_Manager.py"
   },
   {
@@ -219,7 +219,7 @@
    "source": "tools/sfm_master_sidecar/reader.py"
   }
  ],
- "qualification": "K COMPLETE / PASS (2026-10-10); exact installed identities re-verified by U0B-P0 (2026-10-12). Normalizer admitted by the v1 Release Baseline Amendment (2026-10-21): 6b5d2941 (Phase F simplification of the real-SFM-qualified 25a5e3cd), real-SFM qualified with corrected Candidate C (bounded; accepted 2026-10-22). CPM app d7a8a374 (accepted empty-state guidance correction, 2026-10-22) supersedes the K/R15 identity 4e35f292 in this inventory; final 31-file reconciliation 2026-10-22. Profile 2 integration correction (2026-10-23): software installed under scripts/sfm/mainmenu/SFM Character Tools (Scripts > SFM Character Tools); only the four files whose menu-directory locator changed have new identities (CPM app, CPM adapter, Normalizer, authority bootstrap). Menu isolation (2026-10-23, before any signing): SFM lists every .py under scripts/sfm/mainmenu as a menu item, so the internal library (CPM adapter and projection, authority package, sidecar reader) is installed under scripts/SFM Character Tools and only the three commands stay in the menu folder; the same four locator files have new identities; unsigned",
+ "qualification": "K COMPLETE / PASS (2026-10-10); exact installed identities re-verified by U0B-P0 (2026-10-12). Normalizer admitted by the v1 Release Baseline Amendment (2026-10-21): 6b5d2941 (Phase F simplification of the real-SFM-qualified 25a5e3cd), real-SFM qualified with corrected Candidate C (bounded; accepted 2026-10-22). CPM app d7a8a374 (accepted empty-state guidance correction, 2026-10-22) supersedes the K/R15 identity 4e35f292 in this inventory; final 31-file reconciliation 2026-10-22. Profile 2 integration correction (2026-10-23): software installed under scripts/sfm/mainmenu/SFM Character Tools (Scripts > SFM Character Tools); only the four files whose menu-directory locator changed have new identities (CPM app, CPM adapter, Normalizer, authority bootstrap). Menu isolation (2026-10-23, before any signing): SFM lists every .py under scripts/sfm/mainmenu as a menu item, so the internal library (CPM adapter and projection, authority package, sidecar reader) is installed under scripts/SFM Character Tools and only the three commands stay in the menu folder; the same four locator files have new identities; unsigned. CPM bounded diagnostic logging correction (2026-10-23, accepted): CPM app ccbed9d7 (816,665 B) supersedes 230f801d (793,310 B), the identity of the owner-signed inventory 2e3a8036; the other 30 identities, destinations and roles and the profile-2 contract are unchanged; replacement inventory unsigned",
  "schema": 1,
  "software": "SFM Character Tools"
 }

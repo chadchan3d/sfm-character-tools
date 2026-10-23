@@ -8,6 +8,68 @@ Blueprint, or expands scope, report the conflict before dependent edits.
 Otherwise proceed with the assigned milestone.
 
 ## Current milestone
+**Replacement profile-2 software inventory for the CPM logging correction: PREPARED, UNSIGNED (2026-10-23;
+owner-authorized: reconciliation, staging, unsigned preparation and focused verification only).** Starting checkpoint
+`da01027b…`.
+- **Inventory spec** `updater/release_tools/character_tools_software_v1.json`:
+  - `dfe28855…` becomes **`769a85772d24339bdc2614c4a9ddfd383c5d8bcce9c3b3399745414d84381da6`, 11,955 B**;
+  - only the `cpm_app` entry changed: `scripts/ChadChan3D_CPM/SFM_Character_Preset_Manager.py`, source
+    `cpm/app/SFM_Character_Preset_Manager.py`, `230f801d…` / 793,310 B becomes
+    **`ccbed9d794984643fc6f7d7d9c65ef90e5812eb27f85dc4a86855a17c2d3d8df` / 816,665 B**;
+  - a sentence was appended to the `qualification` note;
+  - the other 30 identities, destinations and roles, `sct-authority-profile-2`, the software name and the schema are
+    unchanged.
+- **Staging:** a new folder outside the repository and SFM, `release-v1.0.0-p2-logfix-20261023`.
+  - The existing `make_software_inventory.py stage` staged exactly 31 files under `core\usermod\scripts\…`.
+  - **Staging identity** (`core_staged_SHA256.txt`, same method as the previous `9b73e9d7…`):
+    `a8e29962361ec98ef8e25c38f619a4ac5f6611c64cff34f0478caee9646f6bc6`.
+  - The previous staging `release-v1.0.0-p2-20261023` and its signed pair `2e3a8036…` / `3fb19591…` are
+    unchanged and kept as historical evidence. That pair names `230f801d…`, so it must not ship with the corrected
+    CPM; it was not copied into the new staging.
+- **Unsigned replacement inventory** (`inventory-unsigned\sfm_character_tools_inventory.json` in the new staging):
+  **`ad058c15b4b9838d0827a11d0b34e15ef447b3f8f3ef7579b0e0860afafd65dd`, 6,882 B**.
+  - Canonical producer bytes; key `ed25519-5d879134807dff6d`; software `SFM Character Tools` 1.0.0; profile
+    `sct-authority-profile-2`, contract `d767c3d5…`; runtime `1.0.0-b2a` / `package-boundary-corrected-2026-09-22`.
+  - It is identical to the owner-signed `2e3a8036…` except the CPM entry.
+- **Owner-signing helper:** `sign_profile2_inventory_logfix.py` in the new staging (`e5159932…`, 5,458 B).
+  - It is the accepted step-6 helper with only the docstring, the run path and `EXPECTED_SHA` (`ad058c15…`)
+    changed.
+  - Before asking for anything, it checks the 31 staged files and that `inventory\` does not exist. It requires the
+    exact identity and the production key id before signing, and passes the passphrase through an in-memory pipe.
+  - **Rehearsal (throwaway key, private temporary folder, deleted): 12/12 PASS.** It covered:
+    - the wrong key, the wrong identity and the wrong passphrase refused with no output;
+    - a tampered staged CPM refused before any prompt;
+    - an existing output folder refused;
+    - a valid signature over bytes that differ from `ad058c15…` only in the key id;
+    - an altered signature refused;
+    - the staging unchanged.
+- **Verification:**
+  - **Staging and inventory checks: 16/16 PASS.**
+    - 31/31 staged files match the spec, and nothing else is staged.
+    - Only the CPM app differs from the previous staging.
+    - The Scripts-menu tree holds only the CPM launcher and the Normalizer, byte-identical to before. The updater
+      menu launcher (the third command, added at ZIP assembly) and every other spec source are unchanged since
+      `bee77909`.
+    - No bytecode, logs, tests or keys are staged.
+  - **Profile-2 integration checks** (`run_profile2_checks.py`, scratch installations, test key only): **26/26
+    PASS**. They independently compute the unsigned production inventory `ad058c15…` / 6,882 B. Data sequence 2 was
+    byte-identical after its read-only use.
+  - **`updater/tests/test_production_trust.py`: 17/18.** The one failure is its pinned spec hash `dfe28855…`, which
+    is now the superseded spec. All 31 sources match the new spec. At `da01027b…` the same check already failed,
+    because the spec named the old CPM. The test pin (and its `updater/SHA256SUMS.txt` line) was not changed; this
+    assignment excludes updater qualification.
+  - The old signed inventory was not used to authenticate the corrected CPM; rejection is expected by construction.
+- **Containment:**
+  - no `.pem`/`.key` file and no private-key header in the repository, the new staging or the check scratch;
+  - the check's throwaway test key was deleted;
+  - the only text match is this Ledger's existing custody sentence;
+  - the production key and passphrase were not requested, located or accessed.
+- **Outstanding:**
+  1. the owner signs `ad058c15…` with the helper in their own PowerShell window;
+  2. independent verification of the signed pair;
+  3. the README logging section (new log folder and retention rules) before final ZIP assembly;
+  4. final ZIP assembly and L-6.
+
 **CPM diagnostic logging correction (bounded, descriptive logs): COMPLETE / PASS offline (2026-10-23;
 owner-authorized; Astra's adjudication of 2026-10-23, approved with bounded amendments).** Starting checkpoint
 `bee77909…`. Record: `cpm/qualification/CPM_BOUNDED_LOGGING_CORRECTION.md`.
