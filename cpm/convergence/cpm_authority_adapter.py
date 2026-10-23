@@ -52,8 +52,9 @@ RUNTIME_MODULE_NAME = PACKAGE_NAME + ".runtime"
 # foreign build would otherwise agree with itself.
 EXPECTED_API_VERSION = "1.0.0-b2a"
 EXPECTED_BUILD_ID = "package-boundary-corrected-2026-09-22"
-# Same components as the qualified Normalizer's _authority_locate_mainmenu_dir().
-MAINMENU_RELATIVE_PARTS = ("usermod", "scripts", "sfm", "mainmenu", "SFM Character Tools")
+# Same components as the qualified Normalizer's _authority_locate_mainmenu_dir(): the internal
+# library directory, outside the Scripts-menu tree (SFM lists every .py under it as a menu item).
+MAINMENU_RELATIVE_PARTS = ("usermod", "scripts", "SFM Character Tools")
 
 # Same value as G18AN PROD_SEMANTIC_POLICY; part of the compatibility identity.
 CPM_SEMANTIC_POLICY_REVISION = u"master-category-operation-scope-v1"

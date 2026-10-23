@@ -4,6 +4,9 @@
 integration adjudication and the owner's ruling on bundled Animation Groups data. The adjudication text itself was
 not supplied to this repository; this record states what was implemented.
 
+**Amended the same day by the menu isolation correction (section 10),** which supersedes the layout, locator
+identities, profile hash and unsigned inventory stated in sections 2-4.
+
 **Not done here:** production signing, the updater rebuild, final ZIP assembly, live SFM writes, L-6 and
 publication.
 
@@ -65,7 +68,7 @@ OPTIONAL - CPM Button/usermod/...                                   (unchanged l
   - 30 paths under the new menu folder; the CPM app stays in `scripts/ChadChan3D_CPM/`;
   - only the four changed identities above were updated;
   - the launcher and the optional button stay outside it.
-- **Unsigned production inventory** (the exact bytes the owner signs: software version 1.0.0, key id
+- **Unsigned production inventory** (superseded by section 10: `2e3a8036…`; the exact bytes the owner would have signed: software version 1.0.0, key id
   `ed25519-5d879134807dff6d`): `08c9e78e753c84260ce6124611f76b0cb7a2e6df693d69d4e13fad5fca696f2f` (7,246 B).
   `make_software_inventory.py sign` regenerates these bytes from the staged files.
 
@@ -159,3 +162,86 @@ Superseded, and to be reproduced at the next build or signing:
 
 The menu-folder locators and the Quick Launch launcher path have new offline evidence (section 8). A real-SFM
 check of the new menu folder belongs to L-6.
+
+## 10. Menu isolation correction (2026-10-23, before any signing; supersedes the layout in sections 2-4)
+
+**Why:** the accepted Menu Visibility Check (a read-only analysis of SFM's native Scripts-menu discovery in
+`ifm.dll`) established that SFM lists every `.py` file under `scripts\sfm\mainmenu` as a menu item. It searches
+every subfolder and has no name filter. Each folder containing a `.py` becomes a submenu, and `.pyc` and other
+files are not listed. With the layout in section 2, Scripts > SFM Character Tools would also have shown:
+- the CPM adapter and projection;
+- a 23-item "sfm master authority productionized" submenu;
+- a 3-item "sfm master sidecar" submenu.
+
+**Layout (profile 2 amended; never signed or published):**
+
+```text
+usermod/scripts/sfm/mainmenu/SFM Character Tools/   SFM_Character_Preset_Manager.py, Rebuild_Control_Groups_Normalizer.py,
+                                                    SFM_Control_Group_Updater.py, sfm_character_tools_inventory.json/.sig
+usermod/scripts/SFM Character Tools/                cpm_authority_adapter.py, cpm_compat_v1_projection.py,
+                                                    sfm_master_authority_productionized/, sfm_master_sidecar/
+usermod/scripts/ChadChan3D_CPM/, autoinit/ChadChan3D/, cfg/, tools/        (unchanged)
+```
+
+**Changed sources:** only the library-directory literal in the four established locators, with the comments that
+describe it. Private module, package and ownership names are unchanged.
+
+| File | Change | Identity |
+|---|---|---|
+| `cpm/app/SFM_Character_Preset_Manager.py` | `PROD_CPM_MAINMENU_RELATIVE_PARTS` = `usermod/scripts/SFM Character Tools` | `b2c383bd…` → `230f801d…` (793,310 B) |
+| `cpm/convergence/cpm_authority_adapter.py` | `MAINMENU_RELATIVE_PARTS` | `9c3c0351…` → `14a1ebc6…` |
+| `audit_external_runtime/Rebuild_Control_Groups_Normalizer.py` | `_authority_locate_mainmenu_dir()` | `52e3e777…` → `a484eee1…` |
+| `…/sfm_master_authority_productionized/bootstrap.py` | `bootstrap_import_path()` | `06f746cf…` → `8e99bcd3…` |
+
+**Unchanged:**
+- the three menu launchers;
+- the Quick Launch controller `7a01bd5e…`, which still opens the CPM menu launcher in the menu folder;
+- the Quick Launch bootstrap;
+- the origin checks, the single broker, CPM window reuse, Normalizer transactions and resource safeguards.
+
+The functions keep their historical `*_mainmenu_dir` names, and their value is now the library directory.
+
+**Profile 2:**
+- `installation_layout` now has `menu_dir` (`scripts/sfm/mainmenu/SFM Character Tools`) and `library_dir`
+  (`scripts/SFM Character Tools`), replacing `software_dir`.
+- `software_inventory` stays in the menu folder. The contract stays `sct-layout-2`.
+- New contract hash: `d767c3d5b69d568ef53a5429ad59bf5f8d4f716cfaed0450789366fdfd48d743`, replacing `e0a9b64e…`.
+  Every other contract equals profile 1's (`2bbd93d0…`, unchanged).
+
+**Inventory:**
+- Spec `dfe28855…` (11,652 B): 31 files, nine roles. 28 files are in the library folder; the CPM launcher and the
+  Normalizer are in the menu folder; the CPM app is in `ChadChan3D_CPM`. The four identities above changed.
+- **Unsigned production inventory:** `2e3a8036c58ab8a98044a6c2b159debaab2942d38b072e802a929d860c5b0e8b` (6,882 B),
+  in `release/v1.0.0/profile2/`. It replaces `08c9e78e…`, which is no longer current.
+
+**Updater:**
+- `official.py` `4c84e608…` and `compat/profile.py` `0dbd8383…` changed in comments and the profile only.
+- `updater/SHA256SUMS.txt` is refreshed.
+- `run_l1.py` puts its stale-bytecode case beside the adapter in the library folder.
+
+**Focused verification (offline, scratch `profile2-menu-isolation-20261023\run1`):**
+- **`tests/integration/profile2`: 27/27 PASS**, first run. New checks:
+  - the installed `scripts\sfm\mainmenu` tree holds exactly three `.py` files, all directly in SFM Character
+    Tools (SFM's recursive discovery rule);
+  - the internal library is outside it;
+  - the locators all resolve the library folder on a path with spaces;
+  - Quick Launch still targets the menu launcher;
+  - **wrong origin:** a library copy left in the menu folder and loaded first makes the Normalizer
+    (`BrokerIdentityConflict`) and CPM (`origin-mismatch`) refuse.
+
+  Repeated: the shared broker and generation (fresh and overlay), the profile-1 refusal, the overlay finding and
+  remedy, both legacy mixed-location refusals, and the documented migration.
+- **`test_production_trust.py`:** 18/18.
+- **CPM canonical route:** 84/85, with identical Python 3 and 2.7 digests. The failure is the historical
+  `derivation.added_top_level_is_bounded`; this correction adds no top-level names.
+- **Quick Launch, before commit:** 232/233 (run) and 31/32 (static). The only failure is the intentional "CPM app
+  unchanged from HEAD" guard; both are rerun after commit.
+
+**Unchanged by this correction:**
+- the overlay finding (section 5);
+- the legacy `ChadChan3D` retirement list (section 6);
+- the sequence-2 data requirements (section 7; the package names the profile ID, and the owner builds it from this
+  correction's commit);
+- the bundled data, the overwrite policy, updater transactions and the optional-button locations.
+
+**Still to do:** the real-SFM check that the menu shows exactly three commands belongs to L-6.

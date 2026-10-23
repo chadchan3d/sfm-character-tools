@@ -8,6 +8,59 @@ Blueprint, or expands scope, report the conflict before dependent edits.
 Otherwise proceed with the assigned milestone.
 
 ## Current milestone
+**Profile-2 menu isolation correction: source COMPLETE / verified offline (2026-10-23; owner-authorized after the
+accepted Menu Visibility Check).** Starting checkpoint `fe6a5718…`. Record: section 10 of
+`updater_qualification/design/V1_PROFILE2_INTEGRATION_CORRECTION.md`.
+- **Finding being corrected:** SFM's native discovery lists every `.py` under `scripts\sfm\mainmenu`, in every
+  subfolder, as a Scripts-menu item. The earlier profile-2 layout would also have shown the adapter, the projection
+  and two package submenus (26 items).
+- **Layout:**
+  - `mainmenu\SFM Character Tools\` keeps only the three commands and the inventory `.json`/`.sig`;
+  - the adapter, projection, `sfm_master_authority_productionized\` and `sfm_master_sidecar\` move to
+    `usermod\scripts\SFM Character Tools\`;
+  - `ChadChan3D_CPM`, Autoinit, `cfg` and `tools` are unchanged.
+- **Changed sources (library literal and its comments only):**
+  - CPM app `b2c383bd…` → `230f801d…`;
+  - adapter `9c3c0351…` → `14a1ebc6…`;
+  - Normalizer `52e3e777…` → `a484eee1…`;
+  - `bootstrap.py` `06f746cf…` → `8e99bcd3…`.
+
+  The three launchers, the Quick Launch controller `7a01bd5e…` and bootstrap, and every other inventoried file are
+  unchanged.
+- **Profile 2 (amended; never signed):** `menu_dir` and `library_dir` replace `software_dir`, and the inventory stays
+  in the menu folder. The contract is now **`d767c3d5b69d568ef53a5429ad59bf5f8d4f716cfaed0450789366fdfd48d743`**
+  (`e0a9b64e…` superseded). Profile 1 `2bbd93d0…` is unchanged.
+- **Inventory:**
+  - spec `dfe28855…`: 31 files, 28 of them in the library folder; only the four identities above changed;
+  - **unsigned production inventory `2e3a8036c58ab8a98044a6c2b159debaab2942d38b072e802a929d860c5b0e8b`** (6,882 B,
+    `release/v1.0.0/profile2/`); `08c9e78e…` superseded.
+- **Updater:** `official.py` `4c84e608…` and `compat/profile.py` `0dbd8383…` changed in comments and the profile only.
+  `SHA256SUMS.txt` is refreshed.
+- **Verification (scratch `profile2-menu-isolation-20261023un1`):**
+
+  | Suite | Result |
+  |---|---|
+  | `tests/integration/profile2` | **27/27 PASS**, first run |
+  | `test_production_trust.py` | 18/18 |
+  | CPM canonical route | 84/85, identical digests; historical `derivation.added_top_level_is_bounded`; no new names |
+  | Quick Launch, before commit | 232/233 (run), 31/32 (static); only the intended "CPM app unchanged from HEAD" guard; rerun after commit |
+
+  The new profile-2 checks:
+  - exactly three `.py` files in the installed menu tree (SFM's recursive rule);
+  - the library outside it;
+  - all four locators on the library folder (path with spaces);
+  - Quick Launch still on the menu launcher;
+  - a stray library copy in the menu folder makes the Normalizer and CPM refuse.
+- **Unchanged:** the overlay finding and its remedy, the legacy retirement list, the bundled data, the overwrite
+  policy, updater transactions and the optional-button paths.
+- **Next, owner inputs (each separately authorized):**
+  1. rebuild the updater from this commit;
+  2. sign the profile-2 inventory, which must reproduce `2e3a8036…`;
+  3. build and sign `data-v1.0.0` sequence 2 from this commit;
+  4. approve the README;
+  5. assemble the final ZIP;
+  6. L-6, including a real-SFM check of the three-command menu.
+
 **v1.0.0 integration correction (Scripts > SFM Character Tools, bundled data, profile 2): source COMPLETE /
 verified offline (2026-10-23; owner-approved, incorporating Astra's integration adjudication).** Starting
 checkpoint `25860bac…`. Record: `updater_qualification/design/V1_PROFILE2_INTEGRATION_CORRECTION.md`.

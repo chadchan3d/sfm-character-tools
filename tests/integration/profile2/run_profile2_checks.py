@@ -8,8 +8,12 @@ usage: <Python 3.10 with cryptography> -E -s -B tests/integration/profile2/run_p
        that it is refused
 
 Boundaries checked (and nothing else; accepted K/L/PRE/governor/updater fault evidence is reused):
+  the Scripts-menu tree holds exactly the three commands under SFM's native discovery rule (every .py file
+  under scripts/sfm/mainmenu, recursively, is a menu item; accepted Menu Visibility Check) and the internal
+  library is outside it (menu isolation, 2026-10-23);
   locators agree (CPM app, adapter, Normalizer, authority bootstrap, Quick Launch launcher path);
-  CPM and the Normalizer acquire the same installed authority; mixed legacy/new locations refuse;
+  CPM and the Normalizer acquire the same installed authority; mixed legacy/new locations and a stray
+  library copy in the menu folder refuse;
   profile 2 and the revised inventory spec are consistent, and a profile-1 inventory is not accepted;
   a fresh bundled-data installation is consistent; overlay onto an earlier installation, its updater
   remedy, and the documented retirement of the legacy menu entries.
@@ -34,6 +38,9 @@ PRODUCER = os.path.join(UPD, "release_tools", "make_software_inventory.py")
 PKG_PRODUCER = os.path.join(UPD, "release_tools", "make_official_package.py")
 TEST_WORKER = os.path.join(UPD, "tests", "support", "test_worker.py")
 MENU = ("scripts", "sfm", "mainmenu", "SFM Character Tools")
+LIB = ("scripts", "SFM Character Tools")
+LIB_ITEMS = ("cpm_authority_adapter.py", "cpm_compat_v1_projection.py", "sfm_master_authority_productionized",
+             "sfm_master_sidecar")
 LEGACY = ("scripts", "sfm", "mainmenu", "ChadChan3D")
 ENTRIES = ("SFM_Character_Preset_Manager.py", "Rebuild_Control_Groups_Normalizer.py", "SFM_Control_Group_Updater.py")
 # Documented retirement of a recognized earlier installation (README): exactly these, nothing else.
@@ -101,8 +108,10 @@ def main():
     same = [k for k in p1 if k not in ("profile_id", "installation_layout") and p1[k] == p2[k]]
     lay = {k for k in set(p1["installation_layout"]) | set(p2["installation_layout"])
            if p1["installation_layout"].get(k) != p2["installation_layout"].get(k)}
-    check("profile 2: identical to profile 1 except id and layout (contract, software_dir, software_inventory)",
-          len(same) == len(p1) - 2 and lay == {"contract", "software_dir", "software_inventory"}, sorted(lay))
+    check("profile 2: identical to profile 1 except id and layout (contract, menu_dir, library_dir, software_inventory)",
+          len(same) == len(p1) - 2 and lay == {"contract", "menu_dir", "library_dir", "software_inventory"}
+          and p2["installation_layout"]["menu_dir"] == "/".join(MENU) and p2["installation_layout"]["library_dir"] ==
+          "/".join(LIB) and p2["installation_layout"]["software_inventory"].startswith("/".join(MENU) + "/"), sorted(lay))
     check("profile 1 contract unchanged (2bbd93d0…); updater implements exactly profile 2",
           profile.contract_sha256(p1).startswith("2bbd93d0") and sorted(profile.PROFILES) == ["sct-authority-profile-2"]
           and official.SUPPORTED_PROFILES == {"sct-authority-profile-2"})
@@ -111,12 +120,15 @@ def main():
           inventory.INVENTORY_REL.replace("\\", "/") == p2["installation_layout"]["software_inventory"])
     spec = json.loads(rd(SPEC))
     bad = [f["source"] for f in spec["files"] if sha(rd(os.path.join(REPO, *f["source"].split("/")))) != f["sha256"]]
-    menu_prefix = "/".join(MENU) + "/"
-    check("spec: 31 files, 9 roles, profile 2, every source matches, 30 under the new menu folder, none under ChadChan3D",
+    menu_prefix, lib_prefix = "/".join(MENU) + "/", "/".join(LIB) + "/"
+    in_menu = sorted(f["path"][len(menu_prefix):] for f in spec["files"] if f["path"].startswith(menu_prefix))
+    check("spec: 31 files, 9 roles, profile 2, every source matches; 28 in the library folder, only the CPM launcher "
+          "and Normalizer in the menu folder, none under ChadChan3D",
           len(spec["files"]) == 31 and len({f["role"] for f in spec["files"]}) == 9
           and spec["authority_profile"] == "sct-authority-profile-2" and not bad
-          and sum(f["path"].startswith(menu_prefix) for f in spec["files"]) == 30
-          and not any("/ChadChan3D/" in f["path"] for f in spec["files"]), bad)
+          and sum(f["path"].startswith(lib_prefix) for f in spec["files"]) == 28
+          and in_menu == ["Rebuild_Control_Groups_Normalizer.py", "SFM_Character_Preset_Manager.py"]
+          and not any("/ChadChan3D/" in f["path"] for f in spec["files"]), (bad, in_menu))
     old = json.loads(git_show("25860bac12789b6cd1c1b7a25d69db62bcb2d0e6", "updater/release_tools/character_tools_software_v1.json"))
     old_by_role_path = {(f["role"], f["path"].split("/")[-1]): f["sha256"] for f in old["files"]}
     changed = sorted(f["path"].split("/")[-1] for f in spec["files"]
@@ -186,15 +198,28 @@ def main():
     # -- 3. Fresh installation: one copy of the root usermod -------------------------------------------
     fresh = os.path.join(S, "Steam Library", "fresh", "SourceFilmmaker", "game")
     shutil.copytree(rel, os.path.join(fresh, "usermod"))
+    menu_py, outside = [], []
+    for dp, dn, fn in os.walk(os.path.join(fresh, "usermod", "scripts", "sfm", "mainmenu")):
+        menu_py += [os.path.relpath(os.path.join(dp, n), os.path.join(fresh, "usermod", *MENU))
+                    for n in fn if os.path.splitext(n)[1].lower() == ".py"]
+    check("menu tree: exactly three .py commands under scripts\\sfm\\mainmenu (recursive, SFM's discovery rule), all "
+          "directly in SFM Character Tools", sorted(menu_py) == sorted(ENTRIES), sorted(menu_py))
+    for n in LIB_ITEMS:
+        if not os.path.exists(os.path.join(fresh, "usermod", *(LIB + (n,)))):
+            outside.append(n)
+    check("internal library (adapter, projection, authority package, sidecar reader) is in scripts\\SFM Character "
+          "Tools, outside the menu-discovery tree", not outside, outside)
     loc = probe("locators", fresh)
     want = loc.get("expected")
-    check("locators: CPM app, adapter, Normalizer and authority bootstrap all name ...\\mainmenu\\SFM Character Tools "
+    check("locators: CPM app, adapter, Normalizer and authority bootstrap all name ...\\scripts\\SFM Character Tools "
           "(installation path with spaces)", want and all(loc.get(k) == want for k in ("cpm_app", "adapter", "normalizer", "bootstrap"))
-          and want.endswith(os.path.join("mainmenu", "SFM Character Tools")) and " " in want, loc)
-    check("Quick Launch opens CPM through ...\\SFM Character Tools\\SFM_Character_Preset_Manager.py (file present)",
-          loc.get("quick_launch_launcher") == os.path.join(want or "", "SFM_Character_Preset_Manager.py")
+          and want == os.path.join(fresh, "usermod", *LIB) and " " in want, loc)
+    check("Quick Launch opens CPM through the menu launcher ...\\mainmenu\\SFM Character Tools\\"
+          "SFM_Character_Preset_Manager.py (file present)",
+          loc.get("quick_launch_launcher") == os.path.join(loc.get("menu") or "", "SFM_Character_Preset_Manager.py")
+          and loc.get("menu") == os.path.join(fresh, "usermod", *MENU)
           and os.path.isfile(loc.get("quick_launch_launcher") or ""))
-    check("adapter and authority package load from the new menu folder", loc.get("origins", {}).get("adapter") == want
+    check("adapter and authority package load from the library folder", loc.get("origins", {}).get("adapter") == want
           and loc.get("origins", {}).get("package") == want, loc.get("origins"))
     acq = probe("acquire", fresh)
     check("fresh: Normalizer then CPM acquire the installed authority through the same broker, generation = Master",
@@ -229,6 +254,17 @@ def main():
             r1 = "%s %s" % (getattr(e, "message_key", type(e).__name__), (getattr(e, "details", {}) or {}).get("reason"))
         check("the earlier production-signed profile-1 inventory is refused (not weakened to accept it)",
               r1.startswith("SOFTWARE_UNSUPPORTED"), r1)
+
+    # A copy of the internal library left in the menu folder (superseded, never-signed layout) loaded first.
+    stray = os.path.join(S, "Steam Library", "stray", "SourceFilmmaker", "game")
+    shutil.copytree(os.path.join(fresh, "usermod"), os.path.join(stray, "usermod"))
+    for n in LIB_ITEMS:
+        s_, d_ = os.path.join(stray, "usermod", *(LIB + (n,))), os.path.join(stray, "usermod", *(MENU + (n,)))
+        shutil.copytree(s_, d_) if os.path.isdir(s_) else shutil.copyfile(s_, d_)
+    m0 = probe("stray_menu_copy_first", stray)
+    check("wrong origin: a library copy in the menu folder loaded first -> Normalizer and CPM refuse",
+          m0.get("loaded_first_from") == os.path.join(stray, "usermod", *MENU)
+          and m0.get("normalizer", [""])[0] == "REFUSED" and m0.get("cpm", [""])[0] == "REFUSED", m0)
 
     # -- 4. Overlay onto an earlier installation -------------------------------------------------------
     leg = os.path.join(S, "Steam Library", "legacy", "SourceFilmmaker", "game")

@@ -8,7 +8,8 @@ Starting checkpoint `4c8d165d…`.
 SFM Character Tools under `sct-authority-profile-2`, and bundles the Candidate C data in the single ZIP. It
 supersedes these identities:
 - step 5's build, which must be rebuilt;
-- step 6's profile-1 inventory, which must be re-signed (unsigned `08c9e78e…`);
+- step 6's profile-1 inventory, which must be re-signed (unsigned `2e3a8036…` after the same-day menu isolation
+  correction, section 10 of that record; `08c9e78e…` is superseded);
 - step 7's sequence-1 package, replaced by sequence 2 for profile 2;
 - the single ZIP `5aa968b7…`.
 

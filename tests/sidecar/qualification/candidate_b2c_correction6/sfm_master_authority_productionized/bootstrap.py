@@ -98,8 +98,10 @@ def bootstrap_import_path():
     `installed_authority_root()` (that is the PUBLISHED MASTER SIDECAR's
     location; this is the PACKAGE CODE's own location) -- the two need
     not be the same directory, and are kept as two separate, independently
-    documented constants rather than one overloaded path."""
-    return os.path.join(game_root(), "usermod", "scripts", "sfm", "mainmenu", "SFM Character Tools")
+    documented constants rather than one overloaded path. It is the
+    internal library directory, outside the Scripts-menu tree, so SFM
+    does not list the package's modules as menu items."""
+    return os.path.join(game_root(), "usermod", "scripts", "SFM Character Tools")
 
 
 def ownership_report():

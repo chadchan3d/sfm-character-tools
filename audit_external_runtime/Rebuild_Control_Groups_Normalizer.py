@@ -410,10 +410,12 @@ _AUTHORITY_EXPECTED_BUILD_ID = "package-boundary-corrected-2026-09-22"
 
 def _authority_locate_mainmenu_dir():
     """
-    The directory this very script lives in, derived WITHOUT __file__ and
-    WITHOUT assuming the current working directory (per this integration's
-    own MAINMENU constraints) -- purely from sys.executable, available at
-    Python startup with no native module (ifm.dll) dependency.
+    The internal Character Tools library directory that holds the authority
+    package (usermod/scripts/SFM Character Tools, outside the Scripts-menu
+    tree so SFM does not list its modules as menu items), derived WITHOUT
+    __file__ and WITHOUT assuming the current working directory (per this
+    integration's own MAINMENU constraints) -- purely from sys.executable,
+    available at Python startup with no native module (ifm.dll) dependency.
 
     Deliberately duplicates sfm_master_authority_productionized.bootstrap's
     own game_root()/bootstrap_import_path() formula instead of calling it:
@@ -431,7 +433,7 @@ def _authority_locate_mainmenu_dir():
     )
     return os.path.join(
         game_root,
-        "usermod", "scripts", "sfm", "mainmenu", "SFM Character Tools",
+        "usermod", "scripts", "SFM Character Tools",
     )
 
 

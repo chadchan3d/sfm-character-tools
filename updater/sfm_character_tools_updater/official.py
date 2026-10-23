@@ -33,7 +33,8 @@ CHANNEL = "stable"
 # L-2 authority profile identifier: sidecar format 0 / semantics 0, FINAL R3-A2B validator and
 # provider, runtime API 1.0.0-b2a, build package-boundary-corrected-2026-09-22. The full signed
 # profile and installed-software inventory are L-5 (R2 E2-E3). Profile 2 (2026-10-23) is profile 1 with the
-# software and its inventory under scripts/sfm/mainmenu/SFM Character Tools; packages name profile 2.
+# menu commands and inventory under scripts/sfm/mainmenu/SFM Character Tools and the internal library under
+# scripts/SFM Character Tools; packages name profile 2.
 AUTHORITY_PROFILE = "sct-authority-profile-2"
 SUPPORTED_PROFILES = {AUTHORITY_PROFILE}
 SIDECAR_CONTRACT = {"format": 0, "semantics": 0}

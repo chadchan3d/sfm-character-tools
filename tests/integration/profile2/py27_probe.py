@@ -17,6 +17,7 @@ import textwrap
 
 SCENARIO, GAME, REPO = sys.argv[1], os.path.abspath(sys.argv[2]), os.path.abspath(sys.argv[3])
 MENU = os.path.join(GAME, "usermod", "scripts", "sfm", "mainmenu", "SFM Character Tools")
+LIB = os.path.join(GAME, "usermod", "scripts", "SFM Character Tools")
 LEGACY = os.path.join(GAME, "usermod", "scripts", "sfm", "mainmenu", "ChadChan3D")
 APP = os.path.join(GAME, "usermod", "scripts", "ChadChan3D_CPM", "SFM_Character_Preset_Manager.py")
 NORMALIZER = os.path.join(MENU, "Rebuild_Control_Groups_Normalizer.py")
@@ -109,7 +110,7 @@ if SCENARIO == "locators":
     nz = {"os": os, "sys": sys}
     exec(compile(extract(NORMALIZER, ["_authority_locate_mainmenu_dir"])[0], "N", "exec"), nz)
     OUT["normalizer"] = nz["_authority_locate_mainmenu_dir"]()
-    sys.path.insert(0, MENU)
+    sys.path.insert(0, LIB)
     import cpm_authority_adapter as adapter
     OUT["adapter"] = adapter.locate_mainmenu_dir()
     from sfm_master_authority_productionized import bootstrap
@@ -118,7 +119,8 @@ if SCENARIO == "locators":
     exec(compile(extract(os.path.join(REPO, "cpm", "quick_launch", "cpm_ase_quick_launch.py"),
                          ["LAUNCHER_RELATIVE_PARTS"])[0], "QL", "exec"), ql)
     OUT["quick_launch_launcher"] = os.path.join(GAME, *ql["LAUNCHER_RELATIVE_PARTS"])
-    OUT["expected"] = MENU
+    OUT["expected"] = LIB
+    OUT["menu"] = MENU
     OUT["origins"] = {"adapter": os.path.dirname(os.path.abspath(adapter.__file__)),
                       "package": os.path.dirname(os.path.dirname(os.path.abspath(bootstrap.__file__)))}
 
@@ -155,6 +157,16 @@ elif SCENARIO == "acquire":
     OUT["same_broker"] = auth._broker is n_broker
     OUT["master_sha256"] = master_sha
     OUT["canonical"] = rt.is_canonical()
+
+elif SCENARIO == "stray_menu_copy_first":
+    # A copy of the internal library left inside the menu folder (the superseded, never-signed layout) is
+    # imported first: the Normalizer and CPM must refuse it as the wrong origin.
+    sys.path.insert(0, MENU)
+    import sfm_master_authority_productionized.runtime as stray_rt
+    OUT["loaded_first_from"] = os.path.dirname(os.path.dirname(os.path.abspath(stray_rt.__file__)))
+    OUT["normalizer"] = outcome(lambda: run_normalizer_block({"__name__": "normalizer"}) and "loaded")
+    cpm = cpm_import_adapter()
+    OUT["cpm"] = outcome(lambda: cpm["prod_cpm_import_adapter"]().canonical_bootstrap() and "loaded")
 
 elif SCENARIO in ("mixed_legacy_first", "mixed_new_first"):
     if SCENARIO == "mixed_legacy_first":

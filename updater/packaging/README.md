@@ -94,9 +94,13 @@ is part of the executables. The exact file list is `bundle_manifest.json` of eac
 ### Profile
 
 `compat/profile.py` defines `sct-authority-profile-1` as canonical JSON. Its identity is the SHA-256 of that JSON.
-The updater implements **`sct-authority-profile-2`** (`e0a9b64e…`, 2026-10-23). It is profile 1 (`2bbd93d0…`) with
-the software and its signed inventory under `scripts/sfm/mainmenu/SFM Character Tools` (layout contract
-`sct-layout-2`). Every other contract is unchanged, and profile 1 is no longer accepted.
+The updater implements **`sct-authority-profile-2`** (`d767c3d5…`, 2026-10-23). It is profile 1 (`2bbd93d0…`)
+with layout contract `sct-layout-2`:
+- the three Scripts-menu commands and the signed inventory are in `scripts/sfm/mainmenu/SFM Character Tools`;
+- the internal library (CPM adapter and projection, the authority package, the sidecar reader) is in
+  `scripts/SFM Character Tools`, outside the menu tree, because SFM lists every `.py` under `scripts/sfm/mainmenu`.
+
+Every other contract is unchanged, and profile 1 is no longer accepted.
 It binds:
 - the installation layout and the Master path resolution;
 - sidecar format and semantics 0;

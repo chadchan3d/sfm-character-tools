@@ -3885,7 +3885,7 @@ def group_P():
                   variant=software_variant("v_runtime", lambda d: d.update(runtime_build_id="other-build")))
 
     def mutable_noise(u):
-        md = os.path.join(u, "scripts", "sfm", "mainmenu", "SFM Character Tools")
+        md = os.path.join(u, "scripts", "SFM Character Tools")
         wbytes(os.path.join(md, "cpm_authority_adapter.pyc"), b"\x03\xf3\r\nstale bytecode")
         wbytes(os.path.join(u, "scripts", "ChadChan3D_CPM", "presets", "library.json"), b"{}")
         wbytes(os.path.join(u, "cfg", "SFM_Character_Preset_Manager.log"), b"log")

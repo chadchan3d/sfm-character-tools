@@ -2,17 +2,17 @@
  "authority_profile": "sct-authority-profile-2",
  "files": [
   {
-   "byte_length": 793233,
+   "byte_length": 793310,
    "path": "scripts/ChadChan3D_CPM/SFM_Character_Preset_Manager.py",
    "role": "cpm_app",
-   "sha256": "b2c383bd1d1abbd195ba7c1830ff9b3d0a80a61c5e7195e2f7623cc3e63d5ce7",
+   "sha256": "230f801dfe5c243c327ed397e76b1d467e9514874732d1ffecafa381d56c69fa",
    "source": "cpm/app/SFM_Character_Preset_Manager.py"
   },
   {
-   "byte_length": 496219,
+   "byte_length": 496364,
    "path": "scripts/sfm/mainmenu/SFM Character Tools/Rebuild_Control_Groups_Normalizer.py",
    "role": "normalizer",
-   "sha256": "52e3e77700fcb09e4ee4770b39232c44315afc44bb4f0bc9b8ace49cf2a15fe4",
+   "sha256": "a484eee1a3820f8afc40c5897c17585aab1187de5d46f36cfc2b1fe3ae658ff4",
    "source": "audit_external_runtime/Rebuild_Control_Groups_Normalizer.py"
   },
   {
@@ -23,203 +23,203 @@
    "source": "cpm/app/launcher/SFM_Character_Preset_Manager.py"
   },
   {
-   "byte_length": 22674,
-   "path": "scripts/sfm/mainmenu/SFM Character Tools/cpm_authority_adapter.py",
+   "byte_length": 22766,
+   "path": "scripts/SFM Character Tools/cpm_authority_adapter.py",
    "role": "cpm_adapter",
-   "sha256": "9c3c035145b3b6a43d6d9ec423ac3aa577abead0eb1a84003841ee995ad9d3a1",
+   "sha256": "14a1ebc6b127796584ca380c5554b60d46c18f69c6f165c0e9a127480a844d15",
    "source": "cpm/convergence/cpm_authority_adapter.py"
   },
   {
    "byte_length": 18278,
-   "path": "scripts/sfm/mainmenu/SFM Character Tools/cpm_compat_v1_projection.py",
+   "path": "scripts/SFM Character Tools/cpm_compat_v1_projection.py",
    "role": "cpm_projection",
    "sha256": "9b077a1baf491262901812620c380a45eeb9cb2bf75ddc28a08ab18612faffc1",
    "source": "cpm/convergence/cpm_compat_v1_projection.py"
   },
   {
    "byte_length": 1088,
-   "path": "scripts/sfm/mainmenu/SFM Character Tools/sfm_master_authority_productionized/__init__.py",
+   "path": "scripts/SFM Character Tools/sfm_master_authority_productionized/__init__.py",
    "role": "authority_package",
    "sha256": "8c4dc3af75a0eefb1d21e6afca3bbd60b248f1832c45f5fc967b6f5f00292af7",
    "source": "tests/sidecar/qualification/candidate_b2c_correction6/sfm_master_authority_productionized/__init__.py"
   },
   {
-   "byte_length": 6634,
-   "path": "scripts/sfm/mainmenu/SFM Character Tools/sfm_master_authority_productionized/bootstrap.py",
+   "byte_length": 6750,
+   "path": "scripts/SFM Character Tools/sfm_master_authority_productionized/bootstrap.py",
    "role": "authority_package",
-   "sha256": "06f746cf1012af03b23825b5da51195fabb3fa13139b59cdf92b722add2fa2ff",
+   "sha256": "8e99bcd3f0fbdc8160a7540af89bafa834bb0ea9e4bb3588e21d073316b7dd30",
    "source": "tests/sidecar/qualification/candidate_b2c_correction6/sfm_master_authority_productionized/bootstrap.py"
   },
   {
    "byte_length": 32148,
-   "path": "scripts/sfm/mainmenu/SFM Character Tools/sfm_master_authority_productionized/broker.py",
+   "path": "scripts/SFM Character Tools/sfm_master_authority_productionized/broker.py",
    "role": "authority_package",
    "sha256": "b2113da7da5954e88f40f780cc36f012f5451ebcf6db4e5b8baf2d413cd9c514",
    "source": "tests/sidecar/qualification/candidate_b2c_correction6/sfm_master_authority_productionized/broker.py"
   },
   {
    "byte_length": 25083,
-   "path": "scripts/sfm/mainmenu/SFM Character Tools/sfm_master_authority_productionized/candidate_packed_provider_r3a2b.py",
+   "path": "scripts/SFM Character Tools/sfm_master_authority_productionized/candidate_packed_provider_r3a2b.py",
    "role": "authority_provider",
    "sha256": "d6ef96502194c15e594b3e5754e2f5826af1d0ec01b0b358fff08598f7e6b677",
    "source": "tests/sidecar/qualification/candidate_b2c_correction6/sfm_master_authority_productionized/candidate_packed_provider_r3a2b.py"
   },
   {
    "byte_length": 40510,
-   "path": "scripts/sfm/mainmenu/SFM Character Tools/sfm_master_authority_productionized/candidate_packed_validator_r3a2b.py",
+   "path": "scripts/SFM Character Tools/sfm_master_authority_productionized/candidate_packed_validator_r3a2b.py",
    "role": "authority_validator",
    "sha256": "74fe8d9655018a9450d0803018d61e42ec3d17b2947b60915df6b598ffc1563f",
    "source": "tests/sidecar/qualification/candidate_b2c_correction6/sfm_master_authority_productionized/candidate_packed_validator_r3a2b.py"
   },
   {
    "byte_length": 8779,
-   "path": "scripts/sfm/mainmenu/SFM Character Tools/sfm_master_authority_productionized/cohort.py",
+   "path": "scripts/SFM Character Tools/sfm_master_authority_productionized/cohort.py",
    "role": "authority_package",
    "sha256": "4e368d6bedc048acf759685bac8fdc98b953ca96da09a6adbffe9ecc8c16111d",
    "source": "tests/sidecar/qualification/candidate_b2c_correction2/sfm_master_authority/cohort.py"
   },
   {
    "byte_length": 5140,
-   "path": "scripts/sfm/mainmenu/SFM Character Tools/sfm_master_authority_productionized/descriptors.py",
+   "path": "scripts/SFM Character Tools/sfm_master_authority_productionized/descriptors.py",
    "role": "authority_package",
    "sha256": "db0fa70fff4154105804c5dece4033fa91b099cb9bfbe689ffbfb44f8b76652a",
    "source": "tests/sidecar/qualification/candidate_b2c_correction2/sfm_master_authority/descriptors.py"
   },
   {
    "byte_length": 3309,
-   "path": "scripts/sfm/mainmenu/SFM Character Tools/sfm_master_authority_productionized/errors.py",
+   "path": "scripts/SFM Character Tools/sfm_master_authority_productionized/errors.py",
    "role": "authority_package",
    "sha256": "82da08664006cc24fed85014ff8d79291dfc62c78f65dbea10be81b97698bee7",
    "source": "tests/sidecar/qualification/candidate_b2c_correction2/sfm_master_authority/errors.py"
   },
   {
    "byte_length": 4389,
-   "path": "scripts/sfm/mainmenu/SFM Character Tools/sfm_master_authority_productionized/memory_accounting.py",
+   "path": "scripts/SFM Character Tools/sfm_master_authority_productionized/memory_accounting.py",
    "role": "authority_package",
    "sha256": "b907cce9637a1690169d6f53a5516446a9bba4bd0a6bf967eea4fa06ecb0e53a",
    "source": "tests/sidecar/qualification/candidate_b2c_correction2/sfm_master_authority/memory_accounting.py"
   },
   {
    "byte_length": 1602,
-   "path": "scripts/sfm/mainmenu/SFM Character Tools/sfm_master_authority_productionized/native_discovery.py",
+   "path": "scripts/SFM Character Tools/sfm_master_authority_productionized/native_discovery.py",
    "role": "authority_package",
    "sha256": "08a4393731b12380a32d216c834ea0f5bc94413d21828a8add3708b4812f7f38",
    "source": "tests/sidecar/qualification/candidate_b2c_correction2/sfm_master_authority/native_discovery.py"
   },
   {
    "byte_length": 19741,
-   "path": "scripts/sfm/mainmenu/SFM Character Tools/sfm_master_authority_productionized/normalizer_compat_adapter.py",
+   "path": "scripts/SFM Character Tools/sfm_master_authority_productionized/normalizer_compat_adapter.py",
    "role": "authority_package",
    "sha256": "acfdb4e925f0c46e128b4a6b7c2a84e8d073930afb3527b660abb082add7661b",
    "source": "tests/sidecar/qualification/candidate_b2c_correction2/sfm_master_authority/normalizer_compat_adapter.py"
   },
   {
    "byte_length": 1043,
-   "path": "scripts/sfm/mainmenu/SFM Character Tools/sfm_master_authority_productionized/observation.py",
+   "path": "scripts/SFM Character Tools/sfm_master_authority_productionized/observation.py",
    "role": "authority_package",
    "sha256": "70bb3c1ce404f9974cd9d9ba6cfcdcfbd11c1779f64bf2f0d652f5fbc8f6c35b",
    "source": "tests/sidecar/qualification/candidate_b2c_correction2/sfm_master_authority/observation.py"
   },
   {
    "byte_length": 4574,
-   "path": "scripts/sfm/mainmenu/SFM Character Tools/sfm_master_authority_productionized/packed_family_counts.py",
+   "path": "scripts/SFM Character Tools/sfm_master_authority_productionized/packed_family_counts.py",
    "role": "authority_package",
    "sha256": "c4f8b78c4e86b2f8d238e29f7c231036d12e8d97c73924f3bf9c31ede09a9d31",
    "source": "tests/sidecar/qualification/candidate_b2c_correction2/sfm_master_authority/packed_family_counts.py"
   },
   {
    "byte_length": 7930,
-   "path": "scripts/sfm/mainmenu/SFM Character Tools/sfm_master_authority_productionized/pointer.py",
+   "path": "scripts/SFM Character Tools/sfm_master_authority_productionized/pointer.py",
    "role": "authority_package",
    "sha256": "2cd5b5d2ee98c2cb500d8d3e8ae108571bfc40db87295c88362ab3f956136dea",
    "source": "tests/sidecar/qualification/candidate_b2c_correction6/sfm_master_authority_productionized/pointer.py"
   },
   {
    "byte_length": 5062,
-   "path": "scripts/sfm/mainmenu/SFM Character Tools/sfm_master_authority_productionized/resolver.py",
+   "path": "scripts/SFM Character Tools/sfm_master_authority_productionized/resolver.py",
    "role": "authority_package",
    "sha256": "dce6b0aed0765705276c8289fc926fc0c75f426566f095859b7e2bb73cbeaeb4",
    "source": "tests/sidecar/qualification/candidate_b2c_correction2/sfm_master_authority/resolver.py"
   },
   {
    "byte_length": 44529,
-   "path": "scripts/sfm/mainmenu/SFM Character Tools/sfm_master_authority_productionized/resource_estimator.py",
+   "path": "scripts/SFM Character Tools/sfm_master_authority_productionized/resource_estimator.py",
    "role": "authority_package",
    "sha256": "1cc3649a44e1b3777afdd9f86c70386b2bc8d700508037e6a41d748a399771dd",
    "source": "tests/sidecar/qualification/candidate_b2c_correction6/sfm_master_authority/resource_estimator.py"
   },
   {
    "byte_length": 30563,
-   "path": "scripts/sfm/mainmenu/SFM Character Tools/sfm_master_authority_productionized/resource_preflight.py",
+   "path": "scripts/SFM Character Tools/sfm_master_authority_productionized/resource_preflight.py",
    "role": "authority_package",
    "sha256": "8ac3795453cddcd13ceb59a1d9989561e3c0919fc7a163bc569e0ca2e05afec5",
    "source": "tests/sidecar/qualification/candidate_b2c_correction6/sfm_master_authority/resource_preflight.py"
   },
   {
    "byte_length": 14851,
-   "path": "scripts/sfm/mainmenu/SFM Character Tools/sfm_master_authority_productionized/runtime.py",
+   "path": "scripts/SFM Character Tools/sfm_master_authority_productionized/runtime.py",
    "role": "authority_package",
    "sha256": "961a31d1e54171110f1f0e2abcb0bc615fe7c4a77689abae3510cd5469c9915c",
    "source": "tests/sidecar/qualification/candidate_b2c_correction6/sfm_master_authority_productionized/runtime.py"
   },
   {
    "byte_length": 14894,
-   "path": "scripts/sfm/mainmenu/SFM Character Tools/sfm_master_authority_productionized/selection.py",
+   "path": "scripts/SFM Character Tools/sfm_master_authority_productionized/selection.py",
    "role": "authority_package",
    "sha256": "ba5b49b7efadcac551674c3528aed0822c58cbad3b49c13371c833b435b43873",
    "source": "tests/sidecar/qualification/candidate_b2c_correction6/sfm_master_authority_productionized/selection.py"
   },
   {
    "byte_length": 6125,
-   "path": "scripts/sfm/mainmenu/SFM Character Tools/sfm_master_authority_productionized/sidecar_contract.py",
+   "path": "scripts/SFM Character Tools/sfm_master_authority_productionized/sidecar_contract.py",
    "role": "authority_package",
    "sha256": "5fc74de146d9b1b58c81caee9d14fa125bdafad6ad67ed2ac9fbcc93051f9175",
    "source": "tests/sidecar/qualification/candidate_b2c_correction6/sfm_master_authority_productionized/sidecar_contract.py"
   },
   {
    "byte_length": 17361,
-   "path": "scripts/sfm/mainmenu/SFM Character Tools/sfm_master_authority_productionized/view_cache.py",
+   "path": "scripts/SFM Character Tools/sfm_master_authority_productionized/view_cache.py",
    "role": "authority_package",
    "sha256": "26f1b34b39515350eaad8a2433fffd6fe916f040a36c5159b657e040abf6f3b2",
    "source": "tests/sidecar/qualification/candidate_b2c_correction6/sfm_master_authority_productionized/view_cache.py"
   },
   {
    "byte_length": 8129,
-   "path": "scripts/sfm/mainmenu/SFM Character Tools/sfm_master_authority_productionized/views.py",
+   "path": "scripts/SFM Character Tools/sfm_master_authority_productionized/views.py",
    "role": "authority_package",
    "sha256": "cf803240ee39dd4741b7b34d9db4c8b6f81a156e96beb3260e8ee3a46c965092",
    "source": "tests/sidecar/qualification/candidate_b2c_correction2/sfm_master_authority/views.py"
   },
   {
    "byte_length": 5628,
-   "path": "scripts/sfm/mainmenu/SFM Character Tools/sfm_master_authority_productionized/win_file_identity.py",
+   "path": "scripts/SFM Character Tools/sfm_master_authority_productionized/win_file_identity.py",
    "role": "authority_package",
    "sha256": "783086af37f93b3d836fabe69593b915a4ae6a947aecfced941ec592b7dfd701",
    "source": "tests/sidecar/qualification/candidate_b2c_correction2/sfm_master_authority/win_file_identity.py"
   },
   {
    "byte_length": 872,
-   "path": "scripts/sfm/mainmenu/SFM Character Tools/sfm_master_sidecar/__init__.py",
+   "path": "scripts/SFM Character Tools/sfm_master_sidecar/__init__.py",
    "role": "sidecar_reader",
    "sha256": "8cad865fd9954035aebb3e02d5c454228e80a095595bd9cd3746df0b357f904c",
    "source": "tools/sfm_master_sidecar/__init__.py"
   },
   {
    "byte_length": 14249,
-   "path": "scripts/sfm/mainmenu/SFM Character Tools/sfm_master_sidecar/format.py",
+   "path": "scripts/SFM Character Tools/sfm_master_sidecar/format.py",
    "role": "sidecar_reader",
    "sha256": "b401967db8d07943e9f171058a006c30f0e23eb70a7b43bb5ab950203a3c3259",
    "source": "tools/sfm_master_sidecar/format.py"
   },
   {
    "byte_length": 44993,
-   "path": "scripts/sfm/mainmenu/SFM Character Tools/sfm_master_sidecar/reader.py",
+   "path": "scripts/SFM Character Tools/sfm_master_sidecar/reader.py",
    "role": "sidecar_reader",
    "sha256": "1b95261c52d95c306b28fc6e5e9340afa65de4ea2574ed29c2bab427d252719f",
    "source": "tools/sfm_master_sidecar/reader.py"
   }
  ],
- "qualification": "K COMPLETE / PASS (2026-10-10); exact installed identities re-verified by U0B-P0 (2026-10-12). Normalizer admitted by the v1 Release Baseline Amendment (2026-10-21): 6b5d2941 (Phase F simplification of the real-SFM-qualified 25a5e3cd), real-SFM qualified with corrected Candidate C (bounded; accepted 2026-10-22). CPM app d7a8a374 (accepted empty-state guidance correction, 2026-10-22) supersedes the K/R15 identity 4e35f292 in this inventory; final 31-file reconciliation 2026-10-22. Profile 2 integration correction (2026-10-23): software installed under scripts/sfm/mainmenu/SFM Character Tools (Scripts > SFM Character Tools); only the four files whose menu-directory locator changed have new identities (CPM app, CPM adapter, Normalizer, authority bootstrap); unsigned",
+ "qualification": "K COMPLETE / PASS (2026-10-10); exact installed identities re-verified by U0B-P0 (2026-10-12). Normalizer admitted by the v1 Release Baseline Amendment (2026-10-21): 6b5d2941 (Phase F simplification of the real-SFM-qualified 25a5e3cd), real-SFM qualified with corrected Candidate C (bounded; accepted 2026-10-22). CPM app d7a8a374 (accepted empty-state guidance correction, 2026-10-22) supersedes the K/R15 identity 4e35f292 in this inventory; final 31-file reconciliation 2026-10-22. Profile 2 integration correction (2026-10-23): software installed under scripts/sfm/mainmenu/SFM Character Tools (Scripts > SFM Character Tools); only the four files whose menu-directory locator changed have new identities (CPM app, CPM adapter, Normalizer, authority bootstrap). Menu isolation (2026-10-23, before any signing): SFM lists every .py under scripts/sfm/mainmenu as a menu item, so the internal library (CPM adapter and projection, authority package, sidecar reader) is installed under scripts/SFM Character Tools and only the three commands stay in the menu folder; the same four locator files have new identities; unsigned",
  "schema": 1,
  "software": "SFM Character Tools"
 }

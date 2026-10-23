@@ -11,9 +11,11 @@ name exactly: a profile ID alone (or an unsigned version string) proves nothing.
 The values below are the qualified state of K (2026-10-10) and L-1 to L-4, read from the qualified
 sources; they are not optimistic version ranges.
 
-Profile 2 (v1.0.0 integration correction, 2026-10-23) moves the installed Character Tools software, and with
-it the signed inventory, to scripts/sfm/mainmenu/SFM Character Tools/ (Scripts > SFM Character Tools). Every
-other contract is profile 1's, unchanged. This updater implements profile 2 only; profile 1 is kept as the
+Profile 2 (v1.0.0 integration correction, 2026-10-23; menu isolation, same day, before any signing) puts the
+three Scripts-menu commands and the signed inventory in scripts/sfm/mainmenu/SFM Character Tools/ (Scripts > SFM
+Character Tools) and the internal library (CPM adapter and projection, the authority package, the sidecar reader)
+in scripts/SFM Character Tools/, outside the menu tree: SFM lists every .py under scripts/sfm/mainmenu as a menu
+item. Every other contract is profile 1's, unchanged. This updater implements profile 2 only; profile 1 is kept as the
 historical definition its signed records name.
 """
 import copy
@@ -96,7 +98,8 @@ PROFILE_1 = {
 PROFILE_2 = copy.deepcopy(PROFILE_1)
 PROFILE_2["profile_id"] = "sct-authority-profile-2"
 PROFILE_2["installation_layout"]["contract"] = "sct-layout-2"
-PROFILE_2["installation_layout"]["software_dir"] = "scripts/sfm/mainmenu/SFM Character Tools"
+PROFILE_2["installation_layout"]["menu_dir"] = "scripts/sfm/mainmenu/SFM Character Tools"
+PROFILE_2["installation_layout"]["library_dir"] = "scripts/SFM Character Tools"
 PROFILE_2["installation_layout"]["software_inventory"] =     "scripts/sfm/mainmenu/SFM Character Tools/sfm_character_tools_inventory.json"
 
 # The profile this updater implements.

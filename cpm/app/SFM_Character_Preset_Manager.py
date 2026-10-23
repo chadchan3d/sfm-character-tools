@@ -16193,7 +16193,8 @@ PROD_MASTER_REVIEW_WARNING_COPY = (
 # ProdCpmUnmigratedProvider instead of reaching any provider.
 # ---------------------------------------------------------------------------
 
-PROD_CPM_MAINMENU_RELATIVE_PARTS = ("usermod", "scripts", "sfm", "mainmenu", "SFM Character Tools")
+# The internal library directory, outside the Scripts-menu tree (SFM lists every .py under it).
+PROD_CPM_MAINMENU_RELATIVE_PARTS = ("usermod", "scripts", "SFM Character Tools")
 PROD_CPM_ADAPTER_MODULES = ("cpm_authority_adapter", "cpm_compat_v1_projection")
 
 
