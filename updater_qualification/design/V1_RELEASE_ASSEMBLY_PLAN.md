@@ -10,7 +10,8 @@ supersedes these identities:
 - step 5's build, rebuilt for profile 2 (2026-10-23: bundle `cbf11e80…`; see the Ledger);
 - step 6's profile-1 inventory, re-signed for profile 2 (2026-10-23: owner-signed `2e3a8036…` / `.sig`
   `3fb19591…`, after the same-day menu isolation correction, section 10 of that record; see the Ledger);
-- step 7's sequence-1 package, replaced by sequence 2 for profile 2;
+- step 7's sequence-1 package, replaced by sequence 2 for profile 2 (2026-10-23: owner-signed `release.json`
+  `8621a735…` / `release.sig` `1613621b…`; see the Ledger);
 - the single ZIP `5aa968b7…`.
 
 The entries below are historical where so marked.
@@ -24,7 +25,9 @@ The entries below are historical where so marked.
 - step 6, inventory: owner-signed, `sfm_character_tools_inventory.json` `9672e00e…` / `.sig` `dafe6025…`
   (2026-10-23; see the Ledger), superseded by the profile-2 inventory `2e3a8036…` / `3fb19591…` (2026-10-23);
 - step 7: owner-signed `data-v1.0.0`, sequence 1, `release.json` `58752b33…` / `release.sig` `5741eb5f…`, issued
-  2026-10-23T03:43:34Z; accepted (non-installing) by the production updater candidate (2026-10-23; see the Ledger);
+  2026-10-23T03:43:34Z; accepted (non-installing) by the production updater candidate (2026-10-23; see the Ledger),
+  superseded by sequence 2 for profile 2, `8621a735…` / `1613621b…`, issued 2026-10-23T12:37:22Z (never
+  published);
 - step 8: the unpublished ZIPs: core `7e95519f…`, updater `96067dcc…`, Quick Launch `e3630efd…` (unchanged), and
   `SHA256SUMS.txt` `9f2760e4…` (2026-10-23; see the Ledger). This is **superseded** by the single-ZIP distribution
   amendment (`V1_SINGLE_ZIP_DISTRIBUTION_AMENDMENT.md`), which keeps these as historical distribution evidence:

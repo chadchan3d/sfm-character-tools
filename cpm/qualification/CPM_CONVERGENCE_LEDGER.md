@@ -8,6 +8,71 @@ Blueprint, or expands scope, report the conflict before dependent edits.
 Otherwise proceed with the assigned milestone.
 
 ## Current milestone
+**Official data package `data-v1.0.0`, sequence 2, profile 2 (release-assembly step 7, repeated): COMPLETE / PASS
+(2026-10-23; owner-authorized; owner-signed).** Starting checkpoint `80b67a52…`.
+- **Pre-signing checks:**
+  - **Master:** the corrected Candidate C, `1d855cd3…` (3,973,478 B), locally and on GitHub (last changed in
+    `baca3f40…`).
+  - **Validator:** `tools/validate_master.py` PASS with 0 exact duplicates; it matches the producer pin `62d5273e…`.
+  - **Dry compilation** (canonical compiler, official policy): reproduced sidecar `37916775…` and manifest
+    `6c756806…`.
+  - **Updater source:** profile 2 / `d767c3d5…`.
+  - **Source commit:** `8f135eb9…` exists locally and on GitHub.
+- **Signing (owner-operated, ruling 3):**
+  - The owner reviewed the prepared helper's source, then ran it in their own PowerShell window. The helper is
+    `sign_data_v1_seq2.py`, kept in the release staging.
+  - It required the Master to be `1d855cd3…`, profile 2 / `d767c3d5…`, and the key `ed25519-5d879134807dff6d`.
+  - It fixed `published_at` to the UTC time immediately before signing.
+  - It passed the passphrase through an in-memory pipe, never a file, to the unmodified
+    `make_official_package.py build`, then rechecked the five files and every descriptor field.
+  - It was rehearsed beforehand with a throwaway key in a private temporary folder, deleted afterwards (wrong key
+    refused; a complete package with a verified signature).
+  - Neither Claude nor this record accessed the key, its location or the passphrase. No other production package was
+    produced.
+- **Descriptor:**
+  - sequence `2`, data version `1.0.0`, tag `data-v1.0.0`, channel `stable`, `chadchan3d/sfm-character-tools`;
+  - source commit `8f135eb9c09cb9d77ac0f94124463f5dfb54d8f3`;
+  - profiles `[sct-authority-profile-2]`, minimum updater contract 1, sidecar contract 0/0;
+  - compiler build `sfm-master-sidecar-compiler-50dd1804`;
+  - key `ed25519-5d879134807dff6d`;
+  - **`published_at` `2026-10-23T12:37:22Z`**.
+- **Signed package (five files exactly; preserved read-only, unpublished, in
+  `release-v1.0.0-p2-20261023\data-v1.0.0-seq2\`):**
+
+  | File | SHA-256 | Size |
+  |---|---|---|
+  | `release.json` | `8621a7351e4a04612338a927327e96a961842a5959392fe7a8596bdf7df2edaa` | 1,012 B |
+  | `release.sig` | `1613621b78a38fa0a59023643c2b027a1031de1badc95b12d005b38b762e6319` | 64 B |
+  | `sfm_defaultanimationgroups.txt` | `1d855cd34b90a2e6254d97eb4c6ac4b08ccc64d994b8e6a754ddac8466b155ec` | 3,973,478 B |
+  | `manifest.json` | `6c7568063a69de2a22c05f55df066db369f3340e68d0208f9f36a4c017c3c7ae` | 530 B |
+  | `sfm_master_0_3791677522119a6ca45c1092743041dc07014cfa1fd0891526db995bcf526a16.sfmsidecar` | `3791677522119a6ca45c1092743041dc07014cfa1fd0891526db995bcf526a16` | 9,507,530 B |
+
+- **Independent verification (product code, shipping trust only), 19/19 PASS:**
+  - **Package and descriptor:**
+    - exactly the five files at the identities above; the Master is byte-identical to the repository's;
+    - `official.read_package` passes: the production signature verifies, the package is compatible, and the payload
+      matches the descriptor;
+    - every descriptor field is exact, in canonical bytes;
+    - profile 2 is the updater's implemented contract;
+    - `candidate.validate_official_bytes` confirms the sidecar and manifest correspond to the TXT;
+    - the product verifier refuses a one-bit-altered signature.
+  - **Rebuilt updater `cbf11e80…`** (clean copy equal to its manifest), in isolated scratch profile-2 installations
+    with the 31 staged files and the owner-signed inventory `2e3a8036…`:
+    - **over earlier data** (G1 `ac45e5c1…`): `prepare-official` returns `PREPARED`, a consented replacement. The
+      record names sequence 2, `data-v1.0.0`, the production key and sidecar `37916775…`, and lists the verified
+      software as 31 files, version 1.0.0, inventory `2e3a8036…`, profile 2. `discard-prepared` returns
+      `DISCARDED`, and the data is byte-identical;
+    - **over the bundled Candidate C data:** `PREPARED` ("checked and ready"), then discarded, with the data
+      byte-identical;
+    - **mismatched signature:** a package copy with one signature bit flipped is `REFUSED` ("signature does not
+      verify"), and nothing is prepared.
+  - The updater copy, the package and the release staging were unchanged by the verification. Nothing was installed.
+- **Containment:** no `.pem`/`.key` file and no private-key header in the repository, the release staging or the
+  verification folders. The only text match is this Ledger's custody sentence.
+- **Superseded:** `data-v1.0.0` sequence 1 (`58752b33…`, profile 1; never published).
+- **Not done:** final ZIP assembly, README approval, L-6 and publication. The package stays unpublished until L-6
+  passes.
+
 **Profile-2 signed software inventory (release-assembly step 6, inventory part, repeated): COMPLETE / PASS
 (2026-10-23; owner-authorized; owner-signed).** Starting checkpoint `e6922d53…`.
 - **Staging:** a new release-staging folder outside the repository and SFM (`release-v1.0.0-p2-20261023`).
