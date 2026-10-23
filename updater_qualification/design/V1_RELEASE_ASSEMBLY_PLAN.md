@@ -7,7 +7,8 @@ Starting checkpoint `4c8d165d…`.
 **Completed:**
 - step 2: the production key, owner-held (key id `ed25519-5d879134807dff6d`, public key
   `7f2b9a53fcad0a7818ef5be52ed9fdc8826ac51e3923db30461ddbc96539dba1`);
-- steps 3–4: key embedding and the menu launcher (2026-10-22; see the Ledger).
+- steps 3–4: key embedding and the menu launcher (2026-10-22; see the Ledger);
+- step 5: the production updater build, v0.1.0, bundle identity `34aa4d0d…` (2026-10-23; see the Ledger).
 
 Normalizer redistribution rights are confirmed by the owner.
 **Authority:** R15 and updater R2 Blueprints, Offline Updater v1 Contract Amendment, L Implementation Authorization

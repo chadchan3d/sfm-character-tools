@@ -8,6 +8,55 @@ Blueprint, or expands scope, report the conflict before dependent edits.
 Otherwise proceed with the assigned milestone.
 
 ## Current milestone
+**Production updater build (release-assembly step 5): COMPLETE / PASS (2026-10-23; owner-authorized).** Built
+from `63cba5003e13b2c288705496b8fe7e7ff8068002` with the unchanged L-5 recipe. No product source changes were needed.
+- **Recipe:** `updater/packaging/build.py`, run in the existing L-5 build environment:
+  - CPython 3.10.6 x64;
+  - PyInstaller 6.11.1, hooks 2024.10, cryptography 50.0.2, cffi 2.1.1, pycparser 3.11;
+  - `pip freeze` equals `requirements-build.txt`.
+
+  The output went to a new scratch folder outside the repository and SFM. The source tree was clean at the build
+  commit.
+- **Candidate (preserved unchanged for release assembly; not deployed):** the one-folder
+  `SFM Control Group Updater\`, v0.1.0.
+
+  | Item | Identity |
+  |---|---|
+  | Files | 965 |
+  | Bundle identity | `34aa4d0d3e5c72771965ada48cd94655db1458bb0e0a98162089424dd4434565` |
+  | `bundle_manifest.json` | `836fd242a52ef7b2ec0112dddc0f4c71f447c1a6a7eebae266cd74e8a9857ba9` |
+  | GUI `SFM Control Group Updater.exe` | `4864ca0d80306ed5861bbbabdd74dd9b698d307e10dfeed3570baba80bca4784` |
+  | Worker `sct-updater-worker.exe` | `7d8fc4a2477d52d53156e7a8935762a5cbe223adb169f5f6338b11a37d169c0b` |
+
+- **Verification (independent of the build script), 17/17 PASS:**
+  - the bundle on disk equals its manifest, and the identity was recomputed;
+  - version 0.1.0, with no workstation path markers;
+  - the nine bundled pinned sources equal `candidate.PINS` and profile `sct-authority-profile-1` (`2bbd93d0…`);
+  - the worker's embedded `official` module trusts exactly `ed25519-5d879134807dff6d` / `7f2b9a53…`, and its
+    code equals the committed `official.py`;
+  - by design, the GUI embeds no trust module and no key material: all verification runs in the worker;
+  - no test or development modules are embedded in either executable;
+  - **packaged `runtime-check`** from a clean copy, with `PYTHONPATH`/`PYTHONHOME`/`PATH` pointed at development
+    Python: `RUNTIME_OK`, frozen, every path inside the bundle, OpenSSL 1.1.1n, Ed25519 via cryptography 50.0.2;
+  - the packaged worker rejects `--trust-key`, `--net-base`, `--hold-at`, `--inject` and `--token` (exit 2, no
+    result written);
+  - it refuses an existing L-5 test-signed package (`ed25519-aefcc1f7…`) with "signing key is not trusted";
+  - the clean copy was unchanged by the runs.
+- **Provenance for the evidence-reuse rule (addendum ruling 2):** compared with the accepted L-5 candidate
+  (`cf792970…`, 2026-10-19):
+  - the same 965-file set, pins and build environment;
+  - every file is byte-identical except the two executables;
+  - **embedded code** is identical module by module: GUI 113/113, worker 158/159. The only differing module is
+    `sfm_character_tools_updater.official`, the trust table.
+  - Product source since the L-5 checkpoint changed only `official.py` (plus documentation).
+- **Verification deviations (harness only; nothing rebuilt):**
+  - the first verification run expected the trust table in the GUI too. The GUI has none by design, and the check
+    was corrected;
+  - the first code comparison flagged 4 stdlib modules because of `frozenset` constant ordering. Sorted comparison
+    shows them identical.
+- **Not covered here:** acceptance of production-signed artifacts by this candidate, which needs the owner-signed
+  inventory and `data-v1.0.0` (step 6). Also release ZIP assembly, L-6 and publication.
+
 **Production trust and updater Scripts-menu launcher: COMPLETE / PASS (offline, 2026-10-22; owner-authorized;
 release-assembly plan steps 3–4).** Starting checkpoint `a30f60bc…`.
 - **Adjudication recorded:** Astra's seven owner-approved release rulings are in
@@ -102,7 +151,7 @@ the menu launcher are done (above).
   1. the owner's production key (DONE, below);
   2. public-key embedding (DONE, 2026-10-22; see above);
   3. the Scripts-menu updater launcher (DONE, 2026-10-22; see above);
-  4. an updater rebuild;
+  4. an updater rebuild (DONE, 2026-10-23: bundle `34aa4d0d…`; see above);
   5. the production-signed inventory and data package;
   6. unpublished release ZIPs;
   7. the approved L-6 reconciliation and Group 5 restoration plan.
@@ -1920,7 +1969,7 @@ owner-accepted.
      owner-held) and embedded as the only production trust; the menu launcher is implemented (see Current
      milestone). The L-6 trust conflict is resolved by the adjudication addendum (production key plus classified
      evidence; no test-trust build). Still open before L-6:
-     - the updater rebuild (the exact shipping candidate);
+     - the updater rebuild: DONE (bundle `34aa4d0d…`, 2026-10-23);
      - the owner-signed inventory and `data-v1.0.0`;
      - the release ZIPs with the archive manifest;
      - deployment of the inventory and menu entry in Group 5 under its restoration plan.
