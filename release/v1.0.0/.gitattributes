@@ -1,0 +1,2 @@
+# Release evidence: the READMEs are byte-identical to the ZIP entries and hash-listed; keep exact LF bytes.
+*.txt text eol=lf

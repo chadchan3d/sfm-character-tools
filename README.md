@@ -46,10 +46,14 @@ full TXT file on every query.
   oracle for CPM shared-authority convergence; see `cpm/baseline/MANIFEST.md`.
 - **`cpm/quick_launch/`** — CPM Quick Launch, an **optional** CPM button for SFM's
   Animation Set Editor toolbar. It requires Autoinit Manager to be installed already
-  (never bundled or changed) and ships as a separate ZIP, outside the core Character
-  Tools software inventory and the Control Group Updater. Character Preset Manager
-  stays available from the Scripts menu without it. See
-  `cpm/quick_launch/README.md` and `cpm/quick_launch/distribution/README.txt`.
+  (never bundled or changed). It ships in the v1.0.0 ZIP's `OPTIONAL - CPM Button`
+  folder, installed separately and outside the core Character Tools software
+  inventory and the Control Group Updater. Character Preset Manager stays available
+  from the Scripts menu without it. See `cpm/quick_launch/README.md` and
+  `release/v1.0.0/OPTIONAL - CPM Button/README.txt`.
+- **`release/v1.0.0/`** — the user READMEs and the external path/SHA-256 manifest of
+  the single `SFM Character Tools v1.0.0.zip` (see
+  `updater_qualification/design/V1_SINGLE_ZIP_DISTRIBUTION_AMENDMENT.md`).
 
 ## Editing the Master
 

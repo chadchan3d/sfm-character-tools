@@ -157,9 +157,11 @@ usermod\scripts\sfm\mainmenu\ChadChan3D\sfm_character_tools_inventory.sig
   - It imports no updater, CPM or authority code and leaves nothing in SFM's shared Scripts-menu namespace.
   - Installing data still requires SFM to be closed: the updater's process gate refuses while SFM runs.
   - Offline checks: `updater/tests/test_menu_launcher.py`, under SFM Python 2.7.5.
-- **Software release (adjudication ruling 5):**
-  - the core software ZIP: the 31 inventoried scripts, the signed inventory, and the menu entry, which is outside the
-    inventory but listed in the archive manifest;
-  - a separate updater ZIP: this one-folder application;
-  - the unchanged optional Quick Launch ZIP.
+- **Software release (single-ZIP distribution amendment, superseding adjudication ruling 5):** one archive,
+  `SFM Character Tools v1.0.0.zip`.
+  - Its root `usermod` holds the 31 inventoried scripts, the signed inventory and the menu entry under `scripts`,
+    and this one-folder application under `tools\SFM Control Group Updater\`. One copy into `SourceFilmmaker\game`
+    installs both.
+  - The optional CPM button is in a separate `OPTIONAL - CPM Button` folder with its own README.
+  - The external path/SHA-256 manifest is in `release/v1.0.0/`. The signed inventory covers only its 31 files.
 - **Data:** official data installs only from packages signed with the production key.

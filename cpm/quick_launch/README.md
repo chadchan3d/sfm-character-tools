@@ -158,6 +158,11 @@ The test installation's Extended ASE settings and Autoinit configuration were un
 
 ## Distribution (QL-3)
 
+> **Superseded for v1.0.0 (2026-10-23, single-ZIP distribution amendment):** the two program files (unchanged,
+> `23e3a881…` / `4558d296…`) ship inside `SFM Character Tools v1.0.0.zip` under `OPTIONAL - CPM Button\`.
+> Its README, `release/v1.0.0/OPTIONAL - CPM Button/README.txt`, keeps every safeguard below. The standalone archive
+> described below is historical distribution evidence.
+
 Quick Launch ships as one optional ZIP, released alongside the base SFM Character Tools software. It is **not** part
 of the signed 31-file core software inventory, and the SFM Control Group Updater never installs, verifies or removes
 it. Base Character Tools work without it and without Autoinit Manager.

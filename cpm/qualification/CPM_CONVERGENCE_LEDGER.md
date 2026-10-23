@@ -8,6 +8,74 @@ Blueprint, or expands scope, report the conflict before dependent edits.
 Otherwise proceed with the assigned milestone.
 
 ## Current milestone
+**Single-ZIP distribution (supersedes the step 8 three-ZIP distribution): COMPLETE / PASS (2026-10-23;
+owner-requested, Astra-approved).** Starting checkpoint `336cd54f…`.
+- **Authority:** `updater_qualification/design/V1_SINGLE_ZIP_DISTRIBUTION_AMENDMENT.md` (`7f0b5e1e…`, in
+  `updater_qualification/SHA256SUMS.txt`). It supersedes only:
+  - adjudication ruling 5 / D5;
+  - the QL-3 separate-archive requirement;
+  - the step 8 three-ZIP expectations.
+
+  The adjudication addendum's text is unchanged; the amendment supersedes that ruling.
+- **Artifact (unpublished, read-only, release staging):**
+
+  | Artifact | SHA-256 | Size |
+  |---|---|---|
+  | `SFM Character Tools v1.0.0.zip` | `ce3c795790f76c36ca41ff716c97e90038c98744c0d1d1a3d58fe50cae8ae3ea` | 14,347,345 B |
+  | External contents manifest `ZIP_CONTENTS_SHA256.txt` (all 1,003 files, both READMEs included) | `16ce9b55e88225daad8cf2d2fd311b721337b9af822558308da59427276446dd` | 146,380 B |
+  | External `SHA256SUMS.txt` (the ZIP) | `cc8d04d4f7d61f429f9ff08c3bdfb6f86c4503392f2baa1e702998cab3e9eece` | 97 B |
+
+  The two evidence files are also committed in `release/v1.0.0/`.
+- **Layout:** 1,003 entries, with no enclosing folder, nested ZIP or in-archive checksum file:
+  - `README.txt` (`61171150…`);
+  - `usermod/scripts/…`: 31 inventoried files, the signed inventory pair and the launcher;
+  - `usermod/tools/SFM Control Group Updater/`: 965 files;
+  - `OPTIONAL - CPM Button/README.txt` (`7b09ad53…`) plus its own `usermod/…` with the two button files.
+
+  Both READMEs are committed in `release/v1.0.0/`, byte-identical to the ZIP entries.
+- **READMEs:**
+  - **Main README:** seven numbered sections per Astra's ruling. Section 6 uses the owner's revised wording
+    (contributions shared via ChadChat). It uses the GUI's real button labels (see deviations).
+  - **Optional README:** the accepted QL-3 text adapted to the new location, with every safeguard and both
+    fingerprints kept.
+- **Assembly:** a deterministic assembler (`d7a5c77f…`, outside the repository). It checks every input identity
+  before writing, rejects duplicate or colliding paths, and uses fixed timestamps and deflate level 9. A second
+  assembly reproduced the ZIP byte-for-byte.
+- **Verification (`verify_single.py`, isolated scratch), 18/18 PASS:**
+  - the exact layout, with safe, unique, non-colliding paths and only three top-level items;
+  - no nested distribution ZIP: the bundle's own `_internal/base_library.zip` is one of the accepted 965 files;
+  - **simulated install:** the root `usermod` copied into a scratch `game` that already had a `usermod` and a user
+    file. The user file was kept, and the updater exe sits exactly where the launcher looks;
+  - the installed updater folder equals the accepted 965-file bundle;
+  - the optional button is **not** installed by the root `usermod`;
+  - **preservation:** all 31 core identities; inventory `9672e00e…` / `dafe6025…`; launcher `99f27260…`; GUI
+    `4864ca0d…`; worker `7d8fc4a2…`; bundle identity `34aa4d0d…` recomputed; button `23e3a881…` / `4558d296…`;
+  - the installed core passes `verify_installation` under shipping trust (31 files, 1.0.0, production key);
+  - the optional README keeps the QL-3 safeguards;
+  - the main README has its 7 sections in order, avoids internal terms and Markdown links, and says the root
+    `usermod` doesn't install the button;
+  - no data-package files, private keys, scratch or workstation paths, test fixtures or developer tools;
+  - the external manifest matches the extracted bytes, and the evidence checksum matches the ZIP;
+  - `data-v1.0.0` is unchanged and separate;
+  - the live SFM `scripts`, `cfg` and `tools` were untouched.
+- **Verification deviation (harness only):** the first run failed the nested-ZIP row on the bundle's own
+  `base_library.zip`. The check was narrowed to ZIPs outside the accepted bundle.
+- **README deviations for owner review:**
+  - The brief names the actions "Get Official Data / Rebuild My Data / Use Another TXT" (the card's internal names).
+    The README uses the owner-approved on-screen labels, "Get Published Version / Update Using SFM's TXT / Choose
+    Another TXT File" (L-4R), so users find the exact buttons.
+  - No Steam Workshop URL was available in the repository, so section 7 lists none; the owner is to supply it. The
+    ChadChat link is included.
+  - Private (`model-browser-for-sfm`) and superseded (`sfm-character-preset-manager`) repositories are not listed.
+- **Superseded, historical (not failures):** the step 8 ZIPs (core `7e95519f…`, updater `96067dcc…`, Quick Launch
+  `e3630efd…`, checksums `9f2760e4…`) and the QL-3 standalone archive. Their contents are the same accepted bytes.
+- **Docs updated:**
+  - the top-level `README.md`;
+  - `updater/packaging/README.md` §5;
+  - the `cpm/quick_launch/README.md` distribution note;
+  - the plan.
+- **Next:** L-6 on `ce3c7957…` plus `data-v1.0.0`, then publication. Each needs separate authorization.
+
 **Distribution archives (release-assembly step 8): COMPLETE / PASS (2026-10-23; owner-authorized).** Unpublished
 release artifacts ready for L-6. Starting checkpoint `c18097a2…`.
 - **Release folder (software release `v1.0.0`; read-only; release staging, not published):**
