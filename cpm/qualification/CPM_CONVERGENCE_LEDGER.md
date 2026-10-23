@@ -8,8 +8,83 @@ Blueprint, or expands scope, report the conflict before dependent edits.
 Otherwise proceed with the assigned milestone.
 
 ## Current milestone
-**Production key establishment: COMPLETE (owner custody confirmed, 2026-10-22).** Next, separately authorized:
-production-trust embedding and the thin updater Scripts-menu launcher.
+**Production trust and updater Scripts-menu launcher: COMPLETE / PASS (offline, 2026-10-22; owner-authorized;
+release-assembly plan steps 3–4).** Starting checkpoint `a30f60bc…`.
+- **Adjudication recorded:** Astra's seven owner-approved release rulings are in
+  `updater_qualification/design/V1_RELEASE_ADJUDICATION_ADDENDUM.md` (`ca98acc3…`, added to
+  `updater_qualification/SHA256SUMS.txt`). In brief:
+  - Group 5 runs G1 → corrected Candidate C → G1, with NOOP on both generations and a named changed control;
+  - each L-6 case is classified by its evidence source;
+  - the owner signs;
+  - `published_at` is the issue time;
+  - separate core and updater ZIPs; the launcher is outside the inventory but in the archive manifest;
+  - after L-6, the exact pre-test installation and updater records are restored;
+  - Normalizer redistribution is confirmed.
+
+  The addendum supersedes only the Baseline Amendment §5 Group 5 rows; the plan references it.
+- **Production trust:** `updater/sfm_character_tools_updater/official.py` (`050f2472…`) has
+  `TRUSTED_KEYS = {"ed25519-5d879134807dff6d": "7f2b9a53…dba1"}`.
+  - Only that table and its docstring/comment changed (an AST comparison against the base).
+  - Test keys still reach trust only through `hooks.extra_trusted_keys`, set only by the test worker. The bundle
+    still forbids test material.
+  - The `run_l1.py` explanation strings now say "trusts no test key" (`d69ed2ec…`; wording only).
+- **Launcher:** `updater/menu/SFM_Control_Group_Updater.py` (`99f27260…`, ASCII, Python 2.7), installed as
+  `usermod\scripts\sfm\mainmenu\ChadChan3D\SFM_Control_Group_Updater.py`.
+  - The `game` folder comes from `sys.executable`. It starts
+    `usermod\tools\SFM Control Group Updater\SFM Control Group Updater.exe --sfm-folder <SourceFilmmaker folder>`
+    as an argument list (no shell), with `close_fds`, `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP` and the updater
+    folder as working directory.
+  - It returns at once and shows no success popup. When the exe is missing or can't start, it shows one retained,
+    non-modal notice (suppressed over a modal dialog).
+  - It imports only `os`, `subprocess`, `sys` and PySide, and deletes its function. It is outside the 31-file
+    inventory.
+- **Focused offline verification:**
+
+  | Suite | Interpreter | Result |
+  |---|---|---|
+  | `updater/tests/test_production_trust.py` (`2f84fb89…`) | Python 3.10.6 + cryptography 50.0.2 | **18/18 PASS** |
+  | `updater/tests/test_menu_launcher.py` (`9f86f834…`) | SFM Python 2.7.5 + PySide 1.2 | **17/17 PASS** |
+
+  - **Trust suite:**
+    - exactly the approved key, with key id and key in agreement;
+    - an unknown signer, another key's signature under the production id, and a bit-flipped or truncated signature
+      are all refused;
+    - a test key verifies only while the seam is set, and never enters the table;
+    - no product or packaging module sets the seam or accepts `--trust-key`;
+    - nothing else changed in the updater package, packaging or release tools;
+    - activation, recovery, consumer, authority, Master and Quick Launch sources are unchanged since `a30f60bc`;
+    - the inventory spec `c143b823…` is unchanged and its 31 sources match;
+    - Quick Launch `23e3a881…` and `4558d296…` are unchanged;
+    - `updater/SHA256SUMS.txt` (`a57851dc…`) matches all 42 listed files.
+  - **Launcher suite:**
+    - path, argument list, flags, immediate return and no popup;
+    - missing executable, a folder at the exe path, and a start failure;
+    - notice reuse, and suppression over a modal dialog;
+    - shared-namespace, `sys.path` and module isolation;
+    - a real detached start of a renamed `hostname.exe`.
+  - **Harness note:** the first launcher run had 3 namespace rows failing. The stand-in namespace lacked
+    `__package__`, which every real `__main__` namespace has (SFM Python 2.7 confirms it) and which Python 2.7 adds on a
+    package import. The stand-in was corrected; the launcher was not changed.
+  - **Harness note:** a later trust-suite run counted this milestone's documentation edits
+    (`updater/packaging/README.md`, `audit_external_runtime/MANIFEST.md`) as code changes, and 2 rows failed. The
+    rows were narrowed to code files; the product was not changed.
+- **Documentation:**
+  - `updater/packaging/README.md` covers the production trust, the implemented menu entry and the ruling 5 release
+    layout.
+  - `audit_external_runtime/MANIFEST.md` has a current-status note: the file is the final `6b5d2941…`, with
+    owner-confirmed redistribution; the rest is historical.
+  - The top-level `README.md` separates the oracle copies from the redistributed final Normalizer.
+- **Not done here (later steps):**
+  - acceptance of production-signed artifacts by the packaged executable, which belongs to the release-build
+    milestone;
+  - the updater rebuild;
+  - owner signing of the inventory and `data-v1.0.0`;
+  - ZIP assembly with the archive manifest;
+  - L-6;
+  - publication.
+
+**Production key establishment: COMPLETE (owner custody confirmed, 2026-10-22).** Production-trust embedding and
+the menu launcher are done (above).
 
 **v1 release assembly: PLAN APPROVED (2026-10-22).** Record: `updater_qualification/design/V1_RELEASE_ASSEMBLY_PLAN.md`.
 - **Decisions:** Astra's adjudication of the plan's Questions 1–7 (decisions D1–D7) is owner-approved.
@@ -25,8 +100,8 @@ production-trust embedding and the thin updater Scripts-menu launcher.
     evidence. Production-signed fixtures are never made.
 - **Before L-6:**
   1. the owner's production key (DONE, below);
-  2. public-key embedding;
-  3. the Scripts-menu updater launcher;
+  2. public-key embedding (DONE, 2026-10-22; see above);
+  3. the Scripts-menu updater launcher (DONE, 2026-10-22; see above);
   4. an updater rebuild;
   5. the production-signed inventory and data package;
   6. unpublished release ZIPs;
@@ -1842,10 +1917,13 @@ owner-accepted.
      optional v1.0.0 ZIP (`e3630efd…`) is preserved for final release assembly; it is not yet published.
   3. **Release identity:** the integrated software identities are final in the inventory spec (31 files; CPM
      `d7a8a374…`, Normalizer `6b5d2941…`; 2026-10-22). The production key is established (`ed25519-5d879134807dff6d`,
-     owner-held; see Current milestone). Still open before L-6: embedding it (production trust), a
-     production-signed inventory, the release candidate, and the L-5 items: the shipping candidate installs no data
-     without trust, a test-trust qualification build or the production key for L-6, and deployment of the inventory
-     and menu entry.
+     owner-held) and embedded as the only production trust; the menu launcher is implemented (see Current
+     milestone). The L-6 trust conflict is resolved by the adjudication addendum (production key plus classified
+     evidence; no test-trust build). Still open before L-6:
+     - the updater rebuild (the exact shipping candidate);
+     - the owner-signed inventory and `data-v1.0.0`;
+     - the release ZIPs with the archive manifest;
+     - deployment of the inventory and menu entry in Group 5 under its restoration plan.
 - **Post-v0.1.0 research proposal (not authorized for implementation):** a CPM Pose Library.
 - **L-6** (release qualification on the exact shipping candidate): NOT STARTED / NOT AUTHORIZED.
 - **Live installation:** see the observation in Current milestone. The authority files are exact G1 again, and the

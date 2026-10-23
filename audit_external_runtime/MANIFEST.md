@@ -1,5 +1,11 @@
 # Audit-Only External Runtime Snapshot Manifest
 
+> **Current status (2026-10-22):** `Rebuild_Control_Groups_Normalizer.py` in this directory is now the final v1
+> Normalizer, `6b5d294116765aa1941e0f98394b4b6e35ad0acd2f80c90aba418b13c9b6130d` (496,210 B). It is the source of the
+> signed software inventory's `normalizer` entry, admitted by the v1 Release Baseline Amendment. The owner confirms
+> the right to redistribute this final implementation in the SFM Character Tools v1 release. The text below is the
+> historical record of the earlier audit-only snapshot and its identities; it does not describe the current file.
+
 This directory holds a **read-only, audit-only snapshot** of a file that lives outside this
 git repository, in the real Source Filmmaker installation. It exists solely so an independent
 auditor reviewing this repository's archive can inspect the actual bytes of the one functional

@@ -1,11 +1,15 @@
 # SFM Character Tools v1 — Release Assembly Plan (for L-6)
 
 **Status:** plan approved, 2026-10-22, with Astra's adjudication of Questions 1–7 (decisions D1–D7)
-owner-approved; where that adjudication differs from a recommendation below, the adjudication governs. Approval
-of the plan authorizes no step: each step in §5 needs its own authorization. Starting checkpoint `4c8d165d…`.
-**Completed:** step 2: the production key, owner-held; key id `ed25519-5d879134807dff6d`; public key
-`7f2b9a53fcad0a7818ef5be52ed9fdc8826ac51e3923db30461ddbc96539dba1`. Normalizer redistribution rights confirmed by
-the owner.
+owner-approved and recorded in `V1_RELEASE_ADJUDICATION_ADDENDUM.md`; where it differs from a recommendation
+below, the addendum governs. Approval of the plan authorizes no step: each step in §5 needs its own authorization.
+Starting checkpoint `4c8d165d…`.
+**Completed:**
+- step 2: the production key, owner-held (key id `ed25519-5d879134807dff6d`, public key
+  `7f2b9a53fcad0a7818ef5be52ed9fdc8826ac51e3923db30461ddbc96539dba1`);
+- steps 3–4: key embedding and the menu launcher (2026-10-22; see the Ledger).
+
+Normalizer redistribution rights are confirmed by the owner.
 **Authority:** R15 and updater R2 Blueprints, Offline Updater v1 Contract Amendment, L Implementation Authorization
 Card (§5–§7), v1 Release Baseline Amendment (§5–§6), CPM Convergence Ledger. Completed milestones are not reopened.
 
@@ -157,6 +161,9 @@ picked from the existing G1→Candidate C difference set by the fixture recipe).
 
 ### 4.1 Minimal amendment (Group 5, supersedes the amendment §5 Group 5 rows only)
 
+Resolved by the addendum (ruling 1 and its Group 5 reconciliation): G1 → Candidate C → G1, NOOP on both
+generations, a named changed control; then the pre-test installation and updater records are restored (ruling 6).
+
 1. Start: live installation = exact G1 data + the v1.0.0 core software and production-signed inventory.
 2. Rebuild My Data on G1 → verified NOOP.
 3. **Get Official Data** from the local, unpublished, production-signed `data-v1.0.0` folder → installs
@@ -176,6 +183,8 @@ sources; CRLF; Use Another TXT edge cases; real SFM detection; locks, legacy loc
 and GUI close by external process control; the C12 messages reachable without seams.
 
 ### 4.2 Evidence rule for cases not runnable on a production-only, seam-free executable
+
+Resolved by the addendum (ruling 2 and its evidence classification).
 
 Reused from L-1–L-5 development evidence (same source, bundle verified by `build.py` pins and
 `bundle_manifest.json`), named in the L-6 report: wrong-repository valid package; downgrade; same sequence with
@@ -224,14 +233,14 @@ shipping candidate either, and adds a second build identity to keep apart (decis
 | 3 | Embed the public key; update `SHA256SUMS.txt` and trust assertions; commit | Claude (authorized) | commit |
 | 4 | Scripts-menu updater launcher + offline tests; commit | Claude (authorized) | commit |
 | 5 | Build the one-folder updater from that commit | Claude | bundle + `bundle_manifest.json` |
-| 6 | Stage + production-sign the inventory | Owner key; Claude runs tooling | `.json`/`.sig` |
-| 7 | Build + production-sign `data-v1.0.0` | Owner key; Claude runs tooling | five files |
+| 6 | Stage + production-sign the inventory | Owner signs (ruling 3); Claude stages and verifies | `.json`/`.sig` |
+| 7 | Build + production-sign `data-v1.0.0` | Owner signs (ruling 3); Claude verifies identities | five files |
 | 8 | Assemble the ZIPs and checksums (unpublished) | Claude | release artifacts |
 | 9 | L-6 Groups 1–4 on the exact candidate in scratch | Claude (authorized) | report |
 | 10 | L-6 Group 5 on the live installation | Owner-operated, Claude-staged (authorized) | report, restoration |
 | 11 | Publish `v1.0.0` and `data-v1.0.0` | Owner (separately authorized) | GitHub releases |
 
-## 6. Owner decisions
+## 6. Owner decisions (resolved: see `V1_RELEASE_ADJUDICATION_ADDENDUM.md`)
 
 - **D1** Key custody: approve the custody procedure (§1) and who runs the signing commands (owner-run, or
   Claude-run with the owner supplying the key path in the session).

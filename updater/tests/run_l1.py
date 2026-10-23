@@ -1805,7 +1805,7 @@ def group_W():
              and steps[2]["stdout"] == "RESULT REFUSED" and steps[3]["recovery_needed"] is False
              and steps[4]["outcome"] in ("OK", "NOTHING_TO_RECOVER") and ok and not txdirs(cfg))
         why = ("product worker, real query CLEAR: status (needs rebuild) -> prepare-rebuild PREPARED -> install REFUSED "
-               "'couldn't verify the installed Character Tools' (the shipping worker trusts no key, so the test-signed "
+               "'couldn't verify the installed Character Tools' (the shipping worker trusts no test key, so the test-signed "
                "inventory cannot verify; L-5 correction) -> nothing changed -> recover nothing to do")
     elif real0[0] == real1[0] == "RUNNING":
         ok, d = final_is(cfg, ("G3", "g1"))
@@ -2217,7 +2217,7 @@ def group_O():
     s = [official_prep(nm, "prep", cfg, P["G3_s5"], trust=False)]
     v = s[0]["outcome"] == "REFUSED" and "isn't signed" in (s[0]["message"] or "") and tree(cfg, include_staging=True) == before
     R.append(finalize_case(nm, cfg, s, "PASS" if v else "FAIL",
-                           "without the test-only trust seam the product trusts no key: a test-signed package is "
+                           "without the test-only trust seam the product trusts no test key: a test-signed package is "
                            "REFUSED as unsigned" if v else "unexpected %s" % outcomes(s)))
     nm = "O13b_official_txt_edited_before_install"
     cfg = make_install(nm, master="G3", gens=("g1",))
@@ -4063,7 +4063,7 @@ def group_P():
              and not bk and backups(cfg2) is None
              and w[4].get("outcome") == "REFUSED" and w[4].get("message") == MESSAGES_["PACKAGE_UNTRUSTED"]
              and tree(cfg3, include_staging=True) == before3 and w[5].get("outcome") in ("NONE_PUBLISHED",))
-        why = ("packaged shipping worker (real query CLEAR; the product trusts no key yet): Update Using SFM's TXT and "
+        why = ("packaged shipping worker (real query CLEAR; the product trusts no test key): Update Using SFM's TXT and "
                "Choose Another TXT File compile and prepare, then refuse installation because the test-signed software "
                "inventory cannot be verified (nothing changed, no backup made); Get Published Version refuses a "
                "test-signed package as unsigned and reads the real release list over TLS -> NONE_PUBLISHED")

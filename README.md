@@ -81,9 +81,12 @@ exact behavior rather than a reimplementation of it. That real source is:
 - `SFM_T130_ORACLE_PATH` — a T130 live-trigger requalification snapshot of
   that same Normalizer.
 
-Neither file is distributed with this repository — they are externally
-owned and maintained outside this project, and this repo does not claim
-any redistribution right over them. Set both environment variables to the
+Neither oracle file is distributed with this repository — they are
+historical copies kept outside this project, and this repo makes no claim
+about them. This is separate from the final v1 Normalizer
+(`audit_external_runtime/Rebuild_Control_Groups_Normalizer.py`,
+`6b5d2941…`), which is included here and redistributed in the SFM Character
+Tools release with the owner's confirmed redistribution rights. Set both environment variables to the
 exact local paths of your own copies to run this harness end-to-end. If
 either is unset or doesn't resolve to a real file, the harness prints a
 single `SKIPPED: ...` line naming both variables and exits successfully

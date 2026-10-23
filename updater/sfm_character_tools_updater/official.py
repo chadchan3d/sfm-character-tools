@@ -8,10 +8,10 @@ A local package is a directory holding exactly the five R2 D1 files:
     sfm_master_0_<sidecar-sha256>.sfmsidecar
 `release.sig` is the raw 64-byte Ed25519 signature of the exact `release.json` bytes.
 
-Trust: only public keys embedded in TRUSTED_KEYS are trusted. The shipping updater embeds no
-key until the owner supplies the production public key (R2 D3); until then every official
-package is refused as untrusted. Test keys are trusted only through the test-only seam
-`hooks.extra_trusted_keys`, never through this table.
+Trust: only public keys embedded in TRUSTED_KEYS are trusted. The shipping updater embeds exactly
+one key, the owner's production public key (R2 D3); the private key stays with the owner. The
+same key signs the installed-software inventory. Test keys are trusted only through the
+test-only seam `hooks.extra_trusted_keys`, never through this table.
 
 Signature verification uses the maintained `cryptography` library (R2 D2); no new protocol.
 """
@@ -37,9 +37,11 @@ AUTHORITY_PROFILE = "sct-authority-profile-1"
 SUPPORTED_PROFILES = {AUTHORITY_PROFILE}
 SIDECAR_CONTRACT = {"format": 0, "semantics": 0}
 
-# Production trust store: key id -> raw Ed25519 public key (hex). Empty until the owner
-# supplies the production public key.
-TRUSTED_KEYS = {}
+# Production trust store: key id -> raw Ed25519 public key (hex). Exactly the owner's production
+# key (owner-approved, 2026-10-22); never a test key.
+TRUSTED_KEYS = {
+    "ed25519-5d879134807dff6d": "7f2b9a53fcad0a7818ef5be52ed9fdc8826ac51e3923db30461ddbc96539dba1",
+}
 
 DESCRIPTOR = "release.json"
 SIGNATURE = "release.sig"

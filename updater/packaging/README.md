@@ -117,7 +117,9 @@ usermod\scripts\sfm\mainmenu\ChadChan3D\sfm_character_tools_inventory.sig
   and projection, the authority package, and the sidecar reader) with role, length and SHA-256. It names the
   profile ID, its exact contract hash and the runtime API/build.
 - **Signature:** `.sig` is Ed25519 over the exact JSON bytes, made with a key trusted by the updater: the same
-  release trust as official data. During L-5 only test keys were used; the shipping trust list is empty.
+  release trust as official data. The shipping trust list holds exactly the owner's production key
+  (`ed25519-5d879134807dff6d`, embedded 2026-10-22). Test keys reach trust only through the test-only seam, never in
+  the bundle. During L-5 only test keys were used. The owner performs all production signing.
 - **Producer:** `release_tools/make_software_inventory.py` builds the inventory from
   `release_tools/character_tools_software_v1.json`. That spec records the accepted release identities (K-qualified,
   with the amendment's Normalizer and the 2026-10-22 CPM reconciliation; see its `qualification` note), and the
@@ -137,16 +139,27 @@ usermod\scripts\sfm\mainmenu\ChadChan3D\sfm_character_tools_inventory.sig
   without a verified installation, and recovery of an already-started transaction is never gated. Modified programs
   are never overwritten or repaired by the updater (owner-approved correction, 2026-10-18).
 
-## 5. Intended deployment and SFM menu integration (for L-6; not deployed)
+## 5. Deployment and SFM menu integration (for L-6; not deployed)
 
-- **Location:** the application folder is placed outside SFM's search paths, for example
-  `usermod\tools\SFM Control Group Updater\` or any user-chosen folder. It is never placed in `usermod\scripts`,
-  where SFM would treat files as scripts.
-- **SFM menu entry:** a small Python 2.7 menu script (for example
-  `usermod\scripts\sfm\mainmenu\ChadChan3D\SFM_Control_Group_Updater.py`) starts the GUI executable as a separate
-  process with `--sfm-folder <this SourceFilmmaker folder>`. The updater then selects the installation it was
-  started from. The script would not wait for, or communicate with, the updater. Installation still requires SFM to
-  be closed: the updater's process gate refuses while SFM runs.
-- **Software release:** the Character Tools software release (L-6) installs the qualified scripts together with the
-  signed inventory. Official data cannot be installed until the production public key is embedded by a separately
-  authorized change.
+- **Location:** the application folder goes to `<SFM game>\usermod\tools\SFM Control Group Updater\`, the folder
+  the menu entry starts it from. It is never placed in `usermod\scripts`, where SFM would treat files as scripts.
+  Started directly, the updater also works from any folder.
+- **SFM menu entry (implemented):** `updater/menu/SFM_Control_Group_Updater.py`, installed as
+  `usermod\scripts\sfm\mainmenu\ChadChan3D\SFM_Control_Group_Updater.py`.
+  - It runs under SFM's Python 2.7.
+  - It resolves the SFM `game` folder from `sys.executable`, then starts
+    `usermod\tools\SFM Control Group Updater\SFM Control Group Updater.exe` with
+    `--sfm-folder <this SourceFilmmaker folder>`. It uses an argument list (no shell), a detached new process group,
+    and the updater folder as working directory.
+  - It returns at once: it never waits for or talks to the updater, and shows no success popup.
+  - When the executable is missing or can't start, one non-modal notice names the expected path and the folder to
+    extract into.
+  - It imports no updater, CPM or authority code and leaves nothing in SFM's shared Scripts-menu namespace.
+  - Installing data still requires SFM to be closed: the updater's process gate refuses while SFM runs.
+  - Offline checks: `updater/tests/test_menu_launcher.py`, under SFM Python 2.7.5.
+- **Software release (adjudication ruling 5):**
+  - the core software ZIP: the 31 inventoried scripts, the signed inventory, and the menu entry, which is outside the
+    inventory but listed in the archive manifest;
+  - a separate updater ZIP: this one-folder application;
+  - the unchanged optional Quick Launch ZIP.
+- **Data:** official data installs only from packages signed with the production key.
