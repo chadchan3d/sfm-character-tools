@@ -12,7 +12,9 @@ Starting checkpoint `4c8d165d…`.
 - step 6, inventory: owner-signed, `sfm_character_tools_inventory.json` `9672e00e…` / `.sig` `dafe6025…`
   (2026-10-23; see the Ledger);
 - step 7: owner-signed `data-v1.0.0`, sequence 1, `release.json` `58752b33…` / `release.sig` `5741eb5f…`, issued
-  2026-10-23T03:43:34Z; accepted (non-installing) by the production updater candidate (2026-10-23; see the Ledger).
+  2026-10-23T03:43:34Z; accepted (non-installing) by the production updater candidate (2026-10-23; see the Ledger);
+- step 8: the unpublished ZIPs: core `7e95519f…`, updater `96067dcc…`, Quick Launch `e3630efd…` (unchanged), and
+  `SHA256SUMS.txt` `9f2760e4…` (2026-10-23; see the Ledger).
 
 Normalizer redistribution rights are confirmed by the owner.
 **Authority:** R15 and updater R2 Blueprints, Offline Updater v1 Contract Amendment, L Implementation Authorization

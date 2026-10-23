@@ -8,6 +8,57 @@ Blueprint, or expands scope, report the conflict before dependent edits.
 Otherwise proceed with the assigned milestone.
 
 ## Current milestone
+**Distribution archives (release-assembly step 8): COMPLETE / PASS (2026-10-23; owner-authorized).** Unpublished
+release artifacts ready for L-6. Starting checkpoint `c18097a2…`.
+- **Release folder (software release `v1.0.0`; read-only; release staging, not published):**
+
+  | Artifact | SHA-256 | Size |
+  |---|---|---|
+  | `SFM Character Tools v1.0.0.zip` | `7e95519fbcbe50bd012e4455741c82362f8d18bb53b03d17be47ebd943c75db0` | 379,568 B |
+  | `SFM Control Group Updater v0.1.0.zip` | `96067dccbb36688c2f3fe90b7670371a5ce24e5e9bdf6ecd4c6a92214dd41508` | 14,045,016 B |
+  | `SFM Character Tools - CPM Quick Launch (optional) v1.0.0.zip` | `e3630efdc77fc2188bbd9a0eb85bf1f8372b7695a5fc90b3a97adf89824e5826` (unchanged QL-3 archive) | 45,735 B |
+  | `SHA256SUMS.txt` (the three ZIPs) | `9f2760e4c2f68df904160ad71a4b40bc5495743ec580cb2cbcca00f3b7a7fd10` | 327 B |
+
+- **Core ZIP:** one root folder, `SFM Character Tools v1.0.0/`. It holds:
+  - `README.txt` (`20d9d511…`): install, the signed inventory, the "do not edit" rule, checking and removal;
+  - `SHA256SUMS.txt`: the archive manifest of all 34 installable files, including the launcher;
+  - `usermod/scripts/…`: the 31 accepted files from the release staging; the signed inventory pair, byte-identical
+    (`9672e00e…` / `dafe6025…`), at `usermod/scripts/sfm/mainmenu/ChadChan3D/`; and the launcher `99f27260…`,
+    outside the inventory.
+
+  Its `usermod` folder mirrors `<SFM game>\usermod` (the user copies it into the `game` folder, following the
+  Quick Launch archive pattern). No Master, sidecar or data manifest is included.
+- **Updater ZIP:** one root folder, `SFM Control Group Updater v0.1.0/`. It holds:
+  - `README.txt` (`bbccfe70…`): the default location `<SFM game>\usermod\tools\SFM Control Group Updater\`,
+    starting from the Scripts menu or the exe, "SFM must be closed to install data", checking and removal;
+  - `bundle_manifest.json` (`836fd242…`);
+  - the unmodified 965-file app folder `SFM Control Group Updater/` (bundle `34aa4d0d…`, GUI `4864ca0d…`, worker
+    `7d8fc4a2…`).
+
+  The production bundle contains no repository, scratch or workstation paths (scanned).
+- **Assembly:** a deterministic assembler (`4c361a35…`, outside the repository; fixed timestamps, deflate level 9).
+  - Every input identity is checked before writing.
+  - The Quick Launch ZIP is copied byte-for-byte; it was not regenerated.
+  - A second independent assembly reproduced all three ZIPs byte-for-byte.
+- **Verification (extraction into isolated scratch; `verify_zips.py` `51bcebd0…`), 18/18 PASS:**
+  - the release folder holds exactly the three ZIPs plus checksums, and they match;
+  - **core:** exactly 36 entries under one root, with safe names; all 31 identities match; the inventory pair is
+    byte-identical; the extracted tree passes `verify_installation` under shipping trust (31 files, 1.0.0,
+    `ed25519-5d879134807dff6d`); the launcher targets
+    `usermod\tools\SFM Control Group Updater\SFM Control Group Updater.exe` with `--sfm-folder` and is outside the
+    inventory; the archive manifest lists the 34 files and matches; no data files;
+  - **updater:** extraction reproduces the accepted 965 files, its manifest and its identity, with both executable
+    hashes; the README states the default location and the SFM-closed rule;
+  - **Quick Launch:** `e3630efd…`, and its README keeps the Autoinit Manager prerequisite;
+  - no private keys, scratch or workstation paths, test fixtures or development tools in any extracted file;
+  - the `data-v1.0.0` five-file package is unchanged (not zipped, re-signed or modified);
+  - the live SFM `usermod\scripts` and `usermod\cfg` were untouched.
+- **Unchanged:** the source, production code, updater bundle, signed inventory, data package and live installation.
+  No signing.
+- **Next (separately authorized):** L-6 on these exact artifacts under the adjudication addendum (Group 5 G1 →
+  Candidate C → G1 with exact restoration), then publication of `v1.0.0` and `data-v1.0.0` (the five package files
+  as individual assets).
+
 **Official data package `data-v1.0.0` (release-assembly step 7): COMPLETE / PASS (2026-10-23; owner-authorized;
 owner-signed).** Starting checkpoint `450cd194…`.
 - **Pre-signing checks:**
@@ -250,7 +301,7 @@ the menu launcher are done (above).
   3. the Scripts-menu updater launcher (DONE, 2026-10-22; see above);
   4. an updater rebuild (DONE, 2026-10-23: bundle `34aa4d0d…`; see above);
   5. the production-signed inventory and data package (DONE, 2026-10-23: `9672e00e…`, `data-v1.0.0` `58752b33…`);
-  6. unpublished release ZIPs;
+  6. unpublished release ZIPs (DONE, 2026-10-23: core `7e95519f…`, updater `96067dcc…`, Quick Launch `e3630efd…`);
   7. the approved L-6 reconciliation and Group 5 restoration plan.
 
 - **Production signing identity (owner-approved, 2026-10-22):**
@@ -2068,7 +2119,7 @@ owner-accepted.
      evidence; no test-trust build). Still open before L-6:
      - the updater rebuild: DONE (bundle `34aa4d0d…`, 2026-10-23);
      - the owner-signed inventory and `data-v1.0.0`: DONE (`9672e00e…`, `58752b33…`; 2026-10-23);
-     - the release ZIPs with the archive manifest;
+     - the release ZIPs with the archive manifest: DONE (2026-10-23);
      - deployment of the inventory and menu entry in Group 5 under its restoration plan.
 - **Post-v0.1.0 research proposal (not authorized for implementation):** a CPM Pose Library.
 - **L-6** (release qualification on the exact shipping candidate): NOT STARTED / NOT AUTHORIZED.
