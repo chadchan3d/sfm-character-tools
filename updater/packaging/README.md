@@ -119,8 +119,9 @@ usermod\scripts\sfm\mainmenu\ChadChan3D\sfm_character_tools_inventory.sig
 - **Signature:** `.sig` is Ed25519 over the exact JSON bytes, made with a key trusted by the updater: the same
   release trust as official data. During L-5 only test keys were used; the shipping trust list is empty.
 - **Producer:** `release_tools/make_software_inventory.py` builds the inventory from
-  `release_tools/character_tools_software_v1.json`. That spec records the K-qualified identities, and the producer
-  refuses any other bytes.
+  `release_tools/character_tools_software_v1.json`. That spec records the accepted release identities (K-qualified,
+  with the amendment's Normalizer and the 2026-10-22 CPM reconciliation; see its `qualification` note), and the
+  producer refuses any other bytes.
 
 ### Enforcement
 

@@ -8,6 +8,39 @@ Blueprint, or expands scope, report the conflict before dependent edits.
 Otherwise proceed with the assigned milestone.
 
 ## Current milestone
+**Final software-inventory reconciliation: COMPLETE / PASS (2026-10-22; owner-authorized; amendment §6 item 3).**
+Authority: Astra's pre-release integration audit (READY WITH CONDITIONS), the v1 Release Baseline Amendment and
+this Ledger.
+- **Change:** `updater/release_tools/character_tools_software_v1.json` (`c143b823…`, 11,107 B) now pins the
+  accepted CPM app `d7a8a37402c4ac6d88012b05b7e1fa3d8ef96351f8545d4b707855167f808000` (793,215 B, source
+  `cpm/app/SFM_Character_Preset_Manager.py`, the 2026-10-22 empty-state correction). Its `qualification` note
+  records that and the bounded real-SFM qualification of the Normalizer. Only the CPM entry and that note changed.
+  The historical K/R15 identity `4e35f292…` (792,022 B) stays in its historical records below.
+- **Final inventory:** 31 files across nine roles: `authority_package` 21, `sidecar_reader` 3, and one each of
+  `cpm_app`, `cpm_launcher` (`996ca483…`), `cpm_adapter`, `cpm_projection`, `authority_provider`,
+  `authority_validator` and `normalizer` (`6b5d2941…`). Profile `sct-authority-profile-1` (contract `2bbd93d0…`).
+  All 31 repository sources match their pinned SHA-256 and length. Quick Launch is not listed.
+- **Unchanged:** the updater and its package (the spec is not bundled), the producer, the verifier, the profile, the
+  shipping trust table (empty), every production application file and the live installation.
+- **Focused changed-inventory checks (scratch staging, per-run test key, test trust passed explicitly), 25/25 PASS:**
+
+  | Check | Result |
+  |---|---|
+  | Spec consistency (count, roles, 31 source pins, CPM, Normalizer, profile, Quick Launch excluded) | PASS |
+  | Producer stages all 31 files and signs a 31-file inventory (test key) | PASS |
+  | Accepted release (CPM `d7a8a374…`) | ACCEPTED |
+  | Historical CPM `4e35f292…` installed | `SOFTWARE_MODIFIED` (CPM named) |
+  | Current CPM altered (one bit, same length; appended bytes) | `SOFTWARE_MODIFIED` |
+  | CPM missing | `SOFTWARE_MODIFIED` (missing) |
+  | No inventory; test-signed inventory under shipping trust; inventory edited to name `4e35f292…` | `SOFTWARE_UNVERIFIED` |
+  | Producer signing an installation with the historical CPM; the superseded spec staging the current source | refused |
+
+  A first run had a harness error: the test layout passed the TXT path where the verifier expects the `cfg`
+  folder, so no inventory was found. It was discarded, the harness corrected, and the fail-closed rows were
+  tightened to require their specific reasons. L-5 evidence is otherwise reused; no general campaign was run.
+- **Remaining:** production trust (the production key and its embedded public key), the L-6 test-trust
+  qualification conflict, deployment of a signed inventory and the menu entry with the software, and L-6 itself.
+
 **CPM Quick Launch (optional component) — QL-2 PASS in real SFM, owner-accepted within the tested scope
 (2026-10-22).** Record: `cpm/quick_launch/README.md`. It is separate from the L-series and the software inventory.
 **QL-3 COMPLETE / PASS (owner-accepted, 2026-10-22): manual optional-ZIP distribution, offline 15/15 and
@@ -62,8 +95,8 @@ owner-operated live smoke check passed.**
 **v1 Release Baseline Amendment — Normalizer integration, corrected Candidate C Master promotion and Phase F
 post-governor simplification: OFFLINE-COMPLETE and REAL-SFM QUALIFIED (bounded; Astra's final adjudication
 accepted, 2026-10-22); repository checkpoint committed.** Amendment §6 items 2 and 5 are done; see "Real-SFM
-qualification of `6b5d2941…` with corrected Candidate C" below. Items 3 (changed inventory and packaging) and 4
-(L-6) remain.
+qualification of `6b5d2941…` with corrected Candidate C" below. Item 3 (changed inventory) is DONE by the final
+software-inventory reconciliation (2026-10-22; see above). Item 4 (L-6) remains.
 The owner approved two changed first-release identities (record:
 `updater_qualification/design/V1_RELEASE_BASELINE_AMENDMENT.md`, `a33d8b3b…`):
 - **Decision A:** the Normalizer.
@@ -260,16 +293,17 @@ adjudication.** Amendment §6 items 2 and 5.
 - **The amendment §6 qualification delta:**
   1. Candidate C structural and compiled-authority validation: DONE (offline, 2026-10-21; see above);
   2. focused K-level coexistence with the corrected Candidate C: DONE (real SFM, 2026-10-22; see above);
-  3. changed-inventory identity, compatibility and packaging checks;
+  3. changed-inventory identity, compatibility and packaging checks: DONE (2026-10-22; final software-inventory
+     reconciliation, see Current milestone; the spec is not part of the updater package, which is unchanged);
   4. L-6 on the exact shipping candidate, with the amendment §5 reconciliation.
 
   Item 5, the bounded live-SFM check of Phase F, is DONE (real SFM, 2026-10-22; see above).
-- **CPM empty-state UX correction: COMPLETE, owner-accepted (2026-10-22). The new application identity is PENDING
-  final software-inventory reconciliation (item 3).**
+- **CPM empty-state UX correction: COMPLETE, owner-accepted (2026-10-22). The new application identity is
+  reconciled into the inventory spec (2026-10-22; see Current milestone).**
   - **Identity:** `cpm/app/SFM_Character_Preset_Manager.py` is
     `d7a8a37402c4ac6d88012b05b7e1fa3d8ef96351f8545d4b707855167f808000` (793,215 B). Previously `4e35f292…`, the K-
-    and L-5-qualified identity, which remains the inventory spec pin and the historical K, R15 and UI-polish record.
-    The spec pin is not updated yet.
+    and L-5-qualified identity, which remains the historical K, R15 and UI-polish record. (Superseded: "remains the
+    inventory spec pin… not updated yet".)
   - **Behavior:** a production-only `prod_model_candidates()` turns ordinary empty states into neutral guidance
     (grey status, no popup):
 
@@ -1762,23 +1796,24 @@ owner-accepted.
      undetermined.
   2. **Launcher button:** CPM Quick Launch QL-1, QL-2 and QL-3 PASS (2026-10-22; see Current milestone). The
      optional v1.0.0 ZIP (`e3630efd…`) is preserved for final release assembly; it is not yet published.
-  3. **Release identity:** finalize the integrated software identities, the signed inventory, production trust and
-     the release candidate before L-6 qualification. This includes resolving the L-5 items: the shipping candidate
-     installs no data without trust, a test-trust qualification build or the production key for L-6, and deployment
-     of the inventory and menu entry.
+  3. **Release identity:** the integrated software identities are final in the inventory spec (31 files; CPM
+     `d7a8a374…`, Normalizer `6b5d2941…`; 2026-10-22). Still open before L-6: production trust and a
+     production-signed inventory, the release candidate, and the L-5 items: the shipping candidate installs no data
+     without trust, a test-trust qualification build or the production key for L-6, and deployment of the inventory
+     and menu entry.
 - **Post-v0.1.0 research proposal (not authorized for implementation):** a CPM Pose Library.
 - **L-6** (release qualification on the exact shipping candidate): NOT STARTED / NOT AUTHORIZED.
 - **Live installation:** see the observation in Current milestone. The authority files are exact G1 again, and the
   updater folder holds one completed owner-run transaction.
-- **Outstanding release dependencies:** the production signing key, the signed compatibility profile and
-  inventory (L-5), `published_at` and the final signed `data-v1.0.0` package (see Current milestone). No official
+- **Outstanding release dependencies:** the production signing key, the production-signed inventory of the
+  reconciled 31-file spec (L-5), `published_at` and the final signed `data-v1.0.0` package (see Current milestone). No official
   data release has been published.
 - **Not authorized by this checkpoint:** the Normalizer investigation, the launcher-button work, production signing,
   L-6 or any later increment; signing, tagging or publishing a release; any native SFM run; WPR/ETW work; or a live
   installation write.
 
 L-1 to L-4 are COMPLETE / PASS (bounded); L-4R is COMPLETE (owner-accepted); L-5 is COMPLETE / PASS (bounded). K is COMPLETE / PASS. U0A is PASS (bounded). U0B is closed for v1 at the P1
-evidence boundary. `4e35f292…`, the
+evidence boundary. CPM `d7a8a374…` (which superseded the installed `4e35f292…` on 2026-10-22), the
 production Normalizer `1f4ec5a2…` and exact G1 authority files remain installed (see the live installation observation).
 
 ## Checkpoints

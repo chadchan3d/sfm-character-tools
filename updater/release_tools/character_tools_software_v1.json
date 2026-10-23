@@ -2,10 +2,10 @@
  "authority_profile": "sct-authority-profile-1",
  "files": [
   {
-   "byte_length": 792022,
+   "byte_length": 793215,
    "path": "scripts/ChadChan3D_CPM/SFM_Character_Preset_Manager.py",
    "role": "cpm_app",
-   "sha256": "4e35f29242351317f2f961c27e19d66fcd3355cff964b081431fc2fff1f5b9d7",
+   "sha256": "d7a8a37402c4ac6d88012b05b7e1fa3d8ef96351f8545d4b707855167f808000",
    "source": "cpm/app/SFM_Character_Preset_Manager.py"
   },
   {
@@ -219,7 +219,7 @@
    "source": "tools/sfm_master_sidecar/reader.py"
   }
  ],
- "qualification": "K COMPLETE / PASS (2026-10-10); exact installed identities re-verified by U0B-P0 (2026-10-12). Normalizer admitted by the v1 Release Baseline Amendment (2026-10-21): 6b5d2941 (Phase F simplification of the real-SFM-qualified 25a5e3cd) offline-verified; bounded live-SFM check and CPM/Normalizer coexistence with Candidate C pending",
+ "qualification": "K COMPLETE / PASS (2026-10-10); exact installed identities re-verified by U0B-P0 (2026-10-12). Normalizer admitted by the v1 Release Baseline Amendment (2026-10-21): 6b5d2941 (Phase F simplification of the real-SFM-qualified 25a5e3cd), real-SFM qualified with corrected Candidate C (bounded; accepted 2026-10-22). CPM app d7a8a374 (accepted empty-state guidance correction, 2026-10-22) supersedes the K/R15 identity 4e35f292 in this inventory; final 31-file reconciliation 2026-10-22",
  "schema": 1,
  "software": "SFM Character Tools"
 }
