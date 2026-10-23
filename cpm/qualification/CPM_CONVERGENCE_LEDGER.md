@@ -8,6 +8,59 @@ Blueprint, or expands scope, report the conflict before dependent edits.
 Otherwise proceed with the assigned milestone.
 
 ## Current milestone
+**Official data package `data-v1.0.0` (release-assembly step 7): COMPLETE / PASS (2026-10-23; owner-authorized;
+owner-signed).** Starting checkpoint `450cd194…`.
+- **Pre-signing checks:**
+  - **Master:** `sfm_defaultanimationgroups.txt` is the corrected Candidate C, `1d855cd3…` (3,973,478 B), locally
+    and on GitHub at `450cd194…` (last changed in `baca3f40…`).
+  - **Validator:** `tools/validate_master.py` PASS with 0 exact duplicates; it matches the producer pin `62d5273e…`.
+  - **Compiler:** the 9 pins match profile `sct-authority-profile-1`.
+  - **Dry compilation:** reproduced sidecar `37916775…` and manifest `6c756806…`.
+- **Signing (owner-operated, ruling 3):** the owner ran the prepared procedure in their own PowerShell window.
+  - It refused unless the Master was `1d855cd3…` and the key was `ed25519-5d879134807dff6d`.
+  - The passphrase went through an in-memory pipe, never a file, to the existing `make_official_package.py build`.
+  - Descriptor: sequence `1`, data version `1.0.0`, tag `data-v1.0.0`, channel `stable`,
+    `chadchan3d/sfm-character-tools`, source commit `450cd194d2a69be33bb5db3aa0003d69dba3904e`, profiles
+    `[sct-authority-profile-1]`, minimum updater contract 1.
+  - `published_at` is `2026-10-23T03:43:34Z`, the actual issuance and signing time (ruling 4).
+  - The procedure was rehearsed beforehand with a throwaway key in a private temporary folder, deleted afterwards.
+- **Signed package (five files exactly; preserved byte-for-byte, read-only, in the release staging):**
+
+  | File | SHA-256 | Size |
+  |---|---|---|
+  | `release.json` | `58752b335d9878a3708eabedcd4c3505adb08db3651619001f5f00c1d08d4e52` | 1,012 B |
+  | `release.sig` | `5741eb5fb8489c81d68c62e21bdf417e983319436b16a2070c1bfd25bf2d6c07` | 64 B |
+  | `sfm_defaultanimationgroups.txt` | `1d855cd34b90a2e6254d97eb4c6ac4b08ccc64d994b8e6a754ddac8466b155ec` | 3,973,478 B |
+  | `manifest.json` | `6c7568063a69de2a22c05f55df066db369f3340e68d0208f9f36a4c017c3c7ae` | 530 B |
+  | `sfm_master_0_3791677522119a6ca45c1092743041dc07014cfa1fd0891526db995bcf526a16.sfmsidecar` | `3791677522119a6ca45c1092743041dc07014cfa1fd0891526db995bcf526a16` | 9,507,530 B |
+
+- **Independent verification (product code, shipping trust only), 9/9 PASS:**
+  - `official.read_package` passes: the production signature verifies, the package is compatible, it holds exactly
+    the five files, and the payload matches the descriptor;
+  - the descriptor equals the owner-reported `58752b33…`, in canonical bytes;
+  - every metadata field is exact;
+  - the Master is byte-identical to the repository's;
+  - `candidate.validate_official_bytes` confirms the sidecar and manifest correspond to the TXT;
+  - the package was unchanged by the verification.
+- **Bounded non-installing acceptance by the exact production updater (6/6 PASS):**
+  - **Setup:** a clean copy of bundle `34aa4d0d…` (worker `7d8fc4a2…`), in a scratch installation holding the G1
+    Master `ac45e5c1…`, the 31 staged files and the production-signed inventory `9672e00e…`.
+  - **`prepare-official`** on the original package: `PREPARED`, a replacement with consent required.
+    - official: sequence 1, `data-v1.0.0`, key `ed25519-5d879134807dff6d`, high-water before 0;
+    - software verified: 31 files, version 1.0.0, inventory `9672e00e…`;
+    - candidate: sidecar `37916775…`, manifest `6c756806…`.
+  - The Master was unchanged, so nothing was installed. `discard-prepared` returned `DISCARDED`.
+  - The package and the production bundle were unchanged.
+  - This is the first acceptance of production-signed artifacts by the shipping candidate. It is not L-6.
+- **Containment:**
+  - no private-key material in the repository, the release staging and its verification folders, or the SFM
+    `usermod\scripts` and `cfg` (the only text match is this Ledger's custody sentence);
+  - no new `.pem` in scratch;
+  - the source, updater candidate, launcher, Quick Launch and live installation are unchanged;
+  - the release staging still holds the core files (`d4f63c7b…`) and the inventory pair unchanged.
+- **Not done:** release ZIP assembly with the archive manifest, L-6 (its own authorization and restoration plan)
+  and publication. The package stays unpublished until L-6 passes.
+
 **Signed software inventory (release-assembly step 6, inventory part): COMPLETE / PASS (2026-10-23;
 owner-authorized; owner-signed).** Starting checkpoint `8784b205…`.
 - **Staging:** a new release-staging folder outside the repository and SFM.
@@ -196,7 +249,7 @@ the menu launcher are done (above).
   2. public-key embedding (DONE, 2026-10-22; see above);
   3. the Scripts-menu updater launcher (DONE, 2026-10-22; see above);
   4. an updater rebuild (DONE, 2026-10-23: bundle `34aa4d0d…`; see above);
-  5. the production-signed inventory (DONE, 2026-10-23: `9672e00e…`) and data package;
+  5. the production-signed inventory and data package (DONE, 2026-10-23: `9672e00e…`, `data-v1.0.0` `58752b33…`);
   6. unpublished release ZIPs;
   7. the approved L-6 reconciliation and Group 5 restoration plan.
 
@@ -2014,7 +2067,7 @@ owner-accepted.
      milestone). The L-6 trust conflict is resolved by the adjudication addendum (production key plus classified
      evidence; no test-trust build). Still open before L-6:
      - the updater rebuild: DONE (bundle `34aa4d0d…`, 2026-10-23);
-     - the owner-signed inventory: DONE (`9672e00e…`, 2026-10-23); the owner-signed `data-v1.0.0`;
+     - the owner-signed inventory and `data-v1.0.0`: DONE (`9672e00e…`, `58752b33…`; 2026-10-23);
      - the release ZIPs with the archive manifest;
      - deployment of the inventory and menu entry in Group 5 under its restoration plan.
 - **Post-v0.1.0 research proposal (not authorized for implementation):** a CPM Pose Library.

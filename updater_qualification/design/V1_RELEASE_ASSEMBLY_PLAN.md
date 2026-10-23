@@ -10,7 +10,9 @@ Starting checkpoint `4c8d165d…`.
 - steps 3–4: key embedding and the menu launcher (2026-10-22; see the Ledger);
 - step 5: the production updater build, v0.1.0, bundle identity `34aa4d0d…` (2026-10-23; see the Ledger);
 - step 6, inventory: owner-signed, `sfm_character_tools_inventory.json` `9672e00e…` / `.sig` `dafe6025…`
-  (2026-10-23; see the Ledger).
+  (2026-10-23; see the Ledger);
+- step 7: owner-signed `data-v1.0.0`, sequence 1, `release.json` `58752b33…` / `release.sig` `5741eb5f…`, issued
+  2026-10-23T03:43:34Z; accepted (non-installing) by the production updater candidate (2026-10-23; see the Ledger).
 
 Normalizer redistribution rights are confirmed by the owner.
 **Authority:** R15 and updater R2 Blueprints, Offline Updater v1 Contract Amendment, L Implementation Authorization
