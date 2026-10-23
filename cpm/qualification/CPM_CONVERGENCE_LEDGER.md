@@ -64,8 +64,8 @@ checkpoint `25860bac…`. Record: `updater_qualification/design/V1_PROFILE2_INTE
     overlay finding and remedy, both mixed-location refusals, and the documented migration.
   - **Harness note:** the first profile-2 run had 7 harness failures (Python 2.7 `ast` decoding, the Normalizer
     block start, the `COMPLETE` outcome name). It was rerun clean in new scratch.
-  - **Quick Launch:** the single failure in both phases is the "CPM app unchanged from HEAD" guard, tripped by this
-    intended change; it is rerun after commit.
+  - **Quick Launch:** before the commit, the single failure in both phases was the "CPM app unchanged from HEAD"
+    guard, tripped by this intended change. **Rerun at `bb956de3…`: run 233/233, static 32/32 PASS.**
   - **CPM canonical route:** the new folder passes. Its one failure is earlier-milestone top-level drift.
 - **Superseded (historical, not failures):**
   - the updater build `34aa4d0d…` (must be rebuilt: `official.py` changed);
