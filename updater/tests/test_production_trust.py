@@ -37,7 +37,7 @@ QUICK_LAUNCH = {"cpm/quick_launch/autoinit/ChadChan3D_CPM_ASE_Button.py":
                 "cpm/quick_launch/cpm_ase_quick_launch.py":
                 "7a01bd5eb828631a6bc0f2df2e5a7f692eae812877e0debe7e0a364199b63f67"}  # profile 2 launcher path
 SPEC = "updater/release_tools/character_tools_software_v1.json"
-SPEC_SHA = "dfe28855edac530d029f75f82191f480c71ff7e2765e46baaae569fc9fd87332"  # profile 2, menu isolation (2026-10-23)
+SPEC_SHA = "769a85772d24339bdc2614c4a9ddfd383c5d8bcce9c3b3399745414d84381da6"  # profile 2, CPM logging correction (2026-10-23)
 # Profile 2 (2026-10-23) changed exactly these updater sources: the supported profile and the inventory location.
 PROFILE2_FILES = ["updater/packaging/build.py", "updater/sfm_character_tools_updater/compat/inventory.py",
                   "updater/sfm_character_tools_updater/compat/profile.py",
@@ -167,7 +167,7 @@ def main():
     spec = json.loads(read(SPEC))
     bad = [f["source"] for f in spec["files"]
            if sha(read(f["source"])) != f["sha256"] or len(read(f["source"])) != f["byte_length"]]
-    check("inventory spec is the profile-2 spec (dfe28855) and all 31 sources match it",
+    check("inventory spec is the profile-2 spec (769a8577) and all 31 sources match it",
           sha(read(SPEC)) == SPEC_SHA and len(spec["files"]) == 31 and not bad, bad)
     check("launcher outside the 31-file inventory",
           not any(f["path"].endswith("SFM_Control_Group_Updater.py") for f in spec["files"]))
