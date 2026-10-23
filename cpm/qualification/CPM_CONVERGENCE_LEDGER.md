@@ -8,6 +8,50 @@ Blueprint, or expands scope, report the conflict before dependent edits.
 Otherwise proceed with the assigned milestone.
 
 ## Current milestone
+**Production key establishment: COMPLETE (owner custody confirmed, 2026-10-22).** Next, separately authorized:
+production-trust embedding and the thin updater Scripts-menu launcher.
+
+**v1 release assembly: PLAN APPROVED (2026-10-22).** Record: `updater_qualification/design/V1_RELEASE_ASSEMBLY_PLAN.md`.
+- **Decisions:** Astra's adjudication of the plan's Questions 1–7 (decisions D1–D7) is owner-approved.
+  - The adjudication text itself was not supplied to this repository. Where it differs from the plan's
+    recommendations, the adjudication governs. Its individual rulings are to be recorded here when supplied.
+- **Normalizer redistribution:** the owner confirms redistribution rights for the final Normalizer `6b5d2941…`,
+  shipped in the v1 core software (amendment Decision A). The top-level `README.md` wording about externally owned
+  Normalizer sources is to be aligned before publication.
+- **Answer:** the exact production-trusted shipping updater can be qualified with the unpublished,
+  production-signed `data-v1.0.0` (Candidate C, sequence 1) package, given:
+  - a minimal Group 5 amendment: the changed generation is G1 → Candidate C (the release itself);
+  - an evidence rule: cases needing extra validly signed objects or test seams keep their L-1 to L-5 development
+    evidence. Production-signed fixtures are never made.
+- **Before L-6:**
+  1. the owner's production key (DONE, below);
+  2. public-key embedding;
+  3. the Scripts-menu updater launcher;
+  4. an updater rebuild;
+  5. the production-signed inventory and data package;
+  6. unpublished release ZIPs;
+  7. the approved L-6 reconciliation and Group 5 restoration plan.
+
+- **Production signing identity (owner-approved, 2026-10-22):**
+  - **Key id:** `ed25519-5d879134807dff6d`.
+  - **Public key:** `7f2b9a53fcad0a7818ef5be52ed9fdc8826ac51e3923db30461ddbc96539dba1`.
+  - **Use:** signs both official data releases and the 31-file software inventory.
+  - **Checks:** the key id is the derivation of the public key, and the public key is a valid Ed25519 encoding.
+  - **Custody (owner-confirmed):**
+    - generated with the existing `make_official_package.py keygen`;
+    - the private key is encrypted (PEM header `BEGIN ENCRYPTED PRIVATE KEY` verified by the owner) and held by
+      the owner outside Git, SFM, qualification scratch and synchronized folders;
+    - an offline USB backup exists, and its SHA-256 matches the original;
+    - the passphrase is kept separately from the key and its backup.
+
+    Neither the key, its location nor the passphrase is recorded anywhere in this project, and neither was
+    requested or accessed.
+  - **Key-material scan:**
+    - no private-key material in the repository or the SFM scripts;
+    - the only key files in scratch are the reconciliation's per-run test keys (`ed25519-69dc25cb…`,
+      `ed25519-336e7415…`), not this key.
+  - Not yet embedded: `official.TRUSTED_KEYS` stays empty until a separate coding assignment.
+
 **Final software-inventory reconciliation: COMPLETE / PASS (2026-10-22; owner-authorized; amendment §6 item 3).**
 Authority: Astra's pre-release integration audit (READY WITH CONDITIONS), the v1 Release Baseline Amendment and
 this Ledger.
@@ -1797,7 +1841,8 @@ owner-accepted.
   2. **Launcher button:** CPM Quick Launch QL-1, QL-2 and QL-3 PASS (2026-10-22; see Current milestone). The
      optional v1.0.0 ZIP (`e3630efd…`) is preserved for final release assembly; it is not yet published.
   3. **Release identity:** the integrated software identities are final in the inventory spec (31 files; CPM
-     `d7a8a374…`, Normalizer `6b5d2941…`; 2026-10-22). Still open before L-6: production trust and a
+     `d7a8a374…`, Normalizer `6b5d2941…`; 2026-10-22). The production key is established (`ed25519-5d879134807dff6d`,
+     owner-held; see Current milestone). Still open before L-6: embedding it (production trust), a
      production-signed inventory, the release candidate, and the L-5 items: the shipping candidate installs no data
      without trust, a test-trust qualification build or the production key for L-6, and deployment of the inventory
      and menu entry.
