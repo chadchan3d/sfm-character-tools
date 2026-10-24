@@ -8,6 +8,99 @@ Blueprint, or expands scope, report the conflict before dependent edits.
 Otherwise proceed with the assigned milestone.
 
 ## Current milestone
+**L-6 release qualification: COMPLETE / PASS (2026-10-24; owner-accepted) on the corrected shipping candidate.**
+- **Qualified identities:**
+
+  | Artifact | Identity |
+  |---|---|
+  | Software ZIP `SFM Character Tools v1.0.0.zip` | `5323b1431a200c0bea3641e7dcb2f9fac45920d889f749ac9bf07972f5a89458` (17,667,566 B, 1,006 files) |
+  | Updater bundle | `7c577f39dc2e2d70fcf97a5f2e1071f0df4792d5c929d0c264dc2dbc284dc9ee` (worker `ff387c71…`, GUI `2c6a0009…`; source `bea24806`) |
+  | Signed software inventory (in the ZIP) | `ad058c15…` / `344b9fb8…`, key `ed25519-5d879134807dff6d`, profile 2 |
+  | Signed data package | existing `data-v1.0.0` sequence 2: `release.json` `8621a735…`, `release.sig` `1613621b…` (payload `1d855cd3…` / `37916775…` / `6c756806…`) |
+
+- **Group results:**
+
+  | Group | Result | Basis |
+  |---|---|---|
+  | 1 Package acceptance | PASS | shipping-executable matrix (run `run3_f1`) plus retained development evidence |
+  | 2 Activation boundaries | PASS | shipping matrix plus the real-SFM detection, 7/7 (see below) |
+  | 3 Preservation and recovery | PASS | after the F-1 correction: matrix 46/46, F-1 regression 22/22 and 4/4, development groups 204/204 |
+  | 4 Failure containment | PASS | W-1 deferred (below) |
+  | 5 Installed product with both tools | PASS | this entry |
+
+  No STOP condition occurred: no false success, data loss, overwritten occupant, mixed authority or unsafe native
+  behavior.
+- **Group 5 (owner-operated, Claude-staged, live installation; script `g5.py` `44d3b739…`, evidence
+  `l6-20261023\group5\`):**
+  - **Pre-test state:**
+    - fresh inventory `pretest_inventory.json` (`e3c00844…`): exact G1 data;
+    - 1,522 script files (the earlier ChadChan3D suite and the optional button `23e3a881…` / `4558d296…`);
+    - 50 cfg files (including `config.cfg`, `server_blacklist.txt`, the updater records with no release record, and two
+      user backups);
+    - 101 CPM preset-library files and 18 Normalizer logs;
+    - no `usermod\tools` and no CPM log folder; the historical CPM log, the fixture session and its autosave.
+    - **Backup:** 1,694 files, each verified by hash.
+  - **Software:**
+    - only the ZIP's `usermod\scripts` (34 files) and `usermod\tools` (965) were installed, not its `cfg`;
+    - the 8 documented legacy items were moved aside from `mainmenu\ChadChan3D`;
+    - 31/31 inventoried files match; Scripts > SFM Character Tools held exactly the three commands, and each opened in
+      SFM; the data stayed G1.
+  - **G1:** Update Using SFM's TXT gave "Already installed; nothing changed." The data was byte-identical.
+  - **Candidate C**, through the local official-package worker path (`prepare-official` + `install
+    --accept-replacement --backup-txt`):
+    - consent was required;
+    - "Official data 1.0.0 is installed. Your previous TXT was kept as a backup.";
+    - exact `1d855cd3…` / `37916775…` / `6c756806…`, consistent, release record sequence 2;
+    - the user backup reused the existing verified copy of the same G1 bytes.
+  - **Candidate C session** (fixture `testscripts_krysandnika.dmx` `fd60b626…`; nothing saved):
+    - **Normalizer All shots:** `PRODUCTION_REBUILD_CONTROL_GROUPS = PASS`, 11 shots, `native_attempts=21`,
+      `completed_targets=21`, `RESTART_REQUIREMENT = NONE`, `protected_handles_released=True`;
+      `AUTHORITY_IDENTITY` manifest `6c756806…`, sidecar `37916775…`, source `1d855cd3…`,
+      `manifest_matches_live_master=True`.
+    - **Changed classification:** shot3, animation set `mia1`, control `rig_hand_L`: `RigArms > LeftArm` as saved in
+      the fixture, then `RigArms > LeftRigArm` after the Normalizer. Owner screenshots. Krystal has no rig arm controls
+      in this fixture (read-only parse, `inspect_fixture.py` `b7bc030b…`), so the owner approved `mia1` as the target.
+    - **CPM** (Krystal `krystal20201`, shot10, body kind, 26 members):
+      - `Save Current Body` verified;
+      - after the owner set `Muscles` to 0 (undo stack "Modify Muscles"), `Apply Body Preset` committed one change
+        (`changed_sides=1`) and was verified;
+      - one SFM Undo returned `Muscles` to 0 (owner-observed);
+      - `Delete Preset` verified;
+      - every operation `PROD_CPM_OPERATION_AUTHORIZED … sha256=1d855cd3…`; no `AUTHORIZATION_REFUSED`.
+  - **Candidate C:** Update Using SFM's TXT gave "Already installed; nothing changed."
+  - **Restore to G1:** Choose Another TXT File with the preserved read-only G1 copy gave "Animation groups updated"
+    (owner screenshot). Exact `ac45e5c1…` / `bcd97641…` / `d810d648…`, consistent. The chosen file was unchanged, and
+    the replaced Candidate C TXT went to Backups.
+  - **G1 session:**
+    - **Normalizer All shots:** PASS, `RESTART_REQUIREMENT = NONE`; `AUTHORITY_IDENTITY` manifest `d810d648…`,
+      sidecar `bcd97641…`, source `ac45e5c1…`, `manifest_matches_live_master=True`.
+    - **Classification:** `rig_hand_L` on `mia1` back under `RigArms > LeftArm` (owner screenshot).
+    - **CPM:** Save, Apply (committed, verified, after "Modify Muscles") and Delete, each authorized against
+      `ac45e5c1…`; the Undo was owner-observed.
+  - **Restoration (ruling 6):**
+    - 81 test-time items were moved to evidence: the new transactions, the release record (so the prior state, with no
+      release record, is back), the new user backup, the preset Trash entries, the added software folders, `tools\`
+      and the new CPM log folder;
+    - 59 pre-test files were restored from the backup: the legacy suite, the original CPM app, CPM library index files
+      and `Normalizer - Last Run.log`.
+    - **Final comparison** (`final_compare.json` `45547393…`): identical to the pre-test inventory. Every hash and
+      size matches, there are no extra files, the directories are identical, and there are 0 modification-time
+      differences.
+    - The live installation is again the exact pre-test installation. The final v1.0.0 installation is a separate
+      owner action.
+- **Disclosed evidence limitations:**
+  1. **Selected Shot(s) runs:** they ran in both sessions, but the Normalizer keeps only the latest clean report
+     (`Normalizer - Last Run.log`). Only the All-shots reports remain as evidence, the same limitation as the accepted
+     2026-10-22 run.
+  2. **The first Candidate C Apply** was a correct no-op (the preset was applied immediately after saving; logged
+     `no-op`). It is not counted; the Apply/Undo check is the second Apply after a deliberate `Muscles` change.
+  3. **The classification check** used `mia1` in shot3, owner-approved, because no Krystal animation set in the fixture
+     contains `rig_hand_L` or any other G1→Candidate C changed control. The CPM checks used Krystal.
+- **Deferred, non-blocking:** W-1. With the TXT held open by another program, an install refusal says "Automatic
+  recovery is unavailable; required files are missing." Nothing is changed, but the stated cause is imprecise.
+- **Publication readiness:** qualified and unpublished. Publishing `v1.0.0` (ZIP `5323b143…`) and `data-v1.0.0`
+  (sequence 2) requires separate owner authorization.
+
 **L-6 Group 2 real-SFM process detection: PASS 7/7 (2026-10-23; owner-operated SFM session).** Corrected candidate
 `5323b143…`, shipping worker `ff387c71…` (updater `7c577f39…`), production trust only, no injection. Script
 `g2_real_sfm.py` (`749ee67e…`); state and fingerprints in `g2_real_sfm\state.json` (`a4c6f2a4…`), scratch
