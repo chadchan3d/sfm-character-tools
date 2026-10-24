@@ -8,6 +8,55 @@ Blueprint, or expands scope, report the conflict before dependent edits.
 Otherwise proceed with the assigned milestone.
 
 ## Current milestone
+**`data-v1.0.0` PUBLISHED and public download QUALIFIED (2026-10-24; owner-authorized; data release only).**
+- **Prerequisite:** with no authentication, the repository API answered HTTP 200 (public) and the Releases API
+  answered HTTP 200 with no releases.
+- **Pre-publication checks:**
+  - the five owner-signed sequence-2 files equal their recorded hashes;
+  - the descriptor names `chadchan3d/sfm-character-tools`, `data-v1.0.0`, sequence 2, the stable channel, key
+    `ed25519-5d879134807dff6d` and source commit `8f135eb9…` (on `master`);
+  - the signature verifies under production trust only.
+  - Nothing was modified, regenerated or re-signed.
+- **Public release:** https://github.com/chadchan3d/sfm-character-tools/releases/tag/data-v1.0.0 (release id
+  422535500).
+  - Tag `data-v1.0.0` points at `8f135eb9c09cb9d77ac0f94124463f5dfb54d8f3`.
+  - It is not a draft or prerelease, and not marked as GitHub's "Latest" (the updater never uses "latest").
+  - **Assets:** exactly the five signed files. GitHub's digests and the files downloaded publicly without
+    authentication are byte-identical to the package:
+
+  | Asset | SHA-256 | Size |
+  |---|---|---|
+  | `release.json` | `8621a7351e4a04612338a927327e96a961842a5959392fe7a8596bdf7df2edaa` | 1,012 B |
+  | `release.sig` | `1613621b78a38fa0a59023643c2b027a1031de1badc95b12d005b38b762e6319` | 64 B |
+  | `manifest.json` | `6c7568063a69de2a22c05f55df066db369f3340e68d0208f9f36a4c017c3c7ae` | 530 B |
+  | `sfm_defaultanimationgroups.txt` | `1d855cd34b90a2e6254d97eb4c6ac4b08ccc64d994b8e6a754ddac8466b155ec` | 3,973,478 B |
+  | `sfm_master_0_3791677522119a6ca45c1092743041dc07014cfa1fd0891526db995bcf526a16.sfmsidecar` | `3791677522119a6ca45c1092743041dc07014cfa1fd0891526db995bcf526a16` | 9,507,530 B |
+
+- **Public-download qualification of Get Published Version:**
+  - **Setup:** the unchanged shipping worker `ff387c71…` (bundle `7c577f39…`, from the qualified ZIP `5323b143…`),
+    real GitHub, production trust only. The scratch installation had G1 data and the ZIP's production-signed
+    software. Script `public_download_check.py`, results in `l6-20261023\public_download_2\`.
+  - **check-official:** AVAILABLE, "Official data 1.0.0 is available.". 1 data release listed; the offer is
+    `data-v1.0.0`, sequence 2, descriptor `8621a735…`, compatible, high-water 0. Nothing was written.
+  - **download-official:** 13,481,538 B into updater staging, then authenticated and PREPARED:
+    - key `ed25519-5d879134807dff6d`;
+    - the software gate passed (profile 2, inventory `ad058c15…`, 31 files, 1.0.0);
+    - consent was required for the replacement;
+    - the download folder was removed after preparation.
+  - **install:** COMPLETE, "Official data 1.0.0 is installed. Your previous TXT was kept as a backup.":
+    - correspondence ok;
+    - exact Candidate C (`1d855cd3…` / `37916775…` / `6c756806…`);
+    - the G1 TXT in recovery storage and in Backups;
+    - release record [2].
+  - **check-official again:** INSTALLED_CURRENT, "Official data 1.0.0 is already installed. Nothing was changed.".
+    Status is consistent.
+  - **Harness note:** the first attempt (`public_download\`) passed a placeholder descriptor hash after reading the
+    wrong result field. The worker correctly refused it ("The official release changed or was removed since it was
+    checked. Nothing was changed."), and nothing was installed. That is a harness error, not a product failure; the
+    corrected run above is the qualification.
+- **Not done:** the `v1.0.0` software ZIP (`5323b143…`) is not published and needs separate authorization. The live
+  SFM installation was not touched.
+
 **L-6 release qualification: COMPLETE / PASS (2026-10-24; owner-accepted) on the corrected shipping candidate.**
 - **Qualified identities:**
 
