@@ -8,6 +8,37 @@ Blueprint, or expands scope, report the conflict before dependent edits.
 Otherwise proceed with the assigned milestone.
 
 ## Current milestone
+**SFM Character Tools `v1.0.0` software release PUBLISHED (2026-10-24; owner-authorized).** Starting checkpoint
+`076a85a6…`.
+- **Pre-checks:**
+  - no `v1.0.0` tag existed on GitHub; the Releases API returned 404 for `v1.0.0`;
+  - the ZIP is `5323b143…`, 17,667,566 B;
+  - `SHA256SUMS.txt` `3fe68027…` and `ZIP_CONTENTS_SHA256.txt` `5311b7b0…` equal the Ledger identities and the
+    committed copies in `release/v1.0.0/`.
+  - Nothing was rebuilt, re-signed or changed. The approved READMEs are unchanged, and `data-v1.0.0` was not altered.
+- **Public release:** https://github.com/chadchan3d/sfm-character-tools/releases/tag/v1.0.0 (release id 422744123).
+  - Tag `v1.0.0` points at `076a85a6e14ba4312ff7213a71150b50c5397a8b`. The product sources are identical to the
+    qualified build commit `bea24806`; only documentation changed after it.
+  - It is stable (not a draft or prerelease) and marked Latest: the public `releases/latest` returns `v1.0.0`.
+  - The release notes cover CPM, the Normalizer, the updater and its three actions, the bundled data and
+    `data-v1.0.0`, installation (including the TXT-replacement warning), the separately installed optional CPM button
+    (requires Autoinit Manager) and the verification files. They make no compatibility claim beyond the README.
+- **Assets (all `uploaded`; GitHub's digests and the files downloaded publicly without authentication are
+  byte-identical to the qualified files):**
+
+  | Asset (as published) | SHA-256 | Size |
+  |---|---|---|
+  | `SFM.Character.Tools.v1.0.0.zip` | `5323b1431a200c0bea3641e7dcb2f9fac45920d889f749ac9bf07972f5a89458` | 17,667,566 B |
+  | `SHA256SUMS.txt` | `3fe680273eb90cd25cbaeaf7df94db761a33e049575c72697096e58d0cae3340` | 97 B |
+  | `ZIP_CONTENTS_SHA256.txt` | `5311b7b0329c53cff703db933a20c65dff53354cf8ef97d42ff67efefe4ed7b4` | 146,723 B |
+
+  - **Asset-name finding (owner decision):** GitHub replaces spaces in asset names, so the ZIP uploaded as
+    `SFM Character Tools v1.0.0.zip` is published as `SFM.Character.Tools.v1.0.0.zip`. The bytes are the qualified
+    identity, but the name differs from the one in `SHA256SUMS.txt` and in the release notes. Verifying by hash works;
+    `sha256sum -c` against the downloaded name would not.
+- **`data-v1.0.0`:** unchanged (stable, five assets, digests as recorded).
+- **Both releases are now public:** `v1.0.0` (software, Latest) and `data-v1.0.0` (sequence 2).
+
 **`data-v1.0.0` PUBLISHED and public download QUALIFIED (2026-10-24; owner-authorized; data release only).**
 - **Prerequisite:** with no authentication, the repository API answered HTTP 200 (public) and the Releases API
   answered HTTP 200 with no releases.
