@@ -8,6 +8,31 @@ Blueprint, or expands scope, report the conflict before dependent edits.
 Otherwise proceed with the assigned milestone.
 
 ## Current milestone
+**v1.0.0 post-publication checksum-file correction: COMPLETE (2026-10-24; owner-approved).** Starting checkpoint
+`2ff801b8…`.
+- **Reason:** GitHub publishes the ZIP as `SFM.Character.Tools.v1.0.0.zip` (spaces in asset names are replaced). The
+  original `SHA256SUMS.txt` named `SFM Character Tools v1.0.0.zip`, so `sha256sum -c` failed on the downloaded name.
+- **External checksum file (the ZIP hash is unchanged, `5323b143…`; same format: hash, two spaces, name, LF):**
+
+  | `SHA256SUMS.txt` | SHA-256 | Size | Names |
+  |---|---|---|---|
+  | Original (superseded; preserved in release staging) | `3fe680273eb90cd25cbaeaf7df94db761a33e049575c72697096e58d0cae3340` | 97 B | `SFM Character Tools v1.0.0.zip` |
+  | Corrected (published, committed `release/v1.0.0/SHA256SUMS.txt`) | `c14d4b43e417e661e1bd8e60929d0588436ae1c7a4becae2b153d90c09f405d2` | 97 B | `SFM.Character.Tools.v1.0.0.zip` |
+
+- **Changed:**
+  - only the release's `SHA256SUMS.txt` asset (replaced);
+  - its committed copy;
+  - the release notes' download line, which now names `SFM.Character.Tools.v1.0.0.zip` (the only filename reference).
+- **Unchanged:**
+  - the ZIP asset (same asset, `5323b143…`);
+  - `ZIP_CONTENTS_SHA256.txt` (same asset, `5311b7b0…`);
+  - the READMEs and the `data-v1.0.0` release (all five assets the same);
+  - Latest is still `v1.0.0`.
+- **Public verification (unauthenticated, fresh download, no renaming):** `sha256sum -c SHA256SUMS.txt` gives
+  `SFM.Character.Tools.v1.0.0.zip: OK`. GitHub's asset digests match.
+- **Note:** the internal evidence ZIP_CONTENTS manifest and the L-6 records keep the assembled name `SFM Character
+  Tools v1.0.0.zip` for the same bytes.
+
 **SFM Character Tools `v1.0.0` software release PUBLISHED (2026-10-24; owner-authorized).** Starting checkpoint
 `076a85a6…`.
 - **Pre-checks:**
