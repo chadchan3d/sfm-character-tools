@@ -8,6 +8,30 @@ Blueprint, or expands scope, report the conflict before dependent edits.
 Otherwise proceed with the assigned milestone.
 
 ## Current milestone
+**L-6 Group 2 real-SFM process detection: PASS 7/7 (2026-10-23; owner-operated SFM session).** Corrected candidate
+`5323b143…`, shipping worker `ff387c71…` (updater `7c577f39…`), production trust only, no injection. Script
+`g2_real_sfm.py` (`749ee67e…`); state and fingerprints in `g2_real_sfm\state.json` (`a4c6f2a4…`), scratch
+`l6-20261023`.
+- **Prepared with SFM closed (scratch only):**
+  - installation A: G1 with Candidate C authority, so a rebuild is needed and all three actions have work;
+  - installation B: an install killed after 1.0 s, so recovery is needed;
+  - fingerprints of A, B and the live installation (31 hashed data, updater-record and backup files, plus size and
+    modification time of 1,572 files under `usermod\scripts`, `cfg` and `tools`).
+- **With SFM open (an ordinary launch by the owner, no project saved; `sfm.exe` detected before and after):**
+  - **preparation:** Rebuild, Use Another TXT and Get Official Data each PREPARED with "SFM appears to be open. Close
+    SFM before installing."; the Master and authority were not written;
+  - **install:** all three REFUSED at the first gate, "Close SFM and try again. Nothing was changed." (reason
+    `SFM process status RUNNING`); no transaction, no backup, no data change;
+  - **recovery:** `resume` and `rollback` both REFUSED; installation B byte-identical and still needing recovery;
+  - **live data:** the Animation Groups data, updater records and backups byte-identical.
+- **After the owner closed SFM:**
+  - the live data, updater records and backups were still byte-identical. Only SFM's own `cfg\config.cfg` and
+    `cfg\server_blacklist.txt` changed (size and modification time); they are written by SFM itself;
+  - **control:** the same recovery returned OK and the status cleared; the rebuild installed COMPLETE, exact G1.
+    The process gate was the only reason for the refusals.
+- **L-6 status on `5323b143…`:** Groups 1–4 PASS (W-1 wording deferred). Group 5 is authorized next: krysandnika
+  with Krystal, changed control `rig_hand_L` (G1 `RigArms > LeftArm`, Candidate C `RigArms > LeftRigArm`).
+
 **L-6 F-1 recovery correction: COMPLETE / PASS (2026-10-23; owner-authorized).** Starting checkpoint `da60241b…`.
 Source commit **`bea24806a143b44992c8994070706cc9ea1ac759`**. No README, CPM, Normalizer, compiler, data or signature
 changed.
