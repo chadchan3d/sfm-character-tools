@@ -37,6 +37,15 @@
 - **Scope:** Presentation only; no change to Normalizer behavior.
 - **Status:** Confirmed (owner-observed). Future UI/presentation improvement; not a v1.0.0 reopening item, and not yet approved for implementation.
 
+### M-05 — CPM Body Preset save blocked by a bone-scale channel configuration (pre-launch priority)
+- **Observed (owner, 2026-10-24):** On Krystal `krystal2020.mdl` in an existing SFM session (shots 13/14), repeated **Save Current Body** operations fail before writing any preset. The production log records `Q3_SCALE_CAPTURE_REJECT bone='bip_head'` and `RuntimeError: Bone bip_head has scale state outside the qualified static contract.` Four observed Save attempts returned `failed-precommit`, with no durable preset written.
+- **Diagnostic distinction:** The bone has a coherent physical scale of approximately 1.13, one key at time 0, `input_mode=3`, `output_mode=3`, `physical_matches_lerp=True`, `generic_lerp_topology=False`, `indexed_static_ok=False`. The current qualified capture predicate requires output mode 1 (among other conditions). This establishes an unsupported scale-channel representation in this scene, **not** that all scaling or preset saves fail or that mode 3 is inherently safe to write.
+- **Authority/installation:** The logged CPM build is the published core SHA `ccbed9d7…`; provider health is `healthy` and official Master hash `1d855cd3…` was acquired. The save was authorized; failure happened at the scale-capture check.
+- **Scope:** Body Preset Save is blocked by a single problematic bone. Expression Save was not tested in this log. Earlier Krystal Body Save/Apply in L-6 passed on a different shot/fixture; this incident does not invalidate that result, but exposes a compatibility gap in ordinary use. Deletion of earlier Krystal presets observed in the same log was intentional and unrelated.
+- **Desired result:** Saving a Body Preset from supported real-world bone-scale states should succeed while still preserving exact scale semantics and safe capture/Apply/Undo. Unsupported states should refuse with clear actionable explanation rather than corrupting data. Avoid silently dropping `bip_head` or bypassing topology checks.
+- **Next decision:** Bounded read-only comparison of the failing scale trace with the qualified Krystal scenario, then Astra/owner adjudication on whether native output mode 3 is a safe, supported static representation and what precise capture/apply invariants must change. Do not assume the remedy is to relax `output.mode == 1`. A targeted fix, compatibility/version/signature implications, and bounded real-SFM qualification require separate authorization.
+- **Priority/status:** **High / pre-promotion launch gate; confirmed owner-observed refusal, mechanism under investigation.** The public v1.0.0 release already exists; do not silently replace or re-sign it as part of this backlog entry. Owner has reopened development planning for resolution before broad launch.
+
 ## Future CPM features — investigation first
 
 ### F-01 — Poses as an additional CPM preset category
