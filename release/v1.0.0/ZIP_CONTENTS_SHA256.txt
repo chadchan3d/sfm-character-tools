@@ -1,4 +1,4 @@
-49957781ee009ba5b1742ad4bf47048816c9074b67fc999836341dd512882eba  OPTIONAL - CPM Button/README.txt
+06af2636d6ad8b53a9031dd00a1b3fa57aae637ebd9f428e30ddc1e9265252b9  OPTIONAL - CPM Button/README.txt
 7a01bd5eb828631a6bc0f2df2e5a7f692eae812877e0debe7e0a364199b63f67  OPTIONAL - CPM Button/usermod/scripts/ChadChan3D_CPM/cpm_ase_quick_launch.py
 23e3a8813057642400b7e06e0b55e13c89f47b684779d907740905a5e28e4070  OPTIONAL - CPM Button/usermod/scripts/sfm/autoinit/ChadChan3D/ChadChan3D_CPM_ASE_Button.py
 deabb6cb92677527b20a58ffccfaf84cd6adbcc54948ff68ca7a4599c36dc9d3  README.txt

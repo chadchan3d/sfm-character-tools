@@ -8,6 +8,40 @@ Blueprint, or expands scope, report the conflict before dependent edits.
 Otherwise proceed with the assigned milestone.
 
 ## Current milestone
+**v1.0.0 optional CPM button README correction: COMPLETE (2026-10-24; owner-approved post-publication update).**
+Starting checkpoint `bd09f88c…`.
+- **Optional README** (`OPTIONAL - CPM Button/README.txt`): replaced with the owner-approved simplified plain-text
+  wording.
+  - `49957781…` (4,956 B) becomes **`06af2636d6ad8b53a9031dd00a1b3fa57aae637ebd9f428e30ddc1e9265252b9`** (2,090 B; ASCII,
+    LF).
+  - The new text drops the fingerprints, the installation preflight check and the separate update procedure.
+- **Reassembled ZIP:** the qualified assembler with only the optional README identity and the output name
+  (`SFM.Character.Tools.v1.0.0.zip`) changed (`assemble_single.py` `4c588db9…`, release staging
+  `release-v1.0.0-readme-20261024`). A second assembly reproduced it byte-for-byte.
+
+  | Release asset | Original published | Corrected (published now) |
+  |---|---|---|
+  | `SFM.Character.Tools.v1.0.0.zip` | `5323b1431a200c0bea3641e7dcb2f9fac45920d889f749ac9bf07972f5a89458` (17,667,566 B) | **`1e128e1fa536f1b24c032299ecc19fd1cb53ba5645cb7ca58819b1e0792817ba`** (17,666,478 B) |
+  | `SHA256SUMS.txt` | `c14d4b43…` (97 B) | **`ca9dc0169902e4d7ebe47cba25bf35059efecef02d020659364a104b03c1fc91`** (97 B) |
+  | `ZIP_CONTENTS_SHA256.txt` | `5311b7b0…` (146,723 B) | **`7b8c4f383685e0922ebe3cc871994d14d064c1b0c2aa9c12556bfb209ea0fb03`** (146,723 B) |
+
+- **Focused verification (`verify_readme_correction.py`): 10/10 PASS.**
+  - The same 1,006 entry names, in the same order.
+  - Only the optional README differs. The other 1,005 entries are identical in uncompressed bytes, metadata (CRC,
+    time, method, attributes, sizes) and stored compressed bytes. This includes the main README `deabb6cb…`, the 31
+    inventoried files, the signed inventory pair, the bundled data, the updater bundle `7c577f39…` and the button files.
+  - The contents manifest differs only in the optional README line and matches the extracted bytes.
+  - Signed software inventory verification succeeds under shipping trust (31 files, 1.0.0, production key).
+- **Publication:** the three `v1.0.0` assets were replaced. The release notes' ZIP SHA-256 line was updated to
+  `1e128e1f…`; nothing else in the notes changed. The tag, `data-v1.0.0` (all five assets unchanged) and Latest
+  (`v1.0.0`) are unchanged.
+  - **Public verification** (unauthenticated, fresh download): all three assets HTTP 200 and byte-identical to the
+    corrected files. `sha256sum -c SHA256SUMS.txt` gives `SFM.Character.Tools.v1.0.0.zip: OK` without renaming.
+    The downloaded ZIP's optional README is `06af2636…`.
+- **Preserved:** the original published artifacts (ZIP `5323b143…` with its evidence in `release-v1.0.0-p2-f1-20261023`,
+  and the checksum file `c14d4b43…`) are unchanged in release staging. No executable, source, signature, signed
+  data, main README or tag changed. L-6 was not rerun; the change is documentation only.
+
 **v1.0.0 post-publication checksum-file correction: COMPLETE (2026-10-24; owner-approved).** Starting checkpoint
 `2ff801b8…`.
 - **Reason:** GitHub publishes the ZIP as `SFM.Character.Tools.v1.0.0.zip` (spaces in asset names are replaced). The
