@@ -26,6 +26,13 @@ def barrier(name):
     hooks.barrier(name)
 
 
+def original_intact(obs, states):
+    """E_0 holds for every slot except the transaction's own candidate files. Before PROTECTED no active
+    file can have moved, but the candidates may be absent or incomplete (interrupted while being written);
+    they are never installed from an unprotected transaction, so only the original state is verified."""
+    return match_state(obs, [{s: w for s, w in states[0].items() if s[0] != "candidate"}]) == [0]
+
+
 def recover(layout, policy):
     if policy not in ("resume", "rollback"):
         raise Stop("REFUSED", "NOTHING", reason="unknown recovery policy", policy=policy)
@@ -80,7 +87,7 @@ def recover_one(layout, txid, policy):
             moves = make_plan(intent)
             states = expected_states(intent, moves)
             obs = observe_slots(layout, txid, sorted(states[0].keys()))
-            if match_state(obs, states) != [0]:
+            if not original_intact(obs, states):
                 raise Stop("CONFLICT", "FOLDER_CHANGED", reason="journal missing and state not original")
             journal = jr.Journal(jpath, create=True)
             journal.append({"t": "INTENT", "schema": SCHEMA, "txid": txid, "by": "recovery"})
@@ -101,19 +108,25 @@ def recover_one(layout, txid, policy):
         names = set(auth_inventory(layout))
         extra = sorted(names - allowed_auth_names(intent))
         last = types[-1] if types else None
+        protected = "PROTECTED" in types
         if last in TERMINAL:
             # Terminal: verify only, never mutate (journal text is not trusted alone).
             want_k = {"COMPLETE": len(moves), "ROLLED_BACK": 0}.get(last)
-            if last == "ABANDONED" and "PROTECTED" not in types:
-                want_k = 0
             r["terminal"] = last
-            r["verified"] = (want_k is not None and want_k in hits and not extra)
+            if last == "ABANDONED" and not protected:
+                r["verified"] = original_intact(obs, states) and not extra
+            else:
+                r["verified"] = (want_k is not None and want_k in hits and not extra)
             r.update(outcome="TERMINAL", message="Transaction already %s; verified=%s; no files changed."
                      % (last, r["verified"]))
             return r
         if extra:
             journal.append({"t": "CONFLICT", "reason": "unfamiliar authority content", "names": extra})
             raise Stop("CONFLICT", "FOLDER_CHANGED", reason="unfamiliar authority content", names=extra)
+        if not protected and not hits and original_intact(obs, states):
+            journal.append({"t": "ABANDONED", "reason": "recovered before protection; candidate files incomplete"})
+            r.update(outcome="ABANDONED", message=MESSAGES["NOTHING"])
+            return r
         if len(hits) != 1:
             div = describe_divergence(obs, states)
             key = "FOLDER_CHANGED"
@@ -128,7 +141,6 @@ def recover_one(layout, txid, policy):
                        divergence=div)
         k = hits[0]
         # Journal/disk consistency: the disk may be at most one move ahead of the last DONE.
-        protected = "PROTECTED" in types
         if not protected:
             if k != 0:
                 journal.append({"t": "CONFLICT", "reason": "files moved without protection record"})

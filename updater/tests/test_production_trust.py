@@ -43,6 +43,10 @@ PROFILE2_FILES = ["updater/packaging/build.py", "updater/sfm_character_tools_upd
                   "updater/sfm_character_tools_updater/compat/profile.py",
                   "updater/sfm_character_tools_updater/official.py",
                   "updater/sfm_character_tools_updater/runtime_check.py"]
+# L-6 F-1 recovery correction (2026-10-23): an interruption before protection while the candidate files were being
+# written is abandoned once the original state is verified. Only recovery.py changed.
+F1_RECOVERY = {"updater/sfm_character_tools_updater/recovery.py":
+               "c60565de27e7e47a9c6c1e5d5f6132dd24aad81e750701eaf27c06ff57170386"}
 RESULTS = []
 
 
@@ -150,17 +154,21 @@ def main():
     changed = subprocess.run(["git", "-C", REPO, "diff", "--name-only", BASE, "--", "updater/sfm_character_tools_updater",
                               "updater/packaging", "updater/release_tools"], capture_output=True, text=True).stdout.split()
     changed = [c for c in changed if not c.endswith(".md")]  # documentation is not behavior
-    check("no other updater product, packaging or release-tool code changed (only the profile-2 set)",
-          sorted(c for c in changed if not c.endswith(".json")) == PROFILE2_FILES, changed)
+    check("no other updater product, packaging or release-tool code changed (only the profile-2 set and the F-1 "
+          "recovery correction)",
+          sorted(c for c in changed if not c.endswith(".json")) == sorted(PROFILE2_FILES + list(F1_RECOVERY)), changed)
+    check("recovery.py is the F-1 correction identity (c60565de)",
+          all(sha(read(p)) == h for p, h in F1_RECOVERY.items()))
     for frozen in ("tools/sfm_master_sidecar", "tests/sidecar/qualification/candidate_b2c_correction2",
                    "sfm_defaultanimationgroups.txt", "cpm/quick_launch/autoinit",
-                   "updater/sfm_character_tools_updater/backend.py", "updater/sfm_character_tools_updater/recovery.py",
+                   "updater/sfm_character_tools_updater/backend.py",
                    "updater/sfm_character_tools_updater/journal.py", "updater/sfm_character_tools_updater/candidate.py"):
         diff = subprocess.run(["git", "-C", REPO, "diff", "--name-only", BASE, "--", frozen],
                               capture_output=True, text=True).stdout.split()
         if diff:
             check("unchanged since base: %s" % frozen, False, diff)
-    check("compiler, validator/provider, Master, Quick Launch bootstrap and activation/recovery code unchanged since base",
+    check("compiler, validator/provider, Master, Quick Launch bootstrap and activation code (backend, journal, candidate) "
+          "unchanged since base",
           True)
 
     # 6-7. Accepted software identities.
