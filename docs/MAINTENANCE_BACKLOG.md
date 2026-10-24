@@ -30,6 +30,13 @@
 - **Compatibility caution:** SFM discovers menu scripts by files under `scripts/sfm/mainmenu`; internal filenames/paths, authority locators, signed software inventory and updater compatibility checks may depend on current names. Investigate before deciding whether to rename script files or merely presentation strings. Do not casually rename internal identities.
 - **Status:** Owner-requested, implementation/design not yet approved.
 
+### M-04 — Normalizer dialog cleanup
+- **Observed:** The Rebuild Control Groups dialog shows its title twice (in the window title bar and again as an internal heading), and the title bar's “?” button does nothing.
+- **Expected improvement:** Remove the duplicate internal heading and the inactive “?” button.
+- **Repro:** Open **Scripts > SFM Character Tools > Rebuild Control Groups Normalizer**.
+- **Scope:** Presentation only; no change to Normalizer behavior.
+- **Status:** Confirmed (owner-observed). Future UI/presentation improvement; not a v1.0.0 reopening item, and not yet approved for implementation.
+
 ## Future CPM features — investigation first
 
 ### F-01 — Poses as an additional CPM preset category
