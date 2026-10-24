@@ -39,7 +39,7 @@ a484eee1a3820f8afc40c5897c17585aab1187de5d46f36cfc2b1fe3ae658ff4  usermod/script
 99f27260bb5889560872ea5d7837296f7902169d0fba1a217c9fc189af0ca6a9  usermod/scripts/sfm/mainmenu/SFM Character Tools/SFM_Control_Group_Updater.py
 ad058c15b4b9838d0827a11d0b34e15ef447b3f8f3ef7579b0e0860afafd65dd  usermod/scripts/sfm/mainmenu/SFM Character Tools/sfm_character_tools_inventory.json
 344b9fb82df2ebf724cad359647ce911fb2159b8690dafdb672783e71654a5ce  usermod/scripts/sfm/mainmenu/SFM Character Tools/sfm_character_tools_inventory.sig
-f8750e09a95a1d49ab0d9f6ee9a8d91c00edcfdeed4d9642089d731ab76bd5fe  usermod/tools/SFM Control Group Updater/SFM Control Group Updater.exe
+2c6a0009ead50c7bbbd79584e44987366fd29e250e2c35ac69bb254cf26e4d31  usermod/tools/SFM Control Group Updater/SFM Control Group Updater.exe
 d66c3b47091ceb3f8d3cc165a43d285ae919211a0c0fcb74491ee574d8d464f8  usermod/tools/SFM Control Group Updater/_internal/VCRUNTIME140.dll
 f178e29921c04fb68cc08b1e5d1181e5df8ce1de38a968778e27990f4a69973c  usermod/tools/SFM Control Group Updater/_internal/_bz2.pyd
 e029cabce12aea3d77f2c8709a0f4be695f3fedd1144c14607b4fcc3b9e9bc3a  usermod/tools/SFM Control Group Updater/_internal/_cffi_backend.cp310-win_amd64.pyd
@@ -968,7 +968,7 @@ b463b366f139ddf7fed31f34c6d2341f9f27845a1a358011dfc801e1333b1828  usermod/tools/
 1ed57e32ce9c419bce36b483a91410ddf4c997caf62d20e42048fc350f8c3f60  usermod/tools/SFM Control Group Updater/_internal/_tk_data/xmfbox.tcl
 6c0f81a098529d6965602fa2984eb38de7ef633cb00daf05d583a2f7d38c2cb1  usermod/tools/SFM Control Group Updater/_internal/_tkinter.pyd
 51dd1ea5e8cacf7ec4cadefdf685334c7725ff85978390d0b3d67fc8c54fe1db  usermod/tools/SFM Control Group Updater/_internal/_uuid.pyd
-3d406f3d0eb8e1a0af79f2f330150f1d547bf1bd0b901668b65fbb5bbb8c6a8e  usermod/tools/SFM Control Group Updater/_internal/base_library.zip
+7b7ec85ea79bae26fe5337276d8844d033175641b77e15343b1d26afc71a43bd  usermod/tools/SFM Control Group Updater/_internal/base_library.zip
 ceebae7b8927a3227e5303cf5e0f1f7b34bb542ad7250ac03fbcde36ec2f1508  usermod/tools/SFM Control Group Updater/_internal/cryptography-50.0.2.dist-info/INSTALLER
 047cfc71226409de4318b360aef15c63a2adf609731e3dcf7fe932f14ea042ee  usermod/tools/SFM Control Group Updater/_internal/cryptography-50.0.2.dist-info/METADATA
 f34f37f5ec1847ccb0cc71c68abe4cbcb030a04366158ce8b24f281d8a64df6d  usermod/tools/SFM Control Group Updater/_internal/cryptography-50.0.2.dist-info/RECORD
@@ -1003,4 +1003,4 @@ f6931f88ae2a4e63d77eec83e58f5944d66c7ef5f335a51064e8023e0c842971  usermod/tools/
 fbfd065f861ec0a90dd513bc209c56bbc23c54d2839964a0ec2df95848af7860  usermod/tools/SFM Control Group Updater/_internal/tcl86t.dll
 cd2f60075064dfc2e65c88b239a970cb4bd07cb3eec7cc26fb1bf978d4356b08  usermod/tools/SFM Control Group Updater/_internal/tk86t.dll
 2cf6c5dea30bb0584991b2065c052c22d258b6e15384447dcea193fdcac5f758  usermod/tools/SFM Control Group Updater/_internal/unicodedata.pyd
-fc571e72725a15a4945a6f325ba1b6096051308bbe815834c4cfd676b91b81f7  usermod/tools/SFM Control Group Updater/sct-updater-worker.exe
+ff387c712395a7be3971c5929181903bed4e7360ebac7bec2860fc388fd5d699  usermod/tools/SFM Control Group Updater/sct-updater-worker.exe

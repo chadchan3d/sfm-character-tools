@@ -8,6 +8,97 @@ Blueprint, or expands scope, report the conflict before dependent edits.
 Otherwise proceed with the assigned milestone.
 
 ## Current milestone
+**L-6 F-1 recovery correction: COMPLETE / PASS (2026-10-23; owner-authorized).** Starting checkpoint `da60241b…`.
+Source commit **`bea24806a143b44992c8994070706cc9ea1ac759`**. No README, CPM, Normalizer, compiler, data or signature
+changed.
+- **L-6 Groups 1–4 on the first candidate (`7edf9f3b…`, worker `fc571e72…`):**
+  - Groups 1, 2 and 4 passed apart from F-1.
+  - The real-SFM detection case of Group 2 is on HOLD: it needs an owner-opened SFM session.
+  - **F-1 (FAIL):** 4 of 30 external worker kills, landing while the transaction's candidate files were being
+    written, left a `CONFLICT` that neither `recover` policy could resolve. The updater stayed blocked ("An
+    interrupted update needs recovery"). The data was exactly the previous generation, with no false success.
+  - **W-1 (wording, outside this correction):** with the Master held open, an install refusal says "required files
+    are missing".
+  - Report: `L6_GROUPS_1-4_REPORT_AND_GROUP5_PLAN.md` (`2e34318b…`, scratch `l6-20261023`).
+- **Root cause (confirmed on the four preserved failures):**
+  - `install` journals `INTENT`, then writes the candidates; `PROTECTED` is written only after every candidate
+    is written and validated.
+  - The recovery state model's E_0 (`expected_states`) includes the candidate slots at their final hashes. A
+    transaction stopped while candidates were being written matched no state, so recovery raised `CONFLICT`/`MISSING`
+    before reaching its existing "recovered before protection → ABANDONED" branch.
+  - All four preserved transactions had journal `INTENT` and an incomplete candidate set: manifest missing; sidecar
+    and manifest missing; master missing (rebuild has none) with the manifest missing; sidecar and manifest missing.
+  - The journal-missing branch and the terminal verification of an unprotected `ABANDONED` transaction had the same
+    gap.
+- **Correction (`recovery.py` only, `cc2bebca…` → `c60565de…`; +17/−5):**
+  - A new `original_intact()` checks E_0 on every slot except the transaction's own candidates.
+  - An unprotected transaction that matches no state is abandoned only when the original state is intact. The
+    journal records "recovered before protection; candidate files incomplete", and the incomplete candidates are never
+    installed.
+  - The same check is used when the journal is missing and when verifying an unprotected `ABANDONED` transaction.
+  - **Unchanged:**
+    - unfamiliar, altered, missing and unreadable active state still give `CONFLICT`;
+    - "files moved without protection record" is still `CONFLICT`;
+    - protected installation, moves, journal, rollback and `backend.py` are unchanged.
+  - `test_production_trust.py` pins the corrected `recovery.py` and removes it from the frozen set; it is 19/19.
+    `updater/SHA256SUMS.txt` is updated.
+- **Verification:**
+  - **Deterministic F-1 regression (development source, production trust): 22/22 PASS**
+    (`f1_regression.py` `955017d6…`).
+    - **A:** the four preserved failures each resolve to `ABANDONED`. The active state is byte-identical, a second
+      recovery is verified terminal, status no longer needs recovery, and a normal install completes.
+    - **B:** rebuild, import and official, each stopped at the test-only `candidates_written` barrier, with
+      candidates none / first truncated / last missing / complete. Same result in all 12.
+    - **C:** an edited Master, an unfamiliar authority file, a missing active sidecar, an unreadable Master and a file
+      moved without protection all refuse with `CONFLICT`, changing nothing. A missing journal abandons only after the
+      original state is verified.
+  - **Development regression of the recovery-dependent groups (run_l1, corrected source): 204/204 PASS:**
+    B 66, C 5, D 10, E 12, F 5, J 10, M 11, N 10, O 36, X 14 and U 25. The other accepted groups don't exercise
+    recovery and are retained.
+- **Rebuilt production updater** (unchanged L-5 recipe, from `bea24806`; `release-updater-build-f1-20261023`):
+
+  | Item | Identity |
+  |---|---|
+  | Files | 965 |
+  | Bundle identity | `7c577f39dc2e2d70fcf97a5f2e1071f0df4792d5c929d0c264dc2dbc284dc9ee` |
+  | `bundle_manifest.json` | `5b0576672e2cf5749550c91caaed7fb2d1026ca7c939ea85760201cb7c7476c8` |
+  | GUI `SFM Control Group Updater.exe` | `2c6a0009ead50c7bbbd79584e44987366fd29e250e2c35ac69bb254cf26e4d31` |
+  | Worker `sct-updater-worker.exe` | `ff387c712395a7be3971c5929181903bed4e7360ebac7bec2860fc388fd5d699` |
+
+  - **Build verification (the accepted step-5 verifier, re-pointed): 24/25.**
+    - The one row that differs: besides the two executables, `_internal/base_library.zip` differs from `cbf11e80`.
+      The full code-object comparison resolves it: 151 entries with the same names; only `_collections_abc.pyc`
+      differs in bytes, with an identical code object (the documented L-5 marshal-serialization property).
+    - The deep comparison is 3/3: the worker differs from `cbf11e80` only in `recovery`, which equals the committed
+      source. The GUI has no code change.
+    - Trust is exactly the production key, test options are refused, the runtime closure is clean, and the
+      profile-2 refusals are unchanged.
+- **Reassembled release ZIP (unpublished, read-only, `release-v1.0.0-p2-f1-20261023\software-v1.0.0\`; supersedes
+  `7edf9f3b…`):**
+
+  | Artifact | SHA-256 | Size |
+  |---|---|---|
+  | **`SFM Character Tools v1.0.0.zip`** (1,006 files) | `5323b1431a200c0bea3641e7dcb2f9fac45920d889f749ac9bf07972f5a89458` | 17,667,566 B |
+  | `ZIP_CONTENTS_SHA256.txt` | `5311b7b0329c53cff703db933a20c65dff53354cf8ef97d42ff67efefe4ed7b4` | 146,723 B |
+  | `SHA256SUMS.txt` | `3fe680273eb90cd25cbaeaf7df94db761a33e049575c72697096e58d0cae3340` | 97 B |
+
+  - The same assembler with only the updater inputs changed (`81a222ba…`). A second assembly reproduced it
+    byte-for-byte. The verifier is 24/24.
+  - Compared with `7edf9f3b…`: the same 1,006 paths. Only the GUI, the worker and `base_library.zip` differ.
+  - **Unchanged:** the README `deabb6cb…`, the optional README `49957781…`, the 31 inventoried files, the signed
+    inventory `ad058c15…` / `344b9fb8…`, the data payload (`1d855cd3…` / `37916775…` / `6c756806…`) and the button
+    files. `data-v1.0.0` sequence 2 (`8621a735…` / `1613621b…`) is unchanged.
+  - The evidence files in `release/v1.0.0/` are updated.
+- **L-6 requalification on the corrected shipping executable (`ff387c71…`, production trust only):**
+  - **The Groups 1–4 driver matrix (`l6_groups_f1.py`, run `run3_f1`): 46/46.** This counts two Group 2 rows
+    re-adjudicated by status against the accepted F1/I2 `ABANDONED` expectation, as in run 2.
+    - All 15 externally timed install kills recover with no false success and no data loss.
+    - Two of them (rebuild at 0.35 s, official at 0.15 s) landed in the F-1 window and resolved through the new path.
+  - **The F-1 primary regression on the shipping worker: 4/4 PASS.**
+  - **Status:** Groups 1, 3 and 4 PASS. Group 2 HOLD (only the real-SFM detection case). Group 5 is planned, not
+    executed (it now uses this candidate).
+- **Next (separate authorization):** the Group 2 real-SFM case and Group 5 on `5323b143…`; then publication.
+
 **Final SFM Character Tools v1.0.0 single ZIP (profile 2, corrected CPM, bundled data): ASSEMBLED / VERIFIED, unpublished
 (2026-10-23; owner-authorized).** Starting checkpoint `586f0a52…`. No product code, signing, live SFM, L-6 or
 publication.
