@@ -89,7 +89,8 @@ def _install(game, executable):
                   "and refuse if SFM is running or its state cannot be read.",
                   MB_OKCANCEL | MB_ICONQUESTION) != IDOK:
             return
-        dialog(core.install(game, prepared, replace_authority=replace), MB_ICONINFORMATION)
+        dialog(core.install(game, prepared, replace_authority=replace,
+                            expected_authority=summary["authority_snapshot"]), MB_ICONINFORMATION)
     finally:
         prepared.close()
 

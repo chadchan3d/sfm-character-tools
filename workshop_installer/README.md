@@ -1,6 +1,6 @@
 # SFM Character Tools Workshop installer
 
-This is the fixed v1.0.0 offline installer for issue #2. The existing release ZIP is the source of the application files. The installer checks its SHA-256, extracts and verifies the signed software inventory, and installs the Normalizer, CPM, Updater, and optional CPM toolbar button together. It does not modify Autoinit Manager. A subscriber needs Autoinit Manager installed first.
+This is the fixed v1.0.0 offline installer for issue #2. The existing release ZIP is the source of the application files. The installer checks the approved ZIP SHA-256, the 31 inventory file hashes and sizes, and the presence of its signature file. It does not independently verify the inventory's cryptographic signature. It installs the Normalizer, CPM, Updater, and CPM toolbar button together. It does not modify Autoinit Manager. A subscriber needs Autoinit Manager installed first.
 
 ## Build and stage
 
@@ -16,7 +16,7 @@ Publishing remains a separate owner action. Follow the proved Gate 0 Scripts-cat
 
 ## User flow
 
-Subscribe to the Workshop item and install Autoinit Manager. In SFM, select **Scripts → SFM Character Tools → Install SFM Character Tools**. The launcher checks the two payload hashes and starts the Windows setup window. Review the destination and any existing Animation Groups replacement. Save the project, close SFM normally, then click **Install after SFM closes**. Setup refuses a running or uncheckable SFM process and a busy Updater lock. It snapshots the entire ZIP and setup program before SFM closes, so Workshop unsubscription cannot change the bytes being installed.
+Subscribe to the Workshop item and install Autoinit Manager. In SFM, select **Scripts → SFM Character Tools → Install SFM Character Tools**. The launcher checks the two payload hashes and starts the Windows setup dialogs. Review the destination and any existing Animation Groups replacement. Save the project, close SFM normally, then confirm the final installation prompt. Setup refuses a running or uncheckable SFM process and a busy Updater lock. It snapshots the entire ZIP and setup program before SFM closes, so Workshop unsubscription cannot change the bytes being installed. If Animation Groups data changes after the replacement prompt, setup refuses and requires a fresh review.
 
 Existing changed application files or partial CPM button installations cause a refusal. Existing customized Animation Groups data can be replaced only after explicit consent. The former bytes are verified and backed up before mutation. The installer publishes a durable transaction record before writes, verifies every installed file, and can restore an interrupted installation. The v1.0.0 ZIP is never modified.
 

@@ -84,10 +84,12 @@ def _plain(path):
     """Reject Windows reparse points in existing target ancestors and files."""
     path = Path(path)
     for p in (path, *path.parents):
-        if p.exists() or p.is_symlink():
+        try:
             st = p.lstat()
-            if stat.S_ISLNK(st.st_mode) or getattr(st, "st_file_attributes", 0) & 0x400:
-                raise Refusal("A target path contains a link or reparse point")
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(st.st_mode) or getattr(st, "st_file_attributes", 0) & 0x400:
+            raise Refusal("A target path contains a link or reparse point")
 
 
 def _target(game, rel):
@@ -288,8 +290,20 @@ def prepare(release_zip, helper_exe):
         raise
 
 
+def _state_path(game, *parts):
+    """Validate every installer-state component, including journal and backup paths."""
+    return _target(game, "/".join((STATE_REL,) + parts))
+
+
 def _state_root(game):
-    return game / "usermod" / Path(*STATE_REL.split("/"))
+    return _state_path(game)
+
+
+def _backup_path(game, txid, index):
+    # The original destination names can be long (notably sidecar generations).
+    # Their immutable position in the recorded entry list gives backups short,
+    # unambiguous names within this transaction.
+    return _state_path(game, "transactions", txid, "backups", "%04d.bak" % index)
 
 
 def _authority_paths(prepared):
@@ -337,7 +351,10 @@ def preview(game, prepared):
     entries, authority_changed = _classify(game, prepared, True)
     return {"game": str(game), "file_count": len(entries),
             "write_count": sum(not e["adopted"] for e in entries),
-            "authority_replacement_needs_consent": authority_changed}
+            "authority_replacement_needs_consent": authority_changed,
+            "authority_snapshot": {e["path"]: e["old"] for e in entries
+                                   if e["path"] in _authority_paths(prepared) or
+                                      AUTH_RE.match(e["path"])}}
 
 
 def _process_clear():
@@ -348,11 +365,15 @@ def _process_clear():
 
 def _updater_records_clear(game):
     layout = Layout(str(game / "usermod" / "cfg"))
+    _plain(Path(layout.txroot))
     if not Path(layout.txroot).exists():
         return
     for entry in sorted(os.listdir(layout.txroot)):
         if not TXID_RE.match(entry):
             raise Refusal("Unrecognized updater transaction; run updater recovery first")
+        txdir = Path(layout.txroot) / entry
+        for path in (txdir, txdir / "intent.json", txdir / "journal"):
+            _plain(path)
         if (updater_journal.intent_schema(layout, entry) != updater_journal.SCHEMA or
                 updater_journal.transaction_status(layout, entry) not in updater_journal.TERMINAL):
             raise Refusal("Unresolved updater transaction; run updater recovery first")
@@ -385,7 +406,7 @@ class _Lock:
 
 
 def _current_record(game):
-    path = _state_root(game) / "transaction.json"
+    path = _state_path(game, "transaction.json")
     if not path.exists():
         return None
     record = _read_json(path)
@@ -442,9 +463,8 @@ def _remove_if_new(game, rel, new_hash):
 
 def _restore(game, record):
     """Idempotent rollback; inspect every destination before changing any of them."""
-    txdir = _state_root(game) / "transactions" / record["id"]
     jobs = []
-    for e in record["entries"]:
+    for index, e in enumerate(record["entries"]):
         if e["adopted"]:
             continue
         rel = e["path"]
@@ -452,19 +472,19 @@ def _restore(game, record):
         if current not in (e["old"], e["new"]):
             raise Refusal("Rollback refused: a destination changed after interruption")
         if e["old"] is not None:
-            backup = txdir / "backups" / Path(*rel.split("/"))
+            backup = _backup_path(game, record["id"], index)
             if not backup.is_file() or digest_file(backup) != e["old"]:
                 raise Refusal("Rollback refused: verified backup missing")
-        jobs.append((e, current))
-    for e, current in reversed(jobs):
+        jobs.append((index, e, current))
+    for index, e, current in reversed(jobs):
         if current == e["old"]:
             continue
         if e["old"] is None:
             _remove_if_new(game, e["path"], e["new"])
         else:
-            source = txdir / "backups" / Path(*e["path"].split("/"))
+            source = _backup_path(game, record["id"], index)
             _put_file(source, _target(game, e["path"]), e["new"])
-    for e, _ in jobs:
+    for _, e, _ in jobs:
         if _existing_hash(_target(game, e["path"])) != e["old"]:
             raise Refusal("Rollback verification failed")
 
@@ -480,11 +500,11 @@ def recover(game):
             raise Refusal("There is no incomplete installer transaction")
         _restore(game, record)
         record["status"] = "ROLLED_BACK"
-        _write_json(_state_root(game) / "transaction.json", record)
+        _write_json(_state_path(game, "transaction.json"), record)
     return "Previous files restored and verified"
 
 
-def install(game, prepared, replace_authority=False):
+def install(game, prepared, replace_authority=False, expected_authority=None):
     game = _validate_game(game)
     if not _check_autoinit(game):
         raise Refusal("Autoinit Manager is not verifiably installed")
@@ -502,6 +522,12 @@ def install(game, prepared, replace_authority=False):
         entries, authority_changed = _classify(game, prepared, replace_authority)
         if authority_changed and not replace_authority:
             raise Refusal("Animation Groups replacement was not authorized")
+        if authority_changed:
+            current_authority = {e["path"]: e["old"] for e in entries
+                                 if e["path"] in _authority_paths(prepared) or
+                                    AUTH_RE.match(e["path"])}
+            if current_authority != expected_authority:
+                raise Refusal("Animation Groups data changed since consent; review again")
         # Recheck the captured source before creating a transaction.
         for rel, wanted in prepared.files.items():
             source = prepared.root / "data" / Path(*rel.split("/"))
@@ -510,22 +536,26 @@ def install(game, prepared, replace_authority=False):
         _validate_authority(prepared.files, prepared.root / "data")
         _validate_inventory(prepared.files, prepared.root / "data")
         txid = uuid.uuid4().hex
-        root = _state_root(game)
-        txdir = root / "transactions" / txid
+        txdir = _state_path(game, "transactions", txid)
         txdir.mkdir(parents=True)
-        for e in entries:
+        _state_path(game, "transactions", txid)
+        for index, e in enumerate(entries):
             if e["old"] is None or e["adopted"]:
                 continue
             src = _target(game, e["path"])
-            dst = txdir / "backups" / Path(*e["path"].split("/"))
+            dst = _backup_path(game, txid, index)
             dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(src, dst)
+            _backup_path(game, txid, index)
+            with open(src, "rb") as source, open(dst, "xb") as out:
+                shutil.copyfileobj(source, out, 1024 * 1024)
+                out.flush()
+                os.fsync(out.fileno())
             if digest_file(dst) != e["old"] or digest_file(src) != e["old"]:
                 raise Refusal("A destination changed while creating its backup")
         record = {"schema": STATE_SCHEMA, "id": txid, "status": "PREPARED",
                   "release_sha256": RELEASE_SHA256, "authority_replaced": authority_changed,
                   "entries": entries}
-        _write_json(root / "transaction.json", record)
+        _write_json(_state_path(game, "transaction.json"), record)
         try:
             # Make unsubscribe-independent management available as early as
             # possible in a partially completed installation.
@@ -534,7 +564,7 @@ def install(game, prepared, replace_authority=False):
             for e in write_order:
                 if e["adopted"]:
                     continue
-                _append_step(txdir / "steps.jsonl", "BEFORE", e["path"])
+                _append_step(_state_path(game, "transactions", txid, "steps.jsonl"), "BEFORE", e["path"])
                 if e["new"] is None:
                     _remove_if_new(game, e["path"], e["old"])
                 else:
@@ -542,20 +572,20 @@ def install(game, prepared, replace_authority=False):
                     if digest_file(source) != e["new"]:
                         raise Refusal("Transaction-local source changed")
                     _put_file(source, _target(game, e["path"]), e["old"])
-                _append_step(txdir / "steps.jsonl", "AFTER", e["path"])
+                _append_step(_state_path(game, "transactions", txid, "steps.jsonl"), "AFTER", e["path"])
             for e in entries:
                 if _existing_hash(_target(game, e["path"])) != e["new"]:
                     raise Refusal("Post-install file verification failed")
             _validate_authority(prepared.files, prepared.root / "data")
             record["status"] = "COMPLETE"
-            _write_json(root / "transaction.json", record)
+            _write_json(_state_path(game, "transaction.json"), record)
         except Exception:
             # A crash leaves PREPARED for a later explicit recovery. This immediate
             # rollback is safe only while the same lock is still held.
             try:
                 _restore(game, record)
                 record["status"] = "ROLLED_BACK"
-                _write_json(root / "transaction.json", record)
+                _write_json(_state_path(game, "transaction.json"), record)
             except Exception:
                 pass
             raise
@@ -581,7 +611,6 @@ def uninstall(game):
         record = _current_record(game)
         if not record or record["status"] not in ("COMPLETE", "UNINSTALLING"):
             raise Refusal("There is no completed managed installation")
-        txdir = _state_root(game) / "transactions" / record["id"]
         authority = {MASTER, MANIFEST} | {e["path"] for e in record["entries"] if AUTH_RE.match(e["path"])}
         button = set(BUTTON_HASHES)
         if record["status"] == "COMPLETE":
@@ -591,19 +620,39 @@ def uninstall(game):
                                  for e in record["entries"] if e["path"] in button)
             record["preserve_authority"] = changed_auth
             record["preserve_button"] = changed_button
+            # A retry must recognize these deliberate preservations without
+            # treating a later, unrelated edit as part of the same decision.
+            record["preserved_hashes"] = {
+                e["path"]: _existing_hash(_target(game, e["path"]))
+                for e in record["entries"]
+                if (e["path"] in authority and changed_auth) or
+                   (e["path"] in button and changed_button)
+            }
             record["status"] = "UNINSTALLING"
-            _write_json(_state_root(game) / "transaction.json", record)
+            _write_json(_state_path(game, "transaction.json"), record)
         else:
             changed_auth = record["preserve_authority"]
             changed_button = record["preserve_button"]
+            preserved_hashes = record.get("preserved_hashes")
+            expected_preserved = {e["path"] for e in record["entries"]
+                                  if (e["path"] in authority and changed_auth) or
+                                     (e["path"] in button and changed_button)}
+            if not isinstance(preserved_hashes, dict) or set(preserved_hashes) != expected_preserved:
+                raise Refusal("Incomplete removal record; manual review required")
             for e in record["entries"]:
-                if _existing_hash(_target(game, e["path"])) not in (e["old"], e["new"]):
+                current = _existing_hash(_target(game, e["path"]))
+                if e["path"] in preserved_hashes:
+                    allowed = (preserved_hashes[e["path"]],)
+                else:
+                    allowed = (e["old"], e["new"])
+                if current not in allowed:
                     raise Refusal("An installation file changed during removal; manual review required")
         # An interrupted removal is retried from the durable UNINSTALLING state.
         preserved = []
-        removal_order = [e for e in reversed(record["entries"]) if e["path"] != MANAGER]
-        removal_order += [e for e in record["entries"] if e["path"] == MANAGER]
-        for e in removal_order:
+        indexed_entries = list(enumerate(record["entries"]))
+        removal_order = [(i, e) for i, e in reversed(indexed_entries) if e["path"] != MANAGER]
+        removal_order += [(i, e) for i, e in indexed_entries if e["path"] == MANAGER]
+        for index, e in removal_order:
             rel = e["path"]
             if e["adopted"]:
                 continue
@@ -622,18 +671,18 @@ def uninstall(game):
                 if rel == HELPER:
                     preserved.append(rel)
                     continue
-                _append_step(txdir / "removal_steps.jsonl", "BEFORE", rel)
+                _append_step(_state_path(game, "transactions", record["id"], "removal_steps.jsonl"), "BEFORE", rel)
                 _remove_if_new(game, rel, e["new"])
-                _append_step(txdir / "removal_steps.jsonl", "AFTER", rel)
+                _append_step(_state_path(game, "transactions", record["id"], "removal_steps.jsonl"), "AFTER", rel)
             else:
-                backup = txdir / "backups" / Path(*rel.split("/"))
+                backup = _backup_path(game, record["id"], index)
                 if not backup.is_file() or digest_file(backup) != e["old"]:
                     preserved.append(rel)
                     continue
-                _append_step(txdir / "removal_steps.jsonl", "BEFORE", rel)
+                _append_step(_state_path(game, "transactions", record["id"], "removal_steps.jsonl"), "BEFORE", rel)
                 _put_file(backup, _target(game, rel), e["new"])
-                _append_step(txdir / "removal_steps.jsonl", "AFTER", rel)
+                _append_step(_state_path(game, "transactions", record["id"], "removal_steps.jsonl"), "AFTER", rel)
         record["status"] = "UNINSTALLED"
         record["preserved"] = sorted(preserved)
-        _write_json(_state_root(game) / "transaction.json", record)
+        _write_json(_state_path(game, "transaction.json"), record)
     return {"preserved": sorted(preserved)}
