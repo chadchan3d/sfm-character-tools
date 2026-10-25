@@ -8,3 +8,9 @@ reference/sfm_defaultanimationgroups_silkworm.txt
 # workbooks, Master backups, and packaged evidence blobs that are not
 # published to the public repository. See .local/README.md.
 .local/
+
+# Workshop installer build and private staging outputs.
+/build/
+/dist/
+/SCT_Setup.spec
+/workshop_installer/staged/
