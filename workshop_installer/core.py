@@ -1,9 +1,11 @@
-"""Fixed-payload installation and recovery. All destination writes require SFM to be closed.
+"""Verified package installation with TXT-only backups and completion-oriented retry.
 
-The existing updater owns the installation lock and its own transaction records.
-This installer uses the same lock but keeps a separate journal and backups.
+The updater installation lock is shared; updater code and records are unchanged.
 """
 import hashlib
+import ctypes
+import sys
+from datetime import datetime, timezone
 import json
 import os
 import re
@@ -20,7 +22,9 @@ from updater.sfm_character_tools_updater.layout import Layout, TXID_RE
 from updater.sfm_character_tools_updater.process_gate import process_status
 
 
-RELEASE_SHA256 = "5323b1431a200c0bea3641e7dcb2f9fac45920d889f749ac9bf07972f5a89458"
+from . import release
+
+RELEASE_SHA256 = release.SHA256
 MASTER = "cfg/sfm_defaultanimationgroups.txt"
 AUTH_DIR = "cfg/sfm_shared_authority"
 MANIFEST = AUTH_DIR + "/manifest.json"
@@ -34,7 +38,7 @@ BUTTON_HASHES = {
     BUTTON_IMPL: "7a01bd5eb828631a6bc0f2df2e5a7f692eae812877e0debe7e0a364199b63f67",
 }
 STATE_REL = "cfg/sfm_character_tools_installer"
-STATE_SCHEMA = "sct-workshop-install-1"
+STATE_SCHEMA = "sct-workshop-install-2"
 
 
 class Refusal(RuntimeError):
@@ -69,15 +73,6 @@ def _write_json(path, data):
 def _read_json(path):
     with open(path, "rb") as f:
         return json.load(f)
-
-
-def _append_step(path, phase, rel):
-    """Durably identify each intended and completed file mutation."""
-    line = (json.dumps({"phase": phase, "path": rel}, sort_keys=True) + "\n").encode("utf-8")
-    with open(path, "ab") as f:
-        f.write(line)
-        f.flush()
-        os.fsync(f.fileno())
 
 
 def _plain(path):
@@ -179,7 +174,7 @@ def _validate_inventory(files, stage):
         raise Refusal("Signed software inventory is absent")
     inventory = _read_json(stage / Path(*name.split("/")))
     rows = inventory.get("files")
-    if not isinstance(rows, list) or len(rows) != 31:
+    if not isinstance(rows, list) or len(rows) != release.INVENTORY_ENTRIES:
         raise Refusal("Unexpected software inventory")
     for item in rows:
         rel = item.get("path")
@@ -228,10 +223,12 @@ finally:
 
 
 class Prepared:
-    def __init__(self, root, files, sidecar):
+    def __init__(self, root, files, sidecar, version=release.VERSION, package=release.SHA256):
         self.root = Path(root)
         self.files = files
         self.sidecar = sidecar
+        self.version = version
+        self.package = package
 
     def close(self):
         shutil.rmtree(self.root)
@@ -244,7 +241,7 @@ def prepare(release_zip, helper_exe):
     helper_hash = digest_file(helper_exe)
     root = Path(tempfile.mkdtemp(prefix="sct_workshop_setup_"))
     try:
-        snapshot = root / "SFM.Character.Tools.v1.0.0.zip"
+        snapshot = root / release.ARCHIVE
         shutil.copyfile(release_zip, snapshot)
         if digest_file(snapshot) != RELEASE_SHA256:
             raise Refusal("The release changed during snapshot")
@@ -253,7 +250,7 @@ def prepare(release_zip, helper_exe):
         files = {}
         names = set()
         with zipfile.ZipFile(snapshot) as z:
-            if len(z.infolist()) != 1006:
+            if len(z.infolist()) != release.ARCHIVE_ENTRIES:
                 raise Refusal("Unexpected release ZIP entry count")
             for info in z.infolist():
                 _zip_member_kind(info)
@@ -270,7 +267,7 @@ def prepare(release_zip, helper_exe):
                 with z.open(info) as source, open(dst, "xb") as out:
                     shutil.copyfileobj(source, out, 1024 * 1024)
                 files[rel] = digest_file(dst)
-        if len(files) != 1004 or any(files.get(p) != h for p, h in BUTTON_HASHES.items()):
+        if set(files) != set(release.PATHS) or any(files.get(p) != h for p, h in BUTTON_HASHES.items()):
             raise Refusal("Release file set or button pair differs")
         sidecar = _validate_authority(files, stage)
         _validate_inventory(files, stage)
@@ -297,64 +294,6 @@ def _state_path(game, *parts):
 
 def _state_root(game):
     return _state_path(game)
-
-
-def _backup_path(game, txid, index):
-    # The original destination names can be long (notably sidecar generations).
-    # Their immutable position in the recorded entry list gives backups short,
-    # unambiguous names within this transaction.
-    return _state_path(game, "transactions", txid, "backups", "%04d.bak" % index)
-
-
-def _authority_paths(prepared):
-    return {MASTER, MANIFEST, prepared.sidecar}
-
-
-def _classify(game, prepared, replace_authority):
-    auth = game / "usermod" / Path(*AUTH_DIR.split("/"))
-    old_sidecars = []
-    if auth.exists():
-        _plain(auth)
-        for entry in auth.iterdir():
-            if entry.name.endswith(".sfmsidecar") and entry.name != prepared.sidecar.rsplit("/", 1)[-1]:
-                old_sidecars.append(AUTH_DIR + "/" + entry.name)
-    if len(old_sidecars) > 1:
-        raise Refusal("Multiple existing sidecars require manual review")
-    button_exists = [_target(game, p).exists() for p in BUTTON_HASHES]
-    if any(button_exists) and not all(button_exists):
-        raise Refusal("Only one CPM button file exists; refusing a partial replacement")
-    for p in BUTTON_HASHES:
-        if _existing_hash(_target(game, p)) not in (None, BUTTON_HASHES[p]):
-            raise Refusal("A CPM button file has been modified or is foreign")
-    authority = _authority_paths(prepared)
-    entries = []
-    authority_changed = False
-    for rel in sorted(set(prepared.files) | set(old_sidecars)):
-        new_hash = prepared.files.get(rel)
-        old = _existing_hash(_target(game, rel))
-        if rel in authority or rel in old_sidecars:
-            authority_changed |= old not in (None, new_hash)
-        elif old not in (None, new_hash):
-            raise Refusal("Existing software differs from the approved release: %s" % rel)
-        entries.append({"path": rel, "old": old, "new": new_hash,
-                        "adopted": old == new_hash})
-    if authority_changed and not replace_authority:
-        raise Refusal("Existing Animation Groups data needs explicit replacement consent")
-    return entries, authority_changed
-
-
-def preview(game, prepared):
-    game = _validate_game(game)
-    if not _check_autoinit(game):
-        raise Refusal("Autoinit Manager is not verifiably installed; all four components are required")
-    # Preview may run while SFM is open; it does not create an installation lock or modify files.
-    entries, authority_changed = _classify(game, prepared, True)
-    return {"game": str(game), "file_count": len(entries),
-            "write_count": sum(not e["adopted"] for e in entries),
-            "authority_replacement_needs_consent": authority_changed,
-            "authority_snapshot": {e["path"]: e["old"] for e in entries
-                                   if e["path"] in _authority_paths(prepared) or
-                                      AUTH_RE.match(e["path"])}}
 
 
 def _process_clear():
@@ -405,38 +344,171 @@ class _Lock:
             self.handle = None
 
 
+
+# Paths in these dedicated program namespaces may be retained from a prior receipt.
+# No directory walk is used to infer ownership.
+PROGRAM_ROOTS = (
+    "scripts/ChadChan3D_CPM/", "scripts/SFM Character Tools/",
+    "scripts/sfm/mainmenu/SFM Character Tools/", "tools/SFM Control Group Updater/",
+    "tools/SFM Character Tools Installer/",
+)
+
+
+def _program_path(rel):
+    _validate_rel(rel)
+    return (rel in (BUTTON, BUTTON + "c", BUTTON + "o") or
+            any(rel.startswith(root) for root in PROGRAM_ROOTS))
+
+
+def _derived(paths):
+    return {p + suffix for p in paths if p.endswith(".py") for suffix in ("c", "o")}
+
+
+def _authority_paths(prepared):
+    return {MASTER, MANIFEST, prepared.sidecar}
+
+
+def _recognized_sidecars(game):
+    root = _target(game, AUTH_DIR)
+    if not root.exists():
+        return set()
+    if not root.is_dir():
+        raise Refusal("The sidecar location is not a directory")
+    return {AUTH_DIR + "/" + p.name for p in root.iterdir()
+            if AUTH_RE.fullmatch(AUTH_DIR + "/" + p.name)}
+
+
+def _receipt_paths(record):
+    return set(record["programs"]) if record else set()
+
+
 def _current_record(game):
-    path = _state_path(game, "transaction.json")
+    path = _state_path(game, "installation.json")
     if not path.exists():
         return None
     record = _read_json(path)
-    if record.get("schema") != STATE_SCHEMA or record.get("status") not in (
-            "PREPARED", "COMPLETE", "ROLLED_BACK", "UNINSTALLING", "UNINSTALLED"):
-        raise Refusal("Unknown installer transaction; manual review required")
-    if not TXID_RE.match(record.get("id", "")):
-        raise Refusal("Invalid installer transaction identity")
-    entries = record.get("entries")
-    if not isinstance(entries, list) or len(entries) > 1007:
-        raise Refusal("Invalid installer transaction entries")
-    seen = set()
-    for entry in entries:
-        rel = entry.get("path")
-        _validate_rel(rel)
-        if rel in seen or not all(x is None or re.match(r"^[0-9a-f]{64}$", x)
-                                       for x in (entry.get("old"), entry.get("new"))):
-            raise Refusal("Invalid installer transaction entry")
-        seen.add(rel)
+    if record.get("schema") != STATE_SCHEMA:
+        raise Refusal("Unrecognized installation record; no files were changed")
+    paths = record.get("programs")
+    if (not isinstance(paths, list) or len(paths) > 10000 or
+            len(set(paths)) != len(paths) or not all(_program_path(p) for p in paths)):
+        raise Refusal("Invalid installation file list")
+    if not _hash_value(record.get("package")) or not isinstance(record.get("version"), str):
+        raise Refusal("Invalid installation identity")
     return record
 
 
-def _put_file(source, destination, previous):
+def _hash_value(value):
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+
+
+def _operation(game):
+    path = _state_path(game, "operation.json")
+    if not path.exists():
+        return None
+    record = _read_json(path)
+    if (record.get("schema") != STATE_SCHEMA or record.get("kind") not in ("install", "uninstall") or
+            not TXID_RE.fullmatch(record.get("id", ""))):
+        raise Refusal("Unrecognized unfinished setup operation")
+    entries = record.get("entries")
+    if not isinstance(entries, list) or len(entries) > 20000:
+        raise Refusal("Invalid unfinished file list")
+    seen = set()
+    for e in entries:
+        p = e.get("path")
+        _validate_rel(p)
+        if (p.casefold() in seen or
+                not (_program_path(p) or p in (MASTER, MANIFEST) or AUTH_RE.fullmatch(p)) or
+                any(v is not None and not _hash_value(v) for v in (e.get("old"), e.get("new")))):
+            raise Refusal("Invalid unfinished file entry")
+        seen.add(p.casefold())
+        if record["kind"] == "uninstall" and (p == MASTER or e.get("new") is not None):
+            raise Refusal("Invalid removal operation")
+    if record["kind"] == "install":
+        if not _hash_value(record.get("package")):
+            raise Refusal("Invalid unfinished package identity")
+        backup = record.get("backup")
+        if backup is not None:
+            if (not isinstance(backup, dict) or
+                    not re.fullmatch(r"Animation Groups - [0-9TZ-]+ - [0-9a-f]{8}\.txt", backup.get("name", "")) or
+                    not _hash_value(backup.get("sha256"))):
+                raise Refusal("Invalid Animation Groups backup record")
+        master = next((e for e in entries if e["path"] == MASTER), None)
+        if master is None or (master["old"] is not None and
+                              (backup is None or backup["sha256"] != master["old"])):
+            raise Refusal("Missing original Animation Groups backup identity")
+    return record
+
+
+def _legacy_record_clear(game):
+    # Pre-release PR candidates used a different rollback contract. Never discard
+    # one of those unfinished operations or reinterpret its backups as this policy.
+    path = _state_path(game, "transaction.json")
+    if path.exists():
+        raise Refusal("An earlier experimental Setup record exists. Resolve it before using this Setup.")
+
+
+def _classify(game, prepared):
+    prior = _current_record(game)
+    programs = {p for p in prepared.files if p not in _authority_paths(prepared)}
+    obsolete = (_receipt_paths(prior) | set(release.OBSOLETE)) - programs
+    if not all(_program_path(p) for p in programs | obsolete):
+        raise Refusal("Package contains an unsupported program location")
+    obsolete |= _derived(obsolete)
+    obsolete |= _recognized_sidecars(game) - {prepared.sidecar}
+    entries = []
+    for rel in sorted(set(prepared.files) | obsolete):
+        entries.append({"path": rel, "old": _existing_hash(_target(game, rel)),
+                        "new": prepared.files.get(rel)})
+    return entries, sorted(programs)
+
+
+def preview(game, prepared):
+    game = _validate_game(game)
+    _legacy_record_clear(game)
+    if not _check_autoinit(game):
+        raise Refusal("Install Autoinit Manager before installing the CPM toolbar button.")
+    if _operation(game):
+        raise Refusal("An unfinished Setup operation must be completed first.")
+    entries, programs = _classify(game, prepared)
+    prior = _current_record(game)
+    return {"existing": bool(prior or any(e["old"] is not None for e in entries
+                                          if _program_path(e["path"]))),
+            "installed_version": prior["version"] if prior else None,
+            "version": prepared.version, "programs": programs,
+            "snapshot": {e["path"]: e["old"] for e in entries}}
+
+
+def removal_preview(game):
+    game = _validate_game(game)
+    _legacy_record_clear(game)
+    prior = _current_record(game)
+    programs = _receipt_paths(prior) | {p for p in release.PATHS
+                                       if p not in (MASTER, MANIFEST) and not AUTH_RE.fullmatch(p)}
+    programs |= {HELPER, MANAGER} | set(release.OBSOLETE)
+    if not all(_program_path(p) for p in programs):
+        raise Refusal("Invalid removal file list")
+    paths = programs | _derived(programs) | _recognized_sidecars(game) | {MANIFEST}
+    return {p: _existing_hash(_target(game, p)) for p in sorted(paths)}
+
+
+def _put_file(source, destination, previous, temporary=None):
     _plain(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
     _plain(destination.parent)
-    now = _existing_hash(destination)
-    if now != previous:
-        raise Refusal("Destination changed during installation")
-    fd, tmp = tempfile.mkstemp(prefix=".sct_install_", dir=destination.parent)
+    if _existing_hash(destination) != previous:
+        raise Refusal("A destination changed during Setup; review it before retrying.")
+    if temporary is None:
+        fd, tmp = tempfile.mkstemp(prefix=".sct_install_", dir=destination.parent)
+    else:
+        tmp = str(temporary)
+        _plain(temporary)
+        # This exact sibling is named by the operation, never a wildcard cleanup.
+        if temporary.exists():
+            if not temporary.is_file():
+                raise Refusal("An installation temporary path is not a regular file")
+            temporary.unlink()
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         with os.fdopen(fd, "wb") as out, open(source, "rb") as src:
             shutil.copyfileobj(src, out, 1024 * 1024)
@@ -444,8 +516,9 @@ def _put_file(source, destination, previous):
             os.fsync(out.fileno())
         if digest_file(tmp) != digest_file(source):
             raise Refusal("Staged write verification failed")
+        if _existing_hash(destination) != previous:
+            raise Refusal("A destination changed while its replacement was being prepared.")
         if previous is None:
-            # On Windows rename refuses an existing destination rather than replacing it.
             os.rename(tmp, destination)
         else:
             os.replace(tmp, destination)
@@ -454,235 +527,275 @@ def _put_file(source, destination, previous):
             os.unlink(tmp)
 
 
-def _remove_if_new(game, rel, new_hash):
+def _remove_if_new(game, rel, expected):
     target = _target(game, rel)
-    if _existing_hash(target) != new_hash:
-        raise Refusal("A file changed after installation; preserving it")
+    if _existing_hash(target) != expected:
+        raise Refusal("A file changed during removal; review it before retrying.")
     target.unlink()
 
 
-def _restore(game, record):
-    """Idempotent rollback; inspect every destination before changing any of them."""
-    jobs = []
-    for index, e in enumerate(record["entries"]):
-        if e["adopted"]:
-            continue
-        rel = e["path"]
-        current = _existing_hash(_target(game, rel))
-        if current not in (e["old"], e["new"]):
-            raise Refusal("Rollback refused: a destination changed after interruption")
-        if e["old"] is not None:
-            backup = _backup_path(game, record["id"], index)
-            if not backup.is_file() or digest_file(backup) != e["old"]:
-                raise Refusal("Rollback refused: verified backup missing")
-        jobs.append((index, e, current))
-    for index, e, current in reversed(jobs):
-        if current == e["old"]:
-            continue
-        if e["old"] is None:
-            _remove_if_new(game, e["path"], e["new"])
-        else:
-            source = _backup_path(game, record["id"], index)
-            _put_file(source, _target(game, e["path"]), e["new"])
-    for _, e, _ in jobs:
-        if _existing_hash(_target(game, e["path"])) != e["old"]:
-            raise Refusal("Rollback verification failed")
+class _LegacyLock:
+    """Hold the actual verified legacy object; never delete a reopened pathname."""
+    def __init__(self, game):
+        self.path = _target(game, AUTH_DIR + "/publisher.lock")
+        self.handle = None
 
-
-def recover(game):
-    game = _validate_game(game)
-    _process_clear()
-    with _Lock(game):
-        _process_clear()
-        _updater_records_clear(game)
-        record = _current_record(game)
-        if record is None or record["status"] != "PREPARED":
-            raise Refusal("There is no incomplete installer transaction")
-        _restore(game, record)
-        record["status"] = "ROLLED_BACK"
-        _write_json(_state_path(game, "transaction.json"), record)
-    return "Previous files restored and verified"
-
-
-def install(game, prepared, replace_authority=False, expected_authority=None):
-    game = _validate_game(game)
-    if not _check_autoinit(game):
-        raise Refusal("Autoinit Manager is not verifiably installed")
-    _process_clear()
-    with _Lock(game):
-        _process_clear()
-        _updater_records_clear(game)
-        prior = _current_record(game)
-        if prior and prior["status"] == "PREPARED":
-            raise Refusal("An incomplete installer transaction must be recovered first")
-        if prior and prior["status"] == "UNINSTALLING":
-            raise Refusal("Complete the interrupted removal before installing")
-        if prior and prior["status"] == "COMPLETE":
-            raise Refusal("Already installed; verify or uninstall before installing again")
-        entries, authority_changed = _classify(game, prepared, replace_authority)
-        if authority_changed and not replace_authority:
-            raise Refusal("Animation Groups replacement was not authorized")
-        if authority_changed:
-            current_authority = {e["path"]: e["old"] for e in entries
-                                 if e["path"] in _authority_paths(prepared) or
-                                    AUTH_RE.match(e["path"])}
-            if current_authority != expected_authority:
-                raise Refusal("Animation Groups data changed since consent; review again")
-        # Recheck the captured source before creating a transaction.
-        for rel, wanted in prepared.files.items():
-            source = prepared.root / "data" / Path(*rel.split("/"))
-            if digest_file(source) != wanted:
-                raise Refusal("Captured installation source changed")
-        _validate_authority(prepared.files, prepared.root / "data")
-        _validate_inventory(prepared.files, prepared.root / "data")
-        txid = uuid.uuid4().hex
-        txdir = _state_path(game, "transactions", txid)
-        txdir.mkdir(parents=True)
-        _state_path(game, "transactions", txid)
-        for index, e in enumerate(entries):
-            if e["old"] is None or e["adopted"]:
-                continue
-            src = _target(game, e["path"])
-            dst = _backup_path(game, txid, index)
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            _backup_path(game, txid, index)
-            with open(src, "rb") as source, open(dst, "xb") as out:
-                shutil.copyfileobj(source, out, 1024 * 1024)
-                out.flush()
-                os.fsync(out.fileno())
-            if digest_file(dst) != e["old"] or digest_file(src) != e["old"]:
-                raise Refusal("A destination changed while creating its backup")
-        record = {"schema": STATE_SCHEMA, "id": txid, "status": "PREPARED",
-                  "release_sha256": RELEASE_SHA256, "authority_replaced": authority_changed,
-                  "entries": entries}
-        _write_json(_state_path(game, "transaction.json"), record)
+    def __enter__(self):
+        if not self.path.exists():
+            return self
+        h, err = w32.create_file(str(self.path), w32.GENERIC_READ | w32.DELETE, 0,
+                                w32.OPEN_EXISTING, flags=0x00200000, inherit=False)
+        if h is None:
+            raise Refusal("The sidecar publisher lock is in use or unavailable. Close the publisher and retry.")
+        self.handle = h
         try:
-            # Make unsubscribe-independent management available as early as
-            # possible in a partially completed installation.
-            write_order = [e for e in entries if e["path"] in (HELPER, MANAGER)]
-            write_order += [e for e in entries if e["path"] not in (HELPER, MANAGER)]
-            for e in write_order:
-                if e["adopted"]:
-                    continue
-                _append_step(_state_path(game, "transactions", txid, "steps.jsonl"), "BEFORE", e["path"])
-                if e["new"] is None:
-                    _remove_if_new(game, e["path"], e["old"])
-                else:
-                    source = prepared.root / "data" / Path(*e["path"].split("/"))
-                    if digest_file(source) != e["new"]:
-                        raise Refusal("Transaction-local source changed")
-                    _put_file(source, _target(game, e["path"]), e["old"])
-                _append_step(_state_path(game, "transactions", txid, "steps.jsonl"), "AFTER", e["path"])
-            for e in entries:
-                if _existing_hash(_target(game, e["path"])) != e["new"]:
-                    raise Refusal("Post-install file verification failed")
-            _validate_authority(prepared.files, prepared.root / "data")
-            record["status"] = "COMPLETE"
-            _write_json(_state_path(game, "transaction.json"), record)
+            tag = (ctypes.c_ulong * 2)()
+            if not w32.k32.GetFileInformationByHandleEx(h, 9, ctypes.byref(tag), ctypes.sizeof(tag)):
+                raise Refusal("The sidecar publisher lock could not be inspected.")
+            info = w32.std_info(h)
+            if (tag[0] & (w32.FILE_ATTRIBUTE_DIRECTORY | w32.FILE_ATTRIBUTE_REPARSE_POINT) or
+                    info["size"] != 0 or info["links"] != 1 or info["delete_pending"]):
+                raise Refusal("The sidecar publisher lock is not a recognized empty lock file.")
+            return self
         except Exception:
-            # A crash leaves PREPARED for a later explicit recovery. This immediate
-            # rollback is safe only while the same lock is still held.
-            try:
-                _restore(game, record)
-                record["status"] = "ROLLED_BACK"
-                _write_json(_state_path(game, "transaction.json"), record)
-            except Exception:
-                pass
+            w32.close(h)
+            self.handle = None
             raise
-    return "Installed and verified all four components"
+
+    def remove(self):
+        if self.handle is None:
+            if self.path.exists():
+                raise Refusal("A sidecar publisher lock appeared during removal. Retry after closing the publisher.")
+            return
+        delete = ctypes.c_int(1)  # FILE_DISPOSITION_INFO.DeleteFile is a Windows BOOL.
+        if not w32.k32.SetFileInformationByHandle(self.handle, 4, ctypes.byref(delete), ctypes.sizeof(delete)):
+            raise Refusal("The sidecar publisher lock could not be removed.")
+        w32.close(self.handle)
+        self.handle = None
+        if self.path.exists():
+            raise Refusal("The sidecar publisher lock remains; removal is incomplete.")
+
+    def __exit__(self, *args):
+        if self.handle is not None:
+            w32.close(self.handle)
+            self.handle = None
 
 
-def verify(game):
-    game = _validate_game(game)
-    record = _current_record(game)
-    if not record or record["status"] != "COMPLETE":
-        raise Refusal("There is no completed managed installation")
-    mismatches = [e["path"] for e in record["entries"]
-                  if _existing_hash(_target(game, e["path"])) != e["new"]]
-    return {"files": len(record["entries"]), "mismatches": mismatches}
+def _check_sources(prepared):
+    for rel, wanted in prepared.files.items():
+        source = prepared.root / "data" / Path(*rel.split("/"))
+        if digest_file(source) != wanted:
+            raise Refusal("The captured installation package changed.")
+    _validate_authority(prepared.files, prepared.root / "data")
+    _validate_inventory(prepared.files, prepared.root / "data")
 
 
-def uninstall(game):
-    game = _validate_game(game)
+def _backup_master(game, expected):
+    if expected is None:
+        return None
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
+    name = "Animation Groups - %s - %s.txt" % (stamp, uuid.uuid4().hex[:8])
+    dst = _state_path(game, "backups", name)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    _plain(dst)
+    src = _target(game, MASTER)
+    with open(src, "rb") as source, open(dst, "xb") as out:
+        shutil.copyfileobj(source, out, 1024 * 1024)
+        out.flush()
+        os.fsync(out.fileno())
+    if digest_file(dst) != expected or _existing_hash(src) != expected:
+        raise Refusal("Animation Groups changed during backup; no installation files were changed.")
+    return {"name": name, "sha256": expected}
+
+
+def _verify_backup(game, record):
+    backup = record.get("backup")
+    if backup:
+        path = _state_path(game, "backups", backup["name"])
+        if _existing_hash(path) != backup["sha256"]:
+            raise Refusal("The original Animation Groups backup is missing or changed. Setup cannot continue.")
+
+
+def _matches_snapshot(entries, expected):
+    if expected is None or {e["path"]: e["old"] for e in entries} != expected:
+        raise Refusal("Installation files changed since consent. Review the installation again.")
+
+
+def _resume_states(game, record):
+    # Inspect the full operation before further writes. No guesses about new edits.
+    for e in record["entries"]:
+        current = _existing_hash(_target(game, e["path"]))
+        if current not in (e["old"], e["new"]):
+            raise Refusal("A file changed after Setup was interrupted. No further files were changed.")
+
+
+def _clean_dirs(game, paths):
+    dirs = set()
+    base = game / "usermod"
+    shared = {base / p for p in ("cfg", "scripts", "scripts/sfm", "scripts/sfm/mainmenu", "scripts/sfm/autoinit", "scripts/sfm/autoinit/ChadChan3D", "tools")}
+    for rel in paths:
+        parent = _target(game, rel).parent
+        while parent != base and parent not in shared:
+            dirs.add(parent)
+            parent = parent.parent
+    remaining = []
+    for p in sorted(dirs, key=lambda p: len(p.parts), reverse=True):
+        _plain(p)
+        try:
+            p.rmdir()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            # Nonempty or locked directories are never recursively removed.
+            if p.exists():
+                remaining.append(p.relative_to(base).as_posix())
+    return remaining
+
+
+def _finish_install(game, prepared, record):
+    if record["package"] != prepared.package or record["files"] != prepared.files:
+        raise Refusal("Setup needs the exact package used for this unfinished installation.")
+    if (not set(prepared.files).issubset({e["path"] for e in record["entries"]}) or
+            any(e["new"] != prepared.files.get(e["path"]) for e in record["entries"]) or
+            set(record["programs"]) != set(prepared.files) - _authority_paths(prepared)):
+        raise Refusal("The unfinished operation does not match the required package.")
+    _check_sources(prepared)
+    _verify_backup(game, record)
+    _resume_states(game, record)
     _process_clear()
-    with _Lock(game):
+    order = sorted(record["entries"], key=lambda e: (
+        0 if e["path"] == HELPER else 1 if e["path"] == MANAGER else
+        3 if e["path"] == MANIFEST else 2, e["path"]))
+    for index, e in enumerate(order):
+        target = _target(game, e["path"])
+        current = _existing_hash(target)
+        temporary = target.with_name(".sct_%s_%d.tmp" % (record["id"][:8], index))
+        _plain(temporary)
+        if current == e["new"]:
+            if temporary.exists():
+                temporary.unlink()
+            continue
+        if e["new"] is None:
+            _remove_if_new(game, e["path"], e["old"])
+        else:
+            _put_file(prepared.root / "data" / Path(*e["path"].split("/")), target, e["old"], temporary)
+    for e in record["entries"]:
+        if _existing_hash(_target(game, e["path"])) != e["new"]:
+            raise Refusal("Installation verification failed; run Setup again to complete it.")
+    # Validate the installed authority set itself, not merely the captured input.
+    _validate_authority(prepared.files, game / "usermod")
+    _clean_dirs(game, [e["path"] for e in record["entries"] if e["new"] is None])
+    installed = {"schema": STATE_SCHEMA, "version": record["version"],
+                 "package": record["package"], "programs": record["programs"]}
+    _write_json(_state_path(game, "installation.json"), installed)
+    _state_path(game, "operation.json").unlink()
+    return {"backup": record.get("backup"), "version": record["version"]}
+
+
+def install(game, prepared, expected_snapshot):
+    game = _validate_game(game)
+    _legacy_record_clear(game)
+    if not _check_autoinit(game):
+        raise Refusal("Install Autoinit Manager before installing the CPM toolbar button.")
+    _check_sources(prepared)
+    _process_clear()
+    with _Lock(game), _LegacyLock(game):
         _process_clear()
         _updater_records_clear(game)
-        record = _current_record(game)
-        if not record or record["status"] not in ("COMPLETE", "UNINSTALLING"):
-            raise Refusal("There is no completed managed installation")
-        authority = {MASTER, MANIFEST} | {e["path"] for e in record["entries"] if AUTH_RE.match(e["path"])}
-        button = set(BUTTON_HASHES)
-        if record["status"] == "COMPLETE":
-            changed_auth = any(_existing_hash(_target(game, e["path"])) != e["new"]
-                               for e in record["entries"] if e["path"] in authority)
-            changed_button = any(_existing_hash(_target(game, e["path"])) != e["new"]
-                                 for e in record["entries"] if e["path"] in button)
-            record["preserve_authority"] = changed_auth
-            record["preserve_button"] = changed_button
-            # A retry must recognize these deliberate preservations without
-            # treating a later, unrelated edit as part of the same decision.
-            record["preserved_hashes"] = {
-                e["path"]: _existing_hash(_target(game, e["path"]))
-                for e in record["entries"]
-                if (e["path"] in authority and changed_auth) or
-                   (e["path"] in button and changed_button)
-            }
-            record["status"] = "UNINSTALLING"
-            _write_json(_state_path(game, "transaction.json"), record)
-        else:
-            changed_auth = record["preserve_authority"]
-            changed_button = record["preserve_button"]
-            preserved_hashes = record.get("preserved_hashes")
-            expected_preserved = {e["path"] for e in record["entries"]
-                                  if (e["path"] in authority and changed_auth) or
-                                     (e["path"] in button and changed_button)}
-            if not isinstance(preserved_hashes, dict) or set(preserved_hashes) != expected_preserved:
-                raise Refusal("Incomplete removal record; manual review required")
-            for e in record["entries"]:
-                current = _existing_hash(_target(game, e["path"]))
-                if e["path"] in preserved_hashes:
-                    allowed = (preserved_hashes[e["path"]],)
-                else:
-                    allowed = (e["old"], e["new"])
-                if current not in allowed:
-                    raise Refusal("An installation file changed during removal; manual review required")
-        # An interrupted removal is retried from the durable UNINSTALLING state.
-        preserved = []
-        indexed_entries = list(enumerate(record["entries"]))
-        removal_order = [(i, e) for i, e in reversed(indexed_entries) if e["path"] != MANAGER]
-        removal_order += [(i, e) for i, e in indexed_entries if e["path"] == MANAGER]
-        for index, e in removal_order:
-            rel = e["path"]
-            if e["adopted"]:
+        if _operation(game):
+            raise Refusal("Finish the interrupted Setup operation before starting another.")
+        entries, programs = _classify(game, prepared)
+        _matches_snapshot(entries, expected_snapshot)
+        master = next(e for e in entries if e["path"] == MASTER)
+        backup = _backup_master(game, master["old"])
+        # Recheck all consented destinations after the backup, before program writes.
+        _matches_snapshot(_classify(game, prepared)[0], expected_snapshot)
+        record = {"schema": STATE_SCHEMA, "kind": "install", "id": uuid.uuid4().hex,
+                  "package": prepared.package, "version": prepared.version,
+                  "files": dict(prepared.files), "programs": programs,
+                  "backup": backup, "entries": entries}
+        _write_json(_state_path(game, "operation.json"), record)
+        return _finish_install(game, prepared, record)
+
+
+def recover(game, prepared):
+    game = _validate_game(game)
+    _legacy_record_clear(game)
+    _process_clear()
+    with _Lock(game), _LegacyLock(game):
+        _process_clear()
+        _updater_records_clear(game)
+        record = _operation(game)
+        if not record or record["kind"] != "install":
+            raise Refusal("There is no unfinished installation to complete.")
+        return _finish_install(game, prepared, record)
+
+
+def _running_helper(game):
+    return os.path.normcase(os.path.abspath(sys.executable)) == os.path.normcase(str(_target(game, HELPER)))
+
+
+def uninstall(game, expected_snapshot=None):
+    game = _validate_game(game)
+    _legacy_record_clear(game)
+    _process_clear()
+    with _Lock(game), _LegacyLock(game) as legacy:
+        _process_clear()
+        _updater_records_clear(game)
+        record = _operation(game)
+        if record and record["kind"] != "uninstall":
+            raise Refusal("Complete the interrupted installation before uninstalling.")
+        if not record:
+            snapshot = removal_preview(game)
+            if expected_snapshot is None or snapshot != expected_snapshot:
+                raise Refusal("Installation files changed since consent. Review removal again.")
+            entries = [{"path": p, "old": h, "new": None} for p, h in snapshot.items()]
+            record = {"schema": STATE_SCHEMA, "kind": "uninstall", "id": uuid.uuid4().hex,
+                      "entries": entries}
+            _write_json(_state_path(game, "operation.json"), record)
+        _resume_states(game, record)
+        # New generations appearing after consent must not silently escape removal.
+        known = {e["path"] for e in record["entries"]}
+        if _recognized_sidecars(game) - known:
+            raise Refusal("Sidecar files changed since removal was approved.")
+        _process_clear()
+        entries = sorted(record["entries"], key=lambda e: (
+            2 if e["path"] == MANAGER else 1 if e["path"] == HELPER else 0, e["path"]))
+        leftover = []
+        for e in entries:
+            if e["path"] in (MANAGER, HELPER):
                 continue
-            if (rel in authority and changed_auth) or (rel in button and changed_button):
-                preserved.append(rel)
+            current = _existing_hash(_target(game, e["path"]))
+            if current is None:
                 continue
-            current = _existing_hash(_target(game, rel))
-            if current == e["old"]:
-                continue
-            if current != e["new"]:
-                preserved.append(rel)
-                continue
-            if e["old"] is None:
-                # The helper executing from this path must remain on disk. A later
-                # management action can remove it after the user closes the helper.
-                if rel == HELPER:
-                    preserved.append(rel)
-                    continue
-                _append_step(_state_path(game, "transactions", record["id"], "removal_steps.jsonl"), "BEFORE", rel)
-                _remove_if_new(game, rel, e["new"])
-                _append_step(_state_path(game, "transactions", record["id"], "removal_steps.jsonl"), "AFTER", rel)
+            _remove_if_new(game, e["path"], e["old"])
+        # A failed publisher cleanup must leave BOTH management files usable.
+        legacy.remove()
+        for e in entries:
+            if e["path"] not in (MANAGER, HELPER) and _existing_hash(_target(game, e["path"])) is not None:
+                raise Refusal("Removal verification failed.")
+        # Substantive removal is verified. Remove the menu entry, then clean up
+        # Setup itself when possible. A running/locked EXE is reported explicitly.
+        manager = next((e for e in entries if e["path"] == MANAGER), None)
+        if manager and _existing_hash(_target(game, MANAGER)) is not None:
+            _remove_if_new(game, MANAGER, manager["old"])
+        helper = next((e for e in entries if e["path"] == HELPER), None)
+        if helper and _existing_hash(_target(game, HELPER)) is not None:
+            if _running_helper(game):
+                leftover.append(HELPER)
             else:
-                backup = _backup_path(game, record["id"], index)
-                if not backup.is_file() or digest_file(backup) != e["old"]:
-                    preserved.append(rel)
-                    continue
-                _append_step(_state_path(game, "transactions", record["id"], "removal_steps.jsonl"), "BEFORE", rel)
-                _put_file(backup, _target(game, rel), e["new"])
-                _append_step(_state_path(game, "transactions", record["id"], "removal_steps.jsonl"), "AFTER", rel)
-        record["status"] = "UNINSTALLED"
-        record["preserved"] = sorted(preserved)
-        _write_json(_state_path(game, "transaction.json"), record)
-    return {"preserved": sorted(preserved)}
+                try:
+                    _remove_if_new(game, HELPER, helper["old"])
+                except PermissionError:
+                    leftover.append(HELPER)
+        remaining_dirs = _clean_dirs(game, known | {AUTH_DIR + "/publisher.lock"})
+        installation = _state_path(game, "installation.json")
+        if installation.exists():
+            installation.unlink()
+        _state_path(game, "operation.json").unlink()
+        # Only installer records are removed; backups and unknown files remain.
+        _clean_dirs(game, [STATE_REL + "/operation.json"])
+        auth = _target(game, AUTH_DIR)
+        remaining = sorted(p.name for p in auth.iterdir()) if auth.exists() else []
+        return {"remaining_helper": leftover, "authority_remaining": remaining,
+                "remaining_directories": remaining_dirs}

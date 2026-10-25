@@ -6,8 +6,9 @@ import shutil
 from pathlib import Path
 
 from .core import RELEASE_SHA256, digest_file
+from . import release
 
-SCRIPT_REL = "scripts/sfm/mainmenu/SFM Character Tools/Install SFM Character Tools.py"
+SCRIPT_REL = "scripts/sfm/mainmenu/SFM Character Tools/Install or Update (Windows Setup).py"
 PAYLOAD_DIR = "scripts/sfm/mainmenu/SFM Character Tools/_workshop_installer"
 
 
@@ -32,7 +33,7 @@ def _sct_workshop_install_v1():
         return
     base = os.path.join(game, "workshop", "scripts", "sfm", "mainmenu", "SFM Character Tools", "_workshop_installer")
     exe = os.path.join(base, "SCT_Setup.exe")
-    release = os.path.join(base, "SFM.Character.Tools.v1.0.0.zip")
+    release = os.path.join(base, "%(archive)s")
     for path, wanted in ((exe, "%(exe)s"), (release, "%(zip)s")):
         if not os.path.isfile(path):
             sys.stdout.write("SFM Character Tools installation payload is missing.\\n")
@@ -53,19 +54,19 @@ try:
     _sct_workshop_install_v1()
 finally:
     del _sct_workshop_install_v1
-''' % {"exe": exe_sha, "zip": zip_sha}).encode("ascii")
+''' % {"exe": exe_sha, "zip": zip_sha, "archive": release.ARCHIVE}).encode("ascii")
 
 
-def stage(release, executable, output):
-    release, executable, output = map(Path, (release, executable, output))
+def stage(release_zip, executable, output):
+    release_zip, executable, output = map(Path, (release_zip, executable, output))
     if output.exists():
         raise ValueError("Output already exists; choose a fresh staging directory")
-    if digest_file(release) != RELEASE_SHA256:
+    if digest_file(release_zip) != RELEASE_SHA256:
         raise ValueError("Release ZIP hash differs from the approved v1.0.0 artifact")
     exe_sha = digest_file(executable)
     paths = {
         SCRIPT_REL: launcher(exe_sha, RELEASE_SHA256),
-        PAYLOAD_DIR + "/SFM.Character.Tools.v1.0.0.zip": release,
+        PAYLOAD_DIR + "/" + release.ARCHIVE: release_zip,
         PAYLOAD_DIR + "/SCT_Setup.exe": executable,
     }
     output.mkdir(parents=True)
@@ -94,14 +95,14 @@ def verify(output):
     manifest = json.loads((output / Path(*PAYLOAD_DIR.split("/")) / "installer_manifest.json").read_text(encoding="utf-8"))
     if manifest.get("schema") != "sct-workshop-payload-1" or len(manifest.get("files", [])) != 3:
         raise ValueError("Invalid payload manifest")
-    expected = {SCRIPT_REL, PAYLOAD_DIR + "/SFM.Character.Tools.v1.0.0.zip", PAYLOAD_DIR + "/SCT_Setup.exe"}
+    expected = {SCRIPT_REL, PAYLOAD_DIR + "/" + release.ARCHIVE, PAYLOAD_DIR + "/SCT_Setup.exe"}
     if {e["path"] for e in manifest["files"]} != expected:
         raise ValueError("Unexpected payload file set")
     for entry in manifest["files"]:
         target = output / Path(*entry["path"].split("/"))
         if target.stat().st_size != entry["bytes"] or digest_file(target) != entry["sha256"]:
             raise ValueError("Payload verification failed: " + entry["path"])
-    if digest_file(output / Path(*(PAYLOAD_DIR + "/SFM.Character.Tools.v1.0.0.zip").split("/"))) != RELEASE_SHA256:
+    if digest_file(output / Path(*(PAYLOAD_DIR + "/" + release.ARCHIVE).split("/"))) != RELEASE_SHA256:
         raise ValueError("Release ZIP changed")
 
 

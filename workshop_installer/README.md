@@ -1,29 +1,48 @@
-# SFM Character Tools Workshop installer
+# SFM Character Tools Workshop Setup
 
-This is the fixed v1.0.0 offline installer for issue #2. The existing release ZIP is the source of the application files. The installer checks the approved ZIP SHA-256, the 31 inventory file hashes and sizes, and the presence of its signature file. It does not independently verify the inventory's cryptographic signature. It installs the Normalizer, CPM, Updater, and CPM toolbar button together. It does not modify Autoinit Manager. A subscriber needs Autoinit Manager installed first.
-
-## Build and stage
-
-On Windows with Python 3.10 and PyInstaller 6.11.1, run `workshop_installer/build.ps1`. Build output, the original release ZIP, and the staging output are deliberately excluded from Git. Then run:
-
-```text
-python -m workshop_installer.stage --release RELEASE_ZIP --setup dist/SCT_Setup.exe --out NEW_STAGING_DIRECTORY
-```
-
-The fresh staging directory contains the Scripts-category upload tree and a SHA-256 manifest. Verify it again using `workshop_installer.stage.verify` before publication. The manifest itself is included in `_workshop_installer/`; it lists the other three files and uses only relative paths. This recipe never executes the updater worker in the ZIP.
-
-Publishing remains a separate owner action. Follow the proved Gate 0 Scripts-category upload procedure: stage only these four files in the publisher's SFM `game/usermod/scripts/sfm/mainmenu/SFM Character Tools/` after checking for collisions, choose **File → Community → Publish to Steam Workshop → Scripts**, and inspect the uploader's exact four-file list before submission. The published item must contain the staged tree beneath `scripts/`, with no additional enclosing folder. Remove only the temporary publisher staging files you recorded. This PR does not perform that staging or publication.
+Setup installs the unchanged v1.0.0 release ZIP, including Control Group Normalizer, Character Preset Manager, Control Group Updater and both CPM toolbar-button files. It requires Autoinit Manager for installation; it does not modify that dependency or its settings.
 
 ## User flow
 
-Subscribe to the Workshop item and install Autoinit Manager. In SFM, select **Scripts → SFM Character Tools → Install SFM Character Tools**. The launcher checks the two payload hashes and starts the Windows setup dialogs. Review the destination and any existing Animation Groups replacement. Save the project, close SFM normally, then confirm the final installation prompt. Setup refuses a running or uncheckable SFM process and a busy Updater lock. It snapshots the entire ZIP and setup program before SFM closes, so Workshop unsubscription cannot change the bytes being installed. If Animation Groups data changes after the replacement prompt, setup refuses and requires a fresh review.
+Subscribe, install Autoinit Manager, then choose **Scripts → SFM Character Tools → Install or Update (Windows Setup)**. Review the destination and replacement notice. Save your project and close SFM normally before choosing **Install** or **Update / Reinstall**. Setup checks again and refuses a running or uncheckable SFM process.
 
-Existing changed application files or partial CPM button installations cause a refusal. Existing customized Animation Groups data can be replaced only after explicit consent. The former bytes are verified and backed up before mutation. The installer publishes a durable transaction record before writes, verifies every installed file, and can restore an interrupted installation. The v1.0.0 ZIP is never modified.
+Setup replaces known Character Tools program files and installs the package's matching Animation Groups TXT, sidecar and manifest. Custom TXT edits are not merged. Before replacing an existing TXT, Setup creates and verifies a timestamped backup under `usermod/cfg/sfm_character_tools_installer/backups/`. Only TXT backups are retained permanently. Setup does not inspect the CPM library in Documents.
 
-After installation, **Scripts → SFM Character Tools → Manage Installation** opens the installed helper for verification, recovery, and conservative removal. It remains available after Workshop unsubscription. If a crash occurred before this launcher was installed, rerun the Workshop setup to recover the PREPARED transaction. Removal leaves changed files and data untouched and reports them. The running helper executable may remain until manually removed after closing setup. The Updater's lock and transaction/backups are not removed. If the user disabled the button in Autoinit Manager, installing the button files does not re-enable it.
+An update may replace data previously installed by Control Group Updater; “included version” means this Workshop package, not necessarily newer Animation Groups data. Known obsolete program files are removed using the previous installation record and the publisher's explicit obsolete-path list. Unrecognized files are not removed.
 
-The installation process does not provide a silent repair or upgrade path. Use the existing Control Group Updater for subsequent Animation Groups data updates.
+**Scripts → SFM Character Tools → Manage Installation** remains available after Workshop unsubscription. It can uninstall without the ZIP or Autoinit Manager. With the matching Workshop package still present, it also supports reinstalling that release. Installing button files does not re-enable a button disabled in Autoinit Manager; enable it there and restart SFM if necessary.
 
-## Release acceptance still required
+## Interruption and removal
 
-This branch qualifies only disposable-folder behavior. A clean subscriber without uploader or plugin-loader extensions must receive the full payload intact. In real SFM, confirm launcher discovery, setup launch, normal SFM close followed by install, all four tools including the Autoinit button, installed management after unsubscription, and safe coexistence with the Control Group Updater. Keep publication separate from this PR.
+An interrupted installation is completed from the exact verified package used to begin it. Keep SFM closed and run Setup again. If that package is absent, obtain it again. Setup does not restore an older program version, retain previous application binaries, or claim that a multi-file update is atomic. Unexpected intervening edits stop automatic retry; a TXT edit must receive fresh consent and a verified backup before replacement. The original backup is never overwritten on retry.
+
+Uninstall removes known programs, dependencies, both button files, installed menu entries, the manifest and recognized sidecars. It keeps the TXT, TXT backups, unrelated files, and existing updater records and independent backups. Modified program files are included in the explicit removal consent. Shared directories are never recursively deleted.
+
+A recognized empty `publisher.lock` is held exclusively while authority files are removed, then deleted through the same verified Windows handle. Busy, unreadable, linked or nonempty locks stop removal before file changes. The sidecar directory is removed only when empty; unrelated contents are reported and retained. The updater's separate installation lock and records are not deleted.
+
+Management is removed last. If Setup is running from its installed executable, Windows may prevent deletion of that executable. The result identifies it for manual deletion after Setup closes. No service or self-deletion helper is installed. Unsubscribe to remove the Steam-managed Setup entry; uninstall does not modify Workshop-managed files.
+
+## Package and filesystem protection
+
+The publisher-maintained `release.py` binds the version, archive filename, SHA-256 and full mapped file list. The original ZIP is unchanged. Setup checks its hash, archive paths, authority consistency, the 31 inventory entries' hashes/sizes and signature-file presence. It does **not** independently verify the inventory's cryptographic signature.
+
+Setup snapshots verified source contents outside Workshop before installation, rejects destination/state reparse points, uses the existing Updater installation lock, and refuses unresolved updater operations. Completion requires checking all intended installed files and removals. These checks do not protect against an administrator deliberately racing filesystem changes or a user manually starting SFM after an interrupted operation.
+
+The pre-release rollback-style installer record is not silently migrated. If one exists, Setup refuses rather than discarding recovery evidence. That experimental installer was not a public release.
+
+## Build and stage
+
+Build on Windows with Python 3.10 and PyInstaller 6.11.1:
+
+```text
+powershell -File workshop_installer/build.ps1 -Output BUILD_DIRECTORY
+python -m workshop_installer.stage --release RELEASE_ZIP --setup BUILD_DIRECTORY/SCT_Setup.exe --out NEW_STAGING_DIRECTORY
+```
+
+The single-window interface uses Windows controls through Python's ctypes; no separate GUI runtime is required. Subscribers need no Python runtime. Build output and the ZIP are excluded from Git. `stage.verify` checks the four-file staging tree: menu launcher, setup executable, original ZIP and relative-path manifest. The bundled updater executables are not executed by staging or disposable tests.
+
+Publication is separate: follow the already-qualified Scripts-category procedure, inspect the four-file upload list and avoid an extra enclosing directory. This implementation does not stage files into SFM or submit anything to Steam.
+
+## Acceptance boundary
+
+Disposable tests cover the installer, not a live SFM installation. Remaining practical acceptance is installed-menu launch, installation after normal SFM exit, opening the three tools, CPM button activation, updater coordination and removal. Clean-subscriber download/launch and Valve policy disposition remain separate public-Workshop release conditions. Gate 0 and Gate 1 are not repeated by this revision.

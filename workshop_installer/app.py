@@ -1,124 +1,207 @@
-"""Dependency-free Windows dialog front end for the fixed Workshop installer."""
+"""Small, synchronous Windows Setup window. No background installation or service."""
 import argparse
-import ctypes
+import os
 import sys
-from ctypes import wintypes
 from pathlib import Path
 
-from . import core
+from . import core, release
+from .window import Window
+
+FRESH = ("Install Control Group Normalizer, Character Preset Manager, Control Group Updater "
+         "and the CPM toolbar button.\n\nSetup will install the included Animation Groups. "
+         "If an Animation Groups file already exists, it will be backed up before replacement."
+         "\n\nClose Source Filmmaker before installing.")
+UPDATE = ("Setup will replace the installed Character Tools programs and Animation Groups "
+          "with this Workshop package.\n\nYour current Animation Groups file will be backed up "
+          "before replacement. Custom edits will not be combined with the replacement."
+          "\n\nClose Source Filmmaker before continuing.")
+REMOVE = ("This will remove Character Tools, its toolbar button, scripts and supporting files, "
+          "including edited program files.\n\nYour Animation Groups file and its backups will remain."
+          "\n\nClose Source Filmmaker before uninstalling.")
 
 
-MB_OK = 0
-MB_OKCANCEL = 1
-MB_YESNOCANCEL = 3
-MB_ICONERROR = 0x10
-MB_ICONQUESTION = 0x20
-MB_ICONINFORMATION = 0x40
-IDOK = 1
-IDCANCEL = 2
-IDYES = 6
-IDNO = 7
+class SetupWindow:
+    def __init__(self, game, package, helper):
+        self.game, self.package, self.helper = game, package, helper
+        self.prepared = None
+        self.busy = False
+        self.details = ""
+        self.window = Window("SFM Character Tools Setup")
+        self.refresh()
 
-_messagebox = ctypes.windll.user32.MessageBoxW
-_messagebox.argtypes = [wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.UINT]
-_messagebox.restype = ctypes.c_int
+    def page(self, title, message, buttons):
+        subtitle = "Version included: " + release.VERSION + "\nInstall location: " + str(self.game / "usermod")
+        self.window.page(title, subtitle, message, buttons)
 
+    def capture(self):
+        if self.prepared is None:
+            if not self.package or not self.package.is_file():
+                raise core.Refusal("Obtain the Workshop package and launch Setup from its Workshop menu entry.")
+            self.prepared = core.prepare(self.package, self.helper)
+        return self.prepared
 
-def dialog(message, flags=MB_OK):
-    return _messagebox(None, message, "SFM Character Tools Setup", flags)
-
-
-def _manage(game):
-    choice = dialog("SFM Character Tools installation management\n\n"
-                    "Yes: verify installed files\n"
-                    "No: removal and recovery options\n"
-                    "Cancel: exit\n\n"
-                    "Save your project and close SFM before removal or recovery.",
-                    MB_YESNOCANCEL | MB_ICONQUESTION)
-    if choice == IDYES:
-        result = core.verify(game)
-        if result["mismatches"]:
-            dialog("%d installed paths differ or are missing.\n\n%s" %
-                   (len(result["mismatches"]), "\n".join(result["mismatches"][:12])), MB_ICONINFORMATION)
-        else:
-            dialog("All %d tracked paths match the installed receipt." % result["files"], MB_ICONINFORMATION)
-    elif choice == IDNO:
-        action = dialog("Choose maintenance action:\n\n"
-                        "Yes: remove unchanged installed files\n"
-                        "No: recover an interrupted installation\n"
-                        "Cancel: exit", MB_YESNOCANCEL | MB_ICONQUESTION)
-        if action == IDCANCEL:
-            return
-        if action == IDNO:
-            if dialog("Restore verified previous files from an incomplete installation?\n"
-                      "SFM must be closed.", MB_OKCANCEL | MB_ICONQUESTION) == IDOK:
-                dialog(core.recover(game), MB_ICONINFORMATION)
-            return
-        if dialog("Remove only unchanged files owned by this installation?\n"
-                  "Changed files, customized Animation Groups data and presets are preserved.",
-                  MB_OKCANCEL | MB_ICONQUESTION) == IDOK:
-            result = core.uninstall(game)
-            dialog("Removal finished. %d changed or in-use paths were preserved.\n\n%s" %
-                   (len(result["preserved"]), "\n".join(result["preserved"][:12])),
-                   MB_ICONINFORMATION)
-
-
-def _install(game, executable):
-    prepared = core.prepare(executable.parent / "SFM.Character.Tools.v1.0.0.zip", executable)
-    try:
-        summary = core.preview(game, prepared)
-        if dialog("Install SFM Character Tools v1.0.0 into:\n%s\n\n"
-                  "Components: Control Group Normalizer, Character Preset Manager, "
-                  "Control Group Updater and CPM toolbar button.\n\n"
-                  "%d files are tracked; %d need writing.\n\n"
-                  "Autoinit Manager must already be installed. Continue?" %
-                  (game, summary["file_count"], summary["write_count"]),
-                  MB_OKCANCEL | MB_ICONQUESTION) != IDOK:
-            return
-        replace = False
-        if summary["authority_replacement_needs_consent"]:
-            replace = dialog("Existing Animation Groups data differs from the bundled release.\n\n"
-                             "Replace the Master TXT, sidecar and manifest as one set? "
-                             "Verified copies of existing files will be kept for recovery.\n\n"
-                             "Cancel to preserve your current data and stop.",
-                             MB_OKCANCEL | MB_ICONQUESTION) == IDOK
-            if not replace:
+    def refresh(self):
+        try:
+            core._legacy_record_clear(self.game)
+            op = core._operation(self.game)
+            if op:
+                if op["kind"] == "uninstall":
+                    self.page("Removal incomplete", "Close SFM, then finish removing Character Tools.",
+                              [("Finish Uninstall", lambda: self.perform(self.finish_remove)), ("Close", self.close)])
+                else:
+                    available = False
+                    try:
+                        p = self.capture()
+                        available = p.package == op["package"] and p.files == op["files"]
+                    except Exception as exc:
+                        self.details = str(exc)
+                    message = "Setup could not finish. Keep SFM closed and run Setup again to complete the installation."
+                    if not available:
+                        message += ("\n\nObtain the exact Workshop package used for this unfinished installation. "
+                                    "Required package SHA-256: " + op["package"])
+                    buttons = [("Retry", lambda: self.perform(self.retry))] if available else []
+                    buttons += [("Details", self.show_details), ("Close", self.close)]
+                    self.page("Installation incomplete", message, buttons)
                 return
-        if dialog("Save your SFM project and close SFM normally now.\n\n"
-                  "Click OK only after SFM has exited. The installer will check again "
-                  "and refuse if SFM is running or its state cannot be read.",
-                  MB_OKCANCEL | MB_ICONQUESTION) != IDOK:
+            # Removal is available even if the payload or Autoinit Manager is absent.
+            removal = core.removal_preview(self.game)
+            existing = bool(core._current_record(self.game) or any(
+                h is not None for p, h in removal.items() if core._program_path(p)))
+            try:
+                summary = core.preview(self.game, self.capture())
+            except Exception as exc:
+                self.details = str(exc)
+                buttons = [("Uninstall…", self.confirm_remove)] if existing else []
+                buttons += [("Details", self.show_details), ("Close", self.close)]
+                self.page("Setup needs attention", str(exc), buttons)
+                return
+            self.snapshot = summary["snapshot"]
+            message = UPDATE if summary["existing"] else FRESH
+            if summary["installed_version"]:
+                message = "Installed version: " + summary["installed_version"] + "\n\n" + message
+            buttons = [("Update / Reinstall" if summary["existing"] else "Install",
+                        lambda: self.perform(self.install))]
+            if existing:
+                buttons.append(("Uninstall…", self.confirm_remove))
+            buttons.append(("Cancel", self.close))
+            self.page("SFM Character Tools Setup", message, buttons)
+        except Exception as exc:
+            self.error(exc)
+
+    def perform(self, action):
+        if self.busy:
             return
-        dialog(core.install(game, prepared, replace_authority=replace,
-                            expected_authority=summary["authority_snapshot"]), MB_ICONINFORMATION)
-    finally:
-        prepared.close()
+        self.busy = True
+        self.window.set_busy(True)
+        try:
+            action()
+        except Exception as exc:
+            self.error(exc)
+        finally:
+            self.busy = False
+            self.window.set_busy(False)
+
+    def error(self, exc):
+        self.details = str(exc)
+        try:
+            op = core._operation(self.game)
+        except Exception:
+            op = None
+        message = ("Removal incomplete. Keep SFM closed and run Setup again to finish removal."
+                   if op and op["kind"] == "uninstall" else
+                   "Setup could not finish. Keep SFM closed and run Setup again to complete the installation."
+                   if op else "Setup could not complete this action.\n\n" + str(exc))
+        self.page("Setup needs attention", message,
+                  [("Review / Retry", self.refresh), ("Details", self.show_details), ("Close", self.close)])
+
+    def show_details(self):
+        # Details stay in the same owned window; no nested modal event loop.
+        if not self.details:
+            self.details = "Finish the recorded operation using the required package."
+        self.window.details(self.details)
+
+    def install(self):
+        result = core.install(self.game, self.capture(), self.snapshot)
+        self.success(result)
+
+    def retry(self):
+        result = core.recover(self.game, self.capture())
+        self.success(result)
+
+    def success(self, result):
+        message = ("SFM Character Tools is installed. Open SFM and choose Scripts → SFM Character Tools."
+                   "\n\nIf the CPM toolbar button is disabled, enable it in Autoinit Manager and restart SFM.")
+        buttons = []
+        if result["backup"]:
+            buttons.append(("Open Backups", lambda: os.startfile(str(core._state_path(self.game, "backups")))))
+        buttons.append(("Close", self.close))
+        self.page("Installation complete", message, buttons)
+
+    def confirm_remove(self):
+        try:
+            self.remove_snapshot = core.removal_preview(self.game)
+            self.page("Uninstall SFM Character Tools?", REMOVE,
+                      [("Uninstall", lambda: self.perform(self.finish_remove)), ("Cancel", self.refresh)])
+        except Exception as exc:
+            self.error(exc)
+
+    def finish_remove(self):
+        result = core.uninstall(self.game, getattr(self, "remove_snapshot", None))
+        message = ("SFM Character Tools has been removed. Your Animation Groups file and backups remain."
+                   "\n\nUnsubscribe from the Workshop item to remove its Setup menu entry.")
+        if result["remaining_helper"]:
+            message += "\n\nAfter closing Setup, delete the remaining Setup file:\n" + str(core._target(self.game, core.HELPER))
+        if result["authority_remaining"]:
+            message += "\n\nThe sidecar folder remains because it contains unrelated files:\n" + ", ".join(result["authority_remaining"])
+        if result["remaining_directories"]:
+            self.details = "Folders retained because they are nonempty or unavailable:\n" + "\n".join(result["remaining_directories"])
+            buttons = [("Details", self.show_details), ("Close", self.close)]
+        else:
+            buttons = [("Close", self.close)]
+        self.page("Removal complete", message, buttons)
+
+    def close(self):
+        if not self.busy:
+            self.window.close()
+
+    def run(self):
+        try:
+            self.window.run()
+        finally:
+            if self.prepared:
+                self.prepared.close()
+
+
+class _SetupParser(argparse.ArgumentParser):
+    def _print_message(self, message, file=None):
+        # A windowed executable has no stdout/stderr. argparse help/errors must
+        # not create a bootloader exception dialog before Setup opens.
+        output = file or sys.stderr or sys.stdout
+        if message and output is not None:
+            output.write(message)
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--game", required=True, help="SFM game directory")
+    parser = _SetupParser()
+    parser.add_argument("--game", required=True)
     parser.add_argument("--manage", action="store_true")
     args = parser.parse_args(argv)
     try:
         game = core._validate_game(args.game)
-        if args.manage:
-            _manage(game)
-        else:
-            record = core._current_record(game)
-            if record and record["status"] == "PREPARED":
-                if dialog("A previous installation was interrupted.\n\n"
-                          "Restore the verified previous files before starting again?\n"
-                          "SFM must be closed.", MB_OKCANCEL | MB_ICONQUESTION) == IDOK:
-                    dialog(core.recover(game), MB_ICONINFORMATION)
-            elif record and record["status"] == "UNINSTALLING":
-                dialog("Removal was interrupted. Use Manage Installation to finish it.", MB_ICONERROR)
-                return 1
-            else:
-                _install(game, Path(sys.executable))
     except Exception as exc:
-        dialog(str(exc), MB_ICONERROR)
+        window = Window("SFM Character Tools Setup")
+        window.page("Setup needs attention", "", "Setup could not use this SFM location.\n\n" + str(exc),
+                    [("Close", window.close)])
+        window.run()
         return 1
+    executable = Path(sys.executable)
+    # Installed management can uninstall without this source. Install/retry still
+    # require the exact verified package; never use installed application files.
+    candidates = [executable.parent / release.ARCHIVE,
+                  game / "workshop" / "scripts" / "sfm" / "mainmenu" /
+                  "SFM Character Tools" / "_workshop_installer" / release.ARCHIVE]
+    package = next((p for p in candidates if p.is_file()), None)
+    SetupWindow(game, package, executable).run()
     return 0
 
 
