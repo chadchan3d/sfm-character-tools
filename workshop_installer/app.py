@@ -13,7 +13,8 @@ from . import core
 from .window import Window
 
 FRESH = ("Install Control Group Normalizer, Character Preset Manager, Control Group Updater "
-         "and the CPM toolbar button.\n\nThe included Animation Groups will be installed. "
+         "and the CPM toolbar files. Autoinit Manager is optional and enables the toolbar button."
+         "\n\nThe included Animation Groups will be installed. "
          "If you already have an Animation Groups file, Setup will back it up before "
          "replacing it. Custom edits will not be merged.")
 UPDATE = ("Replace the installed Character Tools programs and Animation Groups with this "
@@ -259,7 +260,8 @@ class SetupWindow:
         buttons.append(("Close", self.close))
         self.page("Installation complete",
                   "Close Setup, then open SFM and choose Scripts → SFM Character Tools.\n\n"
-                  "If the CPM toolbar button is disabled, enable it in Autoinit Manager and restart SFM.", buttons)
+                  "For the optional CPM toolbar button, install Autoinit Manager, enable the button there, "
+                  "then restart SFM. No Character Tools reinstall is needed.", buttons)
 
     def confirm_remove(self):
         self.start("Preparing removal", lambda: core.removal_preview(self.game), self.removal_consent)

@@ -120,3 +120,35 @@ The earlier owner-operated bounded practical acceptance remains accepted. It is 
 ### Sanitation
 
 PUBLIC REPOSITORY SANITATION: PASS, subject to final published-commit verification. Proposed source/history and PR metadata were checked; the staged manifest contains relative paths only. All 5,464 decoded executable code objects were checked for identifying build paths. Build outputs, private fixture files, raw logs and screenshots are excluded. Authorized public project identifiers and commit email remain.
+
+## Owner amendment — Autoinit Manager is optional
+
+This amendment supersedes the earlier mandatory-Autoinit installation and recovery policy. Earlier results remain historical evidence for their identified candidates; they are not qualification of this amendment.
+
+`preview()`, `install()` and `recover()` no longer require Autoinit Manager or read its mount configuration. Uninstall remains independent. The existing mount-inspection helper is retained but is not called by any installation path; its historical tests do not establish an admission requirement.
+
+Both unchanged toolbar files are installed with the three main tools. Source inspection of the pinned ZIP establishes that the bootstrap is only under `scripts/sfm/autoinit/ChadChan3D/`, while the private implementation is outside both Scripts-menu and startup discovery trees. Setup installs no `sfm_init_local.py` or startup hook. The bootstrap imports standard-library modules; the implementation imports Qt/SFM dependencies but neither depends on Autoinit Manager modules or its shared globals. In the absence of a loader executing that bootstrap, the files are inactive. Later installation/enabling through Autoinit requires no Character Tools reinstall. No native SFM startup is claimed for this source-inspection conclusion.
+
+### Focused results
+
+**7/7 PASS** on Windows/Python 3.10.6:
+
+1. Full 1,006-file installation and uninstall without Autoinit or gameinfo.txt; all installed hashes verified.
+2. Fresh installation and reinstall/repair without Autoinit, even with uninterpretable mount configuration; both toolbar hashes correct and original custom TXT backup preserved.
+3. Interrupted installation recovery after Autoinit/configuration removal; exact original backup retained, toolbar pair complete, subsequent uninstall succeeds.
+4. Existing Autoinit-present toolbar pair repair and uninstall regression.
+5. Wrong recovery package and intervening TXT edits still refuse.
+6. Real Windows Updater installation lock still excludes installation.
+7. Failed required TXT backup still prevents program changes.
+
+The 15 interface/process-query tests also passed after the wording amendment. There are now 40 available suite methods; the full suite was not rerun merely to repeat unrelated tests. The earlier 39/39 result belongs to the preceding usability candidate.
+
+The amended helper was rebuilt and restaged. Current SHA-256:
+
+```text
+e9cd4054c48073deb843cfaff4c907164d4be71be0d3290cb24a377ac58abf73
+```
+
+All four staged files were verified; the original ZIP and both button-file identities remain unchanged. The new helper's 5,464 decoded code objects also pass the identifying-build-path scan. PUBLIC REPOSITORY SANITATION: PASS following source/history and artifact review.
+
+The preceding startup measurements remain evidence for that candidate, not new timing measurements of this rebuilt executable. The outstanding visible desktop checks and final Owner-operated SFM presentation checks remain pending. No live SFM installation, application source, original release ZIP, signing, PR merge or Workshop publication was changed.

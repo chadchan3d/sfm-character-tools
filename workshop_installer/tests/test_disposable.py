@@ -70,6 +70,10 @@ class DisposableInstallTests(unittest.TestCase):
         return list(p.iterdir()) if p.exists() else []
 
     def test_full_release_install_and_remove(self):
+        # Main tools and inert toolbar files must install with no Autoinit or
+        # interpretable gameinfo configuration at all.
+        shutil.rmtree(self.game / "workshop" / "scripts")
+        (self.game / "usermod" / "gameinfo.txt").unlink()
         self.assertEqual(len(self.full.files), 1006)
         self.install(self.full)
         for rel, wanted in self.full.files.items():
@@ -177,21 +181,44 @@ class DisposableInstallTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             core.recover(self.game)  # No fallback to installed files or a different package.
 
-    def test_recover_requires_autoinit_but_uninstall_does_not(self):
+    def test_recovery_without_autoinit_retains_backup_and_uninstalls(self):
+        self.write(core.MASTER, b"original TXT")
         self.interrupt_install()
-        autoinit = self.game / "workshop" / "scripts" / "sfm" / "autoinit" / "autoinit_manager.py"
-        original = autoinit.read_bytes()
-        autoinit.unlink()
-        with mock.patch.object(core, "_put_file", side_effect=AssertionError("recovery wrote a file")):
-            with self.assertRaisesRegex(core.Refusal, "Restore Autoinit Manager"):
-                core.recover(self.game, self.prepared)
-        self.assertEqual(core._operation(self.game)["kind"], "install")
-        autoinit.write_bytes(original)
-        core.recover(self.game, self.prepared)
+        backup = self.backups()[0]
+        shutil.rmtree(self.game / "workshop" / "scripts")
+        (self.game / "usermod" / "gameinfo.txt").unlink()
+        with mock.patch.object(core, "_check_autoinit", side_effect=AssertionError("Autoinit is optional")):
+            core.recover(self.game, self.prepared)
         self.assertIsNone(core._operation(self.game))
-        autoinit.unlink()
+        self.assertEqual(self.backups(), [backup])
+        self.assertEqual(backup.read_bytes(), b"original TXT")
+        for rel in (core.BUTTON, core.BUTTON_IMPL):
+            self.assertEqual(core.digest_file(self.target(rel)), self.prepared.files[rel])
         self.uninstall()
         self.assertFalse(self.target(core.MANAGER).exists())
+        self.assertTrue(self.target(core.MASTER).exists())
+        self.assertEqual(backup.read_bytes(), b"original TXT")
+
+    def test_install_and_reinstall_without_autoinit_keep_toolbar_ready(self):
+        shutil.rmtree(self.game / "workshop" / "scripts")
+        (self.game / "usermod" / "gameinfo.txt").write_text("unsupported mount syntax", encoding="utf-8")
+        self.write(core.MASTER, b"custom Animation Groups")
+        with mock.patch.object(core, "_check_autoinit", side_effect=AssertionError("Autoinit is optional")):
+            self.install()
+            program = "scripts/sfm/mainmenu/SFM Character Tools/Rebuild_Control_Groups_Normalizer.py"
+            self.target(program).write_bytes(b"disposable modified program")
+            self.install()
+        self.assertEqual(core.digest_file(self.target(program)), self.prepared.files[program])
+        for rel in (core.BUTTON, core.BUTTON_IMPL):
+            self.assertEqual(core.digest_file(self.target(rel)), core.BUTTON_HASHES[rel])
+        # No native startup script is installed to run the optional integration.
+        self.assertFalse((self.game / "usermod/scripts/sfm/sfm_init_local.py").exists())
+        self.assertTrue(any(p.read_bytes() == b"custom Animation Groups" for p in self.backups()))
+        with mock.patch.object(core, "_check_autoinit", side_effect=AssertionError("Autoinit is optional")):
+            self.uninstall()
+        self.assertFalse(self.target(core.BUTTON).exists())
+        self.assertFalse(self.target(core.BUTTON_IMPL).exists())
+        self.assertTrue(self.target(core.MASTER).exists())
 
     def test_consent_snapshot_and_process_checks(self):
         summary = core.preview(self.game, self.prepared)

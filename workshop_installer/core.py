@@ -404,136 +404,7 @@ def _updater_records_clear(game):
             _plain(path)
         if (updater_journal.intent_schema(layout, entry) != updater_journal.SCHEMA or
                 updater_journal.transaction_status(layout, entry) not in updater_journal.TERMINAL):
-            raise Refusal("Unresolved updater transaction; run updater recovery first")
-
-
-class _Lock:
-    def __init__(self, game):
-        self.game = game
-        self.handle = None
-
-    def __enter__(self):
-        cfg = self.game / "usermod" / "cfg"
-        if not cfg.is_dir():
-            raise Refusal("SFM usermod/cfg is unavailable")
-        lock_dir = cfg / "sfm_character_tools_updater"
-        _plain(lock_dir)
-        lock_dir.mkdir(exist_ok=True)
-        path = lock_dir / "installation.lock"
-        _plain(path)
-        self.handle, err = w32.create_file(str(path), w32.GENERIC_READ | w32.GENERIC_WRITE,
-                                            0, w32.OPEN_ALWAYS, inherit=False)
-        if self.handle is None:
-            raise Refusal("Control Group Updater installation lock is busy (%s)" % w32.ename(err))
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        if self.handle is not None:
-            w32.close(self.handle)
-            self.handle = None
-
-
-
-# Paths in these dedicated program namespaces may be retained from a prior receipt.
-# No directory walk is used to infer ownership.
-PROGRAM_ROOTS = (
-    "scripts/ChadChan3D_CPM/", "scripts/SFM Character Tools/",
-    "scripts/sfm/mainmenu/SFM Character Tools/", "tools/SFM Control Group Updater/",
-    "tools/SFM Character Tools Installer/",
-)
-
-
-def _program_path(rel):
-    _validate_rel(rel)
-    return (rel in (BUTTON, BUTTON + "c", BUTTON + "o") or
-            any(rel.startswith(root) for root in PROGRAM_ROOTS))
-
-
-def _derived(paths):
-    return {p + suffix for p in paths if p.endswith(".py") for suffix in ("c", "o")}
-
-
-def _authority_paths(prepared):
-    return {MASTER, MANIFEST, prepared.sidecar}
-
-
-def _recognized_sidecars(game):
-    root = _target(game, AUTH_DIR)
-    if not root.exists():
-        return set()
-    if not root.is_dir():
-        raise Refusal("The sidecar location is not a directory")
-    return {AUTH_DIR + "/" + p.name for p in root.iterdir()
-            if AUTH_RE.fullmatch(AUTH_DIR + "/" + p.name)}
-
-
-def _receipt_paths(record):
-    return set(record["programs"]) if record else set()
-
-
-def _current_record(game):
-    path = _state_path(game, "installation.json")
-    if not path.exists():
-        return None
-    record = _read_json(path)
-    if record.get("schema") != STATE_SCHEMA:
-        raise Refusal("Unrecognized installation record; no files were changed")
-    paths = record.get("programs")
-    if (not isinstance(paths, list) or len(paths) > 10000 or
-            len(set(paths)) != len(paths) or not all(_program_path(p) for p in paths)):
-        raise Refusal("Invalid installation file list")
-    if not _hash_value(record.get("package")) or not isinstance(record.get("version"), str):
-        raise Refusal("Invalid installation identity")
-    return record
-
-
-def _hash_value(value):
-    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
-
-
-def _operation(game):
-    path = _state_path(game, "operation.json")
-    if not path.exists():
-        return None
-    record = _read_json(path)
-    if (record.get("schema") != STATE_SCHEMA or record.get("kind") not in ("install", "uninstall") or
-            not TXID_RE.fullmatch(record.get("id", ""))):
-        raise Refusal("Unrecognized unfinished setup operation")
-    entr…528 tokens truncated… not in _authority_paths(prepared)}
-    obsolete = (_receipt_paths(prior) | set(release.OBSOLETE)) - programs
-    if not all(_program_path(p) for p in programs | obsolete):
-        raise Refusal("Package contains an unsupported program location")
-    obsolete |= _derived(obsolete)
-    obsolete |= _recognized_sidecars(game) - {prepared.sidecar}
-    entries = []
-    for rel in sorted(set(prepared.files) | obsolete):
-        entries.append({"path": rel, "old": _existing_hash(_target(game, rel)),
-                        "new": prepared.files.get(rel)})
-    return entries, sorted(programs)
-
-
-def preview(game, prepared):
-    game = _validate_game(game)
-    _legacy_record_clear(game)
-    if not _check_autoinit(game):
-        raise Refusal("Install Autoinit Manager before installing the CPM toolbar button.")
-    if _operation(game):
-        raise Refusal("An unfinished Setup operation must be completed first.")
-    entries, programs = _classify(game, prepared)
-    prior = _current_record(game)
-    return {"existing": bool(prior or any(e["old"] is not None for e in entries
-                                          if _program_path(e["path"]))),
-            "installed_version": prior["version"] if prior else None,
-            "version": prepared.version, "programs": programs,
-            "snapshot": {e["path"]: e["old"] for e in entries}}
-
-
-def removal_preview(game):
-    game = _validate_game(game)
-    _legacy_record_clear(game)
-    prior = _current_record(game)
-    programs = _receipt_paths(prior) | {p for p in release.PATHS
-                                       if p not in (MASTER, MANIFEST) and not AUTH_RE.fullmatch(p)}
+            raise Refusal("Unresolved updater transaction; run updater recove…1761 tokens truncated… MANIFEST) and not AUTH_RE.fullmatch(p)}
     programs |= {HELPER, MANAGER} | set(release.OBSOLETE)
     if not all(_program_path(p) for p in programs):
         raise Refusal("Invalid removal file list")
@@ -744,8 +615,6 @@ def _finish_install(game, prepared, record):
 def install(game, prepared, expected_snapshot):
     game = _validate_game(game)
     _legacy_record_clear(game)
-    if not _check_autoinit(game):
-        raise Refusal("Install Autoinit Manager before installing the CPM toolbar button.")
     _check_sources(prepared)
     _process_clear()
     with _Lock(game), _LegacyLock(game):
@@ -770,8 +639,6 @@ def install(game, prepared, expected_snapshot):
 def recover(game, prepared):
     game = _validate_game(game)
     _legacy_record_clear(game)
-    if not _check_autoinit(game):
-        raise Refusal("Restore Autoinit Manager before Setup can finish the interrupted installation.")
     _process_clear()
     with _Lock(game), _LegacyLock(game):
         _process_clear()

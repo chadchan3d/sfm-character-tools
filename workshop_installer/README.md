@@ -1,12 +1,12 @@
 # SFM Character Tools Workshop Setup
 
-Setup installs the unchanged v1.0.0 release ZIP, including Control Group Normalizer, Character Preset Manager, Control Group Updater and both CPM toolbar-button files. It requires Autoinit Manager for installation; it does not modify that dependency or its settings.
+Setup installs the unchanged v1.0.0 release ZIP, including Control Group Normalizer, Character Preset Manager, Control Group Updater and both CPM toolbar-button files. Autoinit Manager is optional: it enables the toolbar button, but is not needed to install or use the three main tools. Setup does not modify Autoinit Manager or its settings.
 
-Setup finds Autoinit Manager in the `Game` mounts declared in `usermod/gameinfo.txt`, including mounted folders such as `workshop_archive`. It supports the standard `|gameinfo_path|.` anchor and ordinary relative directories within the installation. Unsupported paths, conditionals or include directives stop dependency verification with an explanation. Unmounted folders do not qualify.
+Both toolbar files are installed unconditionally. The bootstrap is inside Autoinit Manager's startup tree, and its private implementation is outside SFM's Scripts-menu and startup discovery trees. Without Autoinit Manager, neither runs automatically. Install Autoinit Manager later, enable the CPM button there and restart SFM; reinstalling Character Tools is unnecessary. Install, update, recovery and uninstall do not require Autoinit or parse its mount configuration.
 
 ## User flow
 
-Subscribe, install Autoinit Manager, then choose **Scripts → SFM Character Tools → Install or Update (Windows Setup)**. Review the destination and replacement notice. Save your project and close SFM normally before choosing **Install** or **Update / Reinstall**. Setup checks again and refuses a running or uncheckable SFM process.
+Subscribe, then choose **Scripts → SFM Character Tools → Install or Update (Windows Setup)**. Review the destination and replacement notice. Save your project and close SFM normally before choosing **Install** or **Update / Reinstall**. Setup checks again and refuses a running or uncheckable SFM process.
 
 Leave Setup open while closing SFM. Steam may continue to show SFM as Running until Setup closes; do not use Steam's Stop button to close Setup. After installation, close Setup before starting SFM again.
 
@@ -22,7 +22,7 @@ The two menu entries remain separate: the Workshop entry supplies installation/u
 
 ## Interruption and removal
 
-An interrupted installation is completed from the exact verified package used to begin it. Keep SFM closed and run Setup again. If that package is absent, obtain it again. Restore Autoinit Manager if it is missing. Setup does not restore an older program version, retain previous application binaries, or claim that a multi-file update is atomic. If a destination file changed after the interruption, Setup identifies it and stops automatic recovery. Preserve the change and seek recovery assistance; Setup will not overwrite it on retry. The original TXT backup is never overwritten on retry.
+An interrupted installation is completed from the exact verified package used to begin it. Keep SFM closed and run Setup again. If that package is absent, obtain it again. Setup does not restore an older program version, retain previous application binaries, or claim that a multi-file update is atomic. If a destination file changed after the interruption, Setup identifies it and stops automatic recovery. Preserve the change and seek recovery assistance; Setup will not overwrite it on retry. The original TXT backup is never overwritten on retry.
 
 Uninstall removes known programs, dependencies, both button files, installed menu entries, the manifest and recognized sidecars. It keeps the TXT, TXT backups, unrelated files, and existing updater records and independent backups. Modified program files are included in the explicit removal consent. Shared directories are never recursively deleted.
 
