@@ -8,7 +8,7 @@ Both toolbar files are installed unconditionally. The bootstrap is inside Autoin
 
 Subscribe, then choose **Scripts → SFM Character Tools → Install or Update (Windows Setup)**. Review the destination and replacement notice. Save your project and close SFM normally before choosing **Install** or **Update / Reinstall**. Setup checks again and refuses a running or uncheckable SFM process.
 
-Leave Setup open while closing SFM. Steam may continue to show SFM as Running until Setup closes; do not use Steam's Stop button to close Setup. After installation, close Setup before starting SFM again.
+Leave Setup open while closing SFM. Steam may continue to show SFM as Running until Setup closes. After installation, close Setup before starting SFM again.
 
 Setup shows **Preparing Setup** before extracting and verifying the package. Its window stays available while one worker performs file operations. Installation, removal and recovery cannot overlap; Close is unavailable during an active operation. **Back to Setup** returns to a fresh review, without automatically repeating an operation. A running SFM process produces close-SFM instructions; an unreadable process check remains a separate refusal.
 
