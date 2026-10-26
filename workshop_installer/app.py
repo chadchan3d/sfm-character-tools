@@ -17,8 +17,7 @@ FRESH = ("Setup will install SFM Character Tools version {version}.\n\n"
 UPDATE = ("Setup will {verb} SFM Character Tools version {version}.\n\n"
           "Your current Animation Groups file will be backed up before replacement.")
 CLOSE_SFM = ("Close Source Filmmaker. Keep this window open, then click {action}.\n\n"
-             "Steam may still show SFM as Running while Setup is open. "
-             "You can ignore this status; don't click Stop in Steam.")
+             "Steam may still show SFM as Running while Setup is open.")
 REMOVE = ("Setup will remove the Character Tools programs, scripts, toolbar button, and support files."
           "\n\nYour Animation Groups file and backups will remain.")
 TOOLBAR = ("Optional CPM toolbar button\n"
