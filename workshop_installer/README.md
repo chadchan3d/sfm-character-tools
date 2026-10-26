@@ -1,6 +1,8 @@
 # SFM Character Tools Workshop Setup
 
-Setup installs the unchanged v1.0.0 release ZIP, including Control Group Normalizer, Character Preset Manager, Control Group Updater and both CPM toolbar-button files. Autoinit Manager is optional: it enables the toolbar button, but is not needed to install or use the three main tools. Setup does not modify Autoinit Manager or its settings.
+Setup installs the qualified original v1.0.0 archive (Archive A), including Control Group Normalizer, Character Preset Manager, Control Group Updater and both CPM toolbar-button files. Autoinit Manager is optional: it enables the toolbar button, but is not needed to install or use the three main tools. Setup does not modify Autoinit Manager or its settings.
+
+The Workshop payload is intentionally distinct from the current GitHub v1.0.0 download (Archive B). Archive A has SHA-256 `5323b1431a200c0bea3641e7dcb2f9fac45920d889f749ac9bf07972f5a89458`; Archive B has SHA-256 `1e128e1fa536f1b24c032299ecc19fd1cb53ba5645cb7ca58819b1e0792817ba`. Only `OPTIONAL - CPM Button/README.txt` differs, following an Owner-approved documentation update. All other 1,005 entries are byte-identical, and Setup excludes this README from installation. Installed programs and data are identical. See `QUALIFICATION.md` for provenance and the Owner's acceptance of both identities.
 
 Both toolbar files are installed unconditionally. The bootstrap is inside Autoinit Manager's startup tree, and its private implementation is outside SFM's Scripts-menu and startup discovery trees. Without Autoinit Manager, neither runs automatically. Install Autoinit Manager later, enable the CPM button there and restart SFM; reinstalling Character Tools is unnecessary. Install, update, recovery and uninstall do not require Autoinit or parse its mount configuration.
 
@@ -38,7 +40,7 @@ File selection uses the Windows Shell API, without command-line quoting. A selec
 
 ## Package and filesystem protection
 
-The publisher-maintained `release.py` binds the version, archive filename, SHA-256 and full mapped file list. The original ZIP is unchanged. Setup checks its hash, archive paths, authority consistency, the 31 inventory entries' hashes/sizes and signature-file presence. It does **not** independently verify the inventory's cryptographic signature.
+The publisher-maintained `release.py` binds the version, archive filename, SHA-256 and full mapped file list to Archive A, which remains unchanged. It does not accept Archive B as an interchangeable ZIP. Setup checks its hash, archive paths, authority consistency, the 31 inventory entries' hashes/sizes and signature-file presence. It does **not** independently verify the inventory's cryptographic signature.
 
 Setup snapshots verified source contents outside Workshop before installation, rejects destination/state reparse points, uses the existing Updater installation lock, and refuses unresolved updater operations. Completion requires checking all intended installed files and removals. These checks do not protect against an administrator deliberately racing filesystem changes or a user manually starting SFM after an interrupted operation.
 
@@ -59,4 +61,4 @@ Publication is separate: follow the already-qualified Scripts-category procedure
 
 ## Acceptance boundary
 
-The prior owner-operated practical acceptance is complete within its recorded boundary, including installation, bounded tool use, toolbar activation, payload-independent uninstall, retained TXT/backups and reinstallation. Earlier accepted lock evidence remains applicable. This usability revision requires focused Windows interface checks, not repetition of unchanged application qualification. Final SFM checks are Owner-operated. Clean-subscriber download/launch and Valve policy disposition remain separate public-Workshop release conditions. Gate 0 and Gate 1 are not repeated.
+Qualification is complete within its recorded boundary. The Owner reports all six final GUI checks PASS and successful Steam Workshop upload, removal of the local publishing copy, subscription/download, installation without preexisting Character Tools, and launch of all three applications. These are Owner observations, separate from the final 21/21 automated checks and artifact verification. Earlier accepted installation, bounded tool use, toolbar activation, payload-independent uninstall, retained TXT/backups, reinstallation and locking evidence remains applicable. The Owner accepts the Workshop distribution decision and the documentation-only archive distinction. No further subscriber or application qualification is required. The remaining publication actions are the Owner's public visibility change and release announcement; this is not a claim of separate Valve policy approval.

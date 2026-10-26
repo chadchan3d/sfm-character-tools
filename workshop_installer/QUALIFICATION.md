@@ -225,3 +225,42 @@ Paths below are relative to the staging root, under `scripts/sfm/mainmenu/SFM Ch
 Distribution-test archive: `SFM_Character_Tools_Workshop_Installer_Final_20261026.zip`, **23,553,562 bytes**, SHA-256 `ebac2b9dea2d0da6fefcb4eb85617d87459593d0ae9d5923e3630580c53b07a8`. It contains exactly the four staged files, without an enclosing directory. The wrapper is for distribution-test preparation, not a change to the original software release ZIP.
 
 **READY FOR DISTRIBUTION TEST. PUBLIC REPOSITORY SANITATION: PASS.** No live SFM changes, merge or Workshop publication occurred. Final clean-subscriber Steam Workshop delivery/launch and distribution-policy decisions remain with the Owner.
+
+## Final qualification closeout and archive decision — 26 October 2026
+
+**RELEASE READY — Owner acceptance complete.** This closeout supersedes the historical pending distribution-test and Owner decision statuses above. Earlier entries describe the evidence available at their respective checkpoints and remain preserved.
+
+### Owner-reported Workshop acceptance
+
+The Owner reports **PASS** for the final Workshop distribution and clean-install test:
+
+1. Staged the final Workshop package in `usermod` and uploaded it to Steam.
+2. Removed the local publishing copy.
+3. Subscribed and downloaded the package through SFM.
+4. Confirmed that no Character Tools were installed before testing.
+5. Installed through the Workshop-delivered installer.
+6. Launched all three applications and confirmed basic operation.
+
+These are Owner observations establishing delivery, clean installation, Scripts-menu integration and basic operation. No independent screenshots, trace logs or measurements are asserted. The six previously accepted Owner GUI checks, independent code review, final Windows build, 21/21 focused automated tests, staging integrity and sanitation evidence remain accepted. No campaign was repeated. The Owner accepts the Workshop distribution decision; no additional subscriber test or application qualification is required. This records the Owner's decision, not separate Valve policy approval.
+
+### Approved archive distinction and provenance
+
+| Identity | Purpose | Bytes | SHA-256 |
+| --- | --- | ---: | --- |
+| Archive A | Qualified Steam Workshop installer payload; original published software ZIP | 17,667,566 | `5323b1431a200c0bea3641e7dcb2f9fac45920d889f749ac9bf07972f5a89458` |
+| Archive B | Authoritative current GitHub `v1.0.0` download | 17,666,478 | `1e128e1fa536f1b24c032299ecc19fd1cb53ba5645cb7ca58819b1e0792817ba` |
+
+Archive A's original GitHub publication is recorded by commit `2ff801b8cc99ece429c51509876c6d1bcf6d4b14`. Commit `14826373a90f105077a988e80b48734dafaaea0c` records the subsequent Owner-approved simplification of `OPTIONAL - CPM Button/README.txt` and replacement of the GitHub ZIP/checksum assets with Archive B. The Workshop installer pinned Archive A from its first implementation and retains it by explicit Owner decision. It is not byte-identical to the current GitHub download; earlier references to the unchanged or original ZIP mean Archive A, not Archive B.
+
+The independent read-only comparison verified both archive hashes, ZIP integrity and SHA-256 hashes for every entry. Both archives contain 1,006 entries, with identical paths/order, no missing/additional entries and no duplicate paths. Only the optional-button README differs:
+
+| README identity | Bytes | Compressed bytes | SHA-256 |
+| --- | ---: | ---: | --- |
+| Archive A | 4,956 | 2,028 | `49957781ee009ba5b1742ad4bf47048816c9074b67fc999836341dd512882eba` |
+| Archive B | 2,090 | 940 | `06af2636d6ad8b53a9031dd00a1b3fa57aae637ebd9f428e30ddc1e9265252b9` |
+
+The 1,088-byte archive-size difference equals the README's compressed-size difference. The other 1,005 entries match in uncompressed bytes and stored compressed payloads, including programs, executables, Animation Groups TXT, sidecar, manifest, signed inventory and both toolbar scripts. Setup's `_map_member()` excludes this README from installation. There is no installed application/data difference and no reason to rebuild or repeat application qualification.
+
+The Owner explicitly approves retaining A for Workshop and B for the current GitHub release. Neither archive, existing release asset, tag, executable or tested Workshop payload is changed by this closeout. The final Setup and four-file staging ZIP retain the identities recorded above; build source remains `eed44a919620f1926f28817892ac0dd00b137dbc`.
+
+**PUBLIC REPOSITORY SANITATION: PASS.** This closeout changes documentation only, uses public identifiers and relative paths, and contains no private evidence or build artifacts. PR #3 merge into its existing `master` target is Owner-authorized after integrity checks. Making the tested Workshop item public and publishing the announcement remain Owner actions.
