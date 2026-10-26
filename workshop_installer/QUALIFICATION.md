@@ -188,3 +188,40 @@ Using this corrected build, verify the final pages and quiet Close behavior. Aft
 The previously pending extended move/minimize/repaint check remains pending unless directly observed by the Owner. Final SFM checks remain Owner-operated. No live installation, SFM startup, Gate 0/1 repetition, application changes, merge or Workshop publication occurred.
 
 PUBLIC REPOSITORY SANITATION: PASS for the proposed correction and staged artifact. Source/diff and metadata were inspected; all 5,469 decoded executable code objects passed the identifying-build-path scan. Private raw evidence and disposable fixtures are excluded from the repository. Final published blob identities are checked before handoff.
+
+## Final Windows distribution-test build — 26 October 2026
+
+This entry supersedes the pending Owner GUI conditions above. The Owner explicitly reports all six GUI acceptance checks **PASS**, including actual Explorer selection, deletion after closing Setup, final presentation and closing behavior. These are Owner observations of the accepted candidate, not automated results or observations repeated on the final text-only rebuild.
+
+Build source: `eed44a919620f1926f28817892ac0dd00b137dbc`, tree `fdad2cdd0afa3b29795ae18a0da054966d2ac50d`. The checkout was clean and matched the published PR branch before building. Commits `11166336` and `eed44a91` remove only the unnecessary Steam Stop warning from Setup and README. The retained notice is: **Steam may still show SFM as Running while Setup is open.** No installation, backup, locking, recovery, removal or application behavior changed.
+
+Final build: Windows Python **3.10.6**, existing locked PyInstaller **6.11.1** environment; one-file, windowed `SCT_Setup.exe`. No dependency installation or upgrade occurred.
+
+| Verification | Result |
+| --- | --- |
+| Focused interface/process-query suite | PASS, 21/21 on final source |
+| Windows executable build and bounded `--help` startup | PASS, exit 0 |
+| Bundled app/window/core/release code versus final source | PASS |
+| Removed warning absent from bundled Python code and current app/README | PASS |
+| Four-file staging, manifest hashes/sizes and exact ZIP member structure | PASS |
+| Original v1.0.0 release ZIP identity | PASS, unchanged |
+| Public correction history, documentation, manifest and executable code sanitation | PASS; 5,469 decoded code objects inspected |
+| Owner's six GUI observations on accepted presentation candidate | PASS, Owner-reported |
+| Repetition of Owner GUI/application campaign on text-only rebuild | NOT TESTED; deliberately not repeated |
+| Clean-subscriber delivery/launch of this final package | NOT TESTED; next Owner-operated test |
+| Public Workshop policy disposition | PENDING; separate release decision |
+
+### Final artifact identities
+
+Paths below are relative to the staging root, under `scripts/sfm/mainmenu/SFM Character Tools/`.
+
+| File | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `Install or Update (Windows Setup).py` | 1,867 | `e8bcfb38183675dfa132848ed2c65ebb0ba44cf1a9b409268273bffab4018793` |
+| `_workshop_installer/SCT_Setup.exe` | 6,749,429 | `9375f0ff7d6009ffa32a13785ca88e001eae9b17d85983af6090a5eb60f55a12` |
+| `_workshop_installer/SFM.Character.Tools.v1.0.0.zip` | 17,667,566 | `5323b1431a200c0bea3641e7dcb2f9fac45920d889f749ac9bf07972f5a89458` |
+| `_workshop_installer/installer_manifest.json` | 732 | `2840f4e206f2bcc6f0105d173c3e44f5141dc04858cbb058d14a925314f0b3a0` |
+
+Distribution-test archive: `SFM_Character_Tools_Workshop_Installer_Final_20261026.zip`, **23,553,562 bytes**, SHA-256 `ebac2b9dea2d0da6fefcb4eb85617d87459593d0ae9d5923e3630580c53b07a8`. It contains exactly the four staged files, without an enclosing directory. The wrapper is for distribution-test preparation, not a change to the original software release ZIP.
+
+**READY FOR DISTRIBUTION TEST. PUBLIC REPOSITORY SANITATION: PASS.** No live SFM changes, merge or Workshop publication occurred. Final clean-subscriber Steam Workshop delivery/launch and distribution-policy decisions remain with the Owner.
