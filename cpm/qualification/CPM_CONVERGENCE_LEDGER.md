@@ -1,19 +1,19 @@
 # Ledger — SFM Character Tools
-**Checkpoint:** 2026-10-26 (M-05 repository integration). Current status replaces the stale L-5/pre-release snapshot; historical detail remains in Git history. **Stop implementation.**
+**Checkpoint:** 2026-10-26 (M-05 closed). Current status replaces the stale L-5/pre-release snapshot; historical detail remains in Git history. **Stop implementation.**
 
 ## Authority and revision
-- **Authoritative repository:** `chadchan3d/sfm-character-tools`. GitHub `master` immediately before this checkpoint: `ff220d3b31da696cd4dba552a8bff485a865a469` (previous Ledger checkpoint); local `master` was fast-forwarded to it before integration (no reset, rebase or force).
+- **Authoritative repository:** `chadchan3d/sfm-character-tools`. GitHub `master` immediately before this checkpoint: `e5197e2bc31fc5d9771f5549283fc8cab017458c` (M-05 integration; preceded by `ff220d3…`, to which local `master` was fast-forwarded without reset, rebase or force).
 - **Frozen Blueprint:** `cpm/qualification/R15_IMPLEMENTATION_BLUEPRINT.md`, Final R15 Implementation Blueprint dated **2026-09-30**, frozen from `bd169401…` with Clarifications A/B. This is the authoritative R15 architecture, **not** a substitute for the M-05 design. Blueprint unchanged.
 - **Approved decision outside that Blueprint:** owner-approved **Astra M-05 Production Correction Design (2026-10-24)**, retained as an external review attachment, not integrated into the R15 Blueprint: narrowly admit coherent static mode-3 bone-scale graphs, preserve channel mode, and verify changed Apply once after commit on the ordinary event loop. No automatic postcommit Undo; fail closed. **Do not substitute mode-3→mode-1 conversion**: native experiments showed delayed physical evaluation in both modes.
 - **UNAPPROVED proposals:** changes to flex import/capture/Apply rules; CPM Pose Library (F-01); skins/bodygroups (F-02); unrelated maintenance features. No additional Blueprint revision or release target approved for them.
 
 ## Current milestone and done criteria
-**M-05 — NATIVE QUALIFICATION PASS; REPOSITORY INTEGRATION COMPLETE.** Awaiting designer review for formal closure.
+**M-05 — CLOSED (2026-10-26, designer adjudication).** The designer verified commit `e5197e2bc31fc5d9771f5549283fc8cab017458c`, independently confirmed the three committed source/test SHA-256 values, and accepted the seven native qualification gates and the exact restoration evidence. Native qualification PASS; repository integration complete. The limitations below remain in force.
 - **Done criteria met (2026-10-26):** the exact candidate passed the bounded real-SFM Krystal fixture — complete Body Save (head ≈1.13), changed mode-3 Apply with truthful deferred physical verification, stable evaluation, complete native Undo/Redo, true no-op, and disposable save/reopen — followed by exact installation/session restoration. Evidence: `cpm/qualification/M05_NATIVE_QUALIFICATION_EVIDENCE.md`.
 - **Product baseline:** v1.0.0 already public on GitHub (published 2026-10-24), with Workshop distribution linked from README; L-6/release historical qualification is complete. The published ZIP SHA-256 is `1e128e1fa536f1b24c032299ecc19fd1cb53ba5645cb7ca58819b1e0792817ba`. **Public v1.0.0 is unchanged** (CPM `ccbed9d7…`, signed inventory, release assets); the M-05 correction is committed but not released. Do not overwrite the signed release or its inventory during maintenance.
 
 ## Code and retained work
-- **Committed M-05 correction (this checkpoint commit):**
+- **Committed M-05 correction (commit `e5197e2b…`):**
   - `cpm/app/SFM_Character_Preset_Manager.py` SHA-256 `6275f04acd7355abeb1ec032d990aa28140de0bfb2cfb6ce1490aef34592ddde`.
   - `cpm/convergence/tests/test_cpm_app_m05_static_scale.py` SHA-256 `8b3316eb32154c94841a0567173eea4507a124d6304f98bbff72526b10cf80c3`.
   - `cpm/convergence/tests/test_cpm_app_canonical_route.py` SHA-256 `febea0338996aba495136d568e9500b077cf7e6222efbf98420c46467b2417d7`.
@@ -34,4 +34,4 @@
 - **Public reception:** owner-reported early SFMLab downloads and Steam subscriptions versus anti-AI comments/ratings are interest/sentiment observations, **not** evidence of software success or failure. No product defect is established by those comments.
 
 ## One next bounded action
-**Designer review of this checkpoint commit and the M-05 evidence manifest for formal M-05 closure.** No installer assembly, signing, release publication, new native testing or animation-import implementation is authorized until the designer selects the next milestone.
+**Await the designer's selection of the next milestone.** M-05 is closed. No installer assembly, signing, release publication, new native testing or animation-import implementation is authorized until then.
