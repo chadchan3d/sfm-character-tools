@@ -20067,6 +20067,8 @@ PROD_BS_BONE_RE = re.compile(r"^bone\s+(\d+)\s+\((.+)\)$", re.I)
 PROD_BS_LO = 0.0
 PROD_BS_HI = 10.0
 PROD_BS_NEUTRAL_NATIVE = 0.1
+# M-05: bounded key read for the time-varying diagnostic distinction.
+PROD_BS_VARY_KEY_LIMIT = 4096
 PROD_BS_TEST_PHYSICAL = 1.25
 
 def prod_bs_animset_controls(animset):
@@ -20362,6 +20364,8 @@ def prod_bs_log_state(channel):
         "key0_time": None,
         "key0_value": None,
         "evaluated": None,
+        "use_default_value": None,
+        "values_vary": None,
     }
 
     if log is None:
@@ -20374,6 +20378,20 @@ def prod_bs_log_state(channel):
 
     try:
         result["is_empty"] = bool(log.IsEmpty())
+    except Exception:
+        pass
+
+    # M-05: an empty play-mode log must not substitute its default value.
+    try:
+        flag = attr_value(
+            log,
+            "usedefaultvalue",
+        )
+
+        if flag is not None:
+            result["use_default_value"] = bool(
+                flag
+            )
     except Exception:
         pass
 
@@ -20406,6 +20424,37 @@ def prod_bs_log_state(channel):
                 result["key0_value"] = as_float(
                     layer.GetKeyValue(0)
                 )
+            except Exception:
+                pass
+
+        elif (
+            result["key_count"] is not None
+            and 1 < result["key_count"] <= PROD_BS_VARY_KEY_LIMIT
+        ):
+            # M-05 diagnostics only: several keys are time-varying evidence
+            # only when their values actually differ.
+            try:
+                first = as_float(
+                    layer.GetKeyValue(0)
+                )
+                values = [
+                    as_float(
+                        layer.GetKeyValue(index)
+                    )
+                    for index in range(
+                        1,
+                        result["key_count"],
+                    )
+                ]
+
+                if first is not None and None not in values:
+                    result["values_vary"] = any(
+                        not close_enough(
+                            value,
+                            first,
+                        )
+                        for value in values
+                    )
             except Exception:
                 pass
 
@@ -21031,7 +21080,43 @@ def prod_bs_snapshot(binding):
             binding["input_layer"].GetKeyValue(0)
         )
 
+    output_log = prod_bs_log_state(
+        binding["output"]
+    )
+    output_log_id, output_layer_id = prod_bs_channel_log_ids(
+        binding["output"]
+    )
+
     return {
+        "output_log_id": output_log_id,
+        "output_layer_id": output_layer_id,
+        "lo": as_float(
+            attr_value(
+                binding["expression"],
+                "lo",
+            )
+        ),
+        "hi": as_float(
+            attr_value(
+                binding["expression"],
+                "hi",
+            )
+        ),
+        "output_log_type": output_log[
+            "log_type"
+        ],
+        "output_layer_count": output_log[
+            "layer_count"
+        ],
+        "output_key_count": output_log[
+            "key_count"
+        ],
+        "output_is_empty": output_log[
+            "is_empty"
+        ],
+        "output_use_default_value": output_log[
+            "use_default_value"
+        ],
         "source": as_float(
             attr_value(
                 binding["control"],
@@ -21097,8 +21182,36 @@ def prod_bs_snapshot(binding):
         ),
     }
 
-def prod_bs_static_one_key_zero(snapshot):
+def prod_bs_channel_log_ids(channel):
+    """M-05: identities of a channel's log and its first layer (None when
+    unreadable), so equivalent-valued replacements are not mistaken for the
+    original graph."""
+    try:
+        log = channel.GetLog()
+    except Exception:
+        log = attr_value(
+            channel,
+            "log",
+        )
+
+    if log is None:
+        return None, None
+
     return (
+        dme_id(
+            log
+        ),
+        dme_id(
+            get_layer(
+                log,
+                0,
+            )
+        ),
+    )
+
+
+def prod_bs_static_one_key_zero(snapshot, output_mode=1):
+    static = (
         snapshot["key_count"] == 1
         and snapshot["is_empty"] is False
         and close_enough(
@@ -21114,7 +21227,30 @@ def prod_bs_static_one_key_zero(snapshot):
         ) == 3
         and int(
             snapshot["output_mode"]
+        ) == output_mode
+    )
+
+    if not static or output_mode == 1:
+        return static
+
+    # M-05: the admitted mode-3 output stays one readable, empty layer.
+    return (
+        output_mode == 3
+        and snapshot.get(
+            "output_log_type"
+        ) == u"DmeFloatLog"
+        and snapshot.get(
+            "output_layer_count"
         ) == 1
+        and snapshot.get(
+            "output_key_count"
+        ) == 0
+        and snapshot.get(
+            "output_is_empty"
+        ) is True
+        and snapshot.get(
+            "output_use_default_value"
+        ) is False
     )
 
 def prod_bs_expected_physical(binding, native_value):
@@ -21130,7 +21266,11 @@ def prod_bs_expected_physical(binding, native_value):
 def prod_bs_authored_matches(binding, snapshot, native_value):
     return (
         prod_bs_static_one_key_zero(
-            snapshot
+            snapshot,
+            binding.get(
+                "static_output_mode",
+                1,
+            ),
         )
         and close_enough(
             snapshot["source"],
@@ -21908,7 +22048,373 @@ def prod_bs_resolve_created(identity):
         "trace": trace,
     }
 
+# M-05: one static bone-scale definition, used by indexed and historical
+# capture, planning, no-op detection, postcommit verification and recovery.
+# The qualified output-pass graph (mode 1) keeps its historical rule. The
+# narrowly admitted output-play graph (mode 3) additionally requires one
+# readable empty output layer that does not play a default value, and agreement
+# between key, control, expression input, expression result and bone scale.
+# Missing evidence never counts as an empty log.
+PROD_BS_STATIC_PASS = u"static-output-pass"
+PROD_BS_STATIC_PLAY = u"static-output-play-empty"
+
+
+def prod_bs_mode(value):
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
+def prod_bs_keyed_evidence(log):
+    if log.get("values_vary") is True:
+        return u"time-varying"
+
+    return u"unsupported"
+
+
+def prod_bs_static_play_evidence(trace):
+    """
+    Pure. The first stage of the mode-3 static definition that fails and its
+    evidence class, or (None, None). Stages: structure, authored, evaluated.
+    Evidence: unsupported, unreadable, conflicting, time-varying, incoherent.
+    """
+    expression = trace.get(
+        "expression"
+    ) or {}
+    output = trace.get(
+        "output"
+    ) or {}
+    inputs = trace.get(
+        "inputs"
+    ) or []
+
+    if expression.get(
+        "normalized_expr"
+    ) != u"lerp(value,lo,hi)":
+        return u"structure", u"unsupported"
+
+    lo = as_float(
+        expression.get(
+            "lo"
+        )
+    )
+    hi = as_float(
+        expression.get(
+            "hi"
+        )
+    )
+
+    if lo is None or hi is None:
+        return u"structure", u"unreadable"
+
+    if close_enough(
+        lo,
+        hi,
+    ):
+        return u"structure", u"unsupported"
+
+    if len(
+        inputs
+    ) == 0:
+        return u"structure", u"unsupported"
+
+    if len(
+        inputs
+    ) > 1:
+        return u"structure", u"conflicting"
+
+    row = inputs[0]
+
+    if (
+        row.get(
+            "source_type"
+        ) != u"DmElement"
+        or row.get(
+            "source_attribute"
+        ) != u"value"
+    ):
+        return u"structure", u"unsupported"
+
+    hits = (
+        row.get(
+            "membership"
+        ) or {}
+    ).get(
+        "animset_control_hits"
+    )
+
+    if hits is None:
+        return u"structure", u"unreadable"
+
+    if hits > 1:
+        return u"structure", u"conflicting"
+
+    if hits != 1:
+        return u"structure", u"unsupported"
+
+    input_mode = prod_bs_mode(
+        row.get(
+            "mode"
+        )
+    )
+
+    if input_mode is None:
+        return u"structure", u"unreadable"
+
+    if input_mode != 3:
+        return u"structure", u"unsupported"
+
+    log = row.get(
+        "log"
+    ) or {}
+
+    if (
+        log.get(
+            "log_type"
+        ) is None
+        or log.get(
+            "layer_count"
+        ) is None
+        or log.get(
+            "key_count"
+        ) is None
+        or log.get(
+            "is_empty"
+        ) is None
+    ):
+        return u"structure", u"unreadable"
+
+    if (
+        log.get(
+            "log_type"
+        ) != u"DmeFloatLog"
+        or log.get(
+            "layer_count"
+        ) != 1
+    ):
+        return u"structure", u"unsupported"
+
+    if log.get(
+        "key_count"
+    ) > 1:
+        return u"structure", prod_bs_keyed_evidence(
+            log
+        )
+
+    if (
+        log.get(
+            "key_count"
+        ) != 1
+        or log.get(
+            "is_empty"
+        ) is not False
+    ):
+        return u"structure", u"unsupported"
+
+    if log.get(
+        "key0_time"
+    ) is None:
+        return u"structure", u"unreadable"
+
+    if not close_enough(
+        log.get(
+            "key0_time"
+        ),
+        0.0,
+    ):
+        return u"structure", u"unsupported"
+
+    output_mode = prod_bs_mode(
+        output.get(
+            "mode"
+        )
+    )
+
+    if output_mode is None:
+        return u"structure", u"unreadable"
+
+    if output_mode != 3:
+        return u"structure", u"unsupported"
+
+    output_log = output.get(
+        "log"
+    ) or {}
+
+    if (
+        output_log.get(
+            "log_type"
+        ) is None
+        or output_log.get(
+            "layer_count"
+        ) is None
+        or output_log.get(
+            "key_count"
+        ) is None
+        or output_log.get(
+            "is_empty"
+        ) is None
+        or output_log.get(
+            "use_default_value"
+        ) is None
+    ):
+        return u"structure", u"unreadable"
+
+    if (
+        output_log.get(
+            "log_type"
+        ) != u"DmeFloatLog"
+        or output_log.get(
+            "layer_count"
+        ) != 1
+    ):
+        return u"structure", u"unsupported"
+
+    if output_log.get(
+        "key_count"
+    ) > 1:
+        return u"structure", prod_bs_keyed_evidence(
+            output_log
+        )
+
+    if (
+        output_log.get(
+            "key_count"
+        ) != 0
+        or output_log.get(
+            "is_empty"
+        ) is not True
+        or output_log.get(
+            "use_default_value"
+        ) is not False
+    ):
+        return u"structure", u"unsupported"
+
+    key_value = as_float(
+        log.get(
+            "key0_value"
+        )
+    )
+    source_value = as_float(
+        row.get(
+            "source_value"
+        )
+    )
+    expression_value = as_float(
+        expression.get(
+            "value"
+        )
+    )
+
+    if (
+        key_value is None
+        or source_value is None
+        or expression_value is None
+    ):
+        return u"authored", u"unreadable"
+
+    if not (
+        close_enough(
+            key_value,
+            source_value,
+        )
+        and close_enough(
+            expression_value,
+            source_value,
+        )
+    ):
+        return u"authored", u"incoherent"
+
+    physical = as_float(
+        trace.get(
+            "physical_scale"
+        )
+    )
+    expected = as_float(
+        trace.get(
+            "expected_physical"
+        )
+    )
+    result = as_float(
+        expression.get(
+            "result"
+        )
+    )
+
+    if (
+        physical is None
+        or expected is None
+        or result is None
+    ):
+        return u"evaluated", u"unreadable"
+
+    if not (
+        physical > 0.0
+        and trace.get(
+            "physical_matches_lerp"
+        ) is True
+        and close_enough(
+            physical,
+            expected,
+        )
+        and close_enough(
+            result,
+            expected,
+        )
+    ):
+        return u"evaluated", u"incoherent"
+
+    return None, None
+
+
+def prod_bs_classify_static_scale(trace):
+    """
+    Pure M-05 classification of one traced bone-scale graph:
+    (static class or None, failed stage, evidence class).
+    """
+    if prod_bs_static_pass_trace(
+        trace
+    ):
+        return PROD_BS_STATIC_PASS, None, None
+
+    output_mode = prod_bs_mode(
+        (
+            trace.get(
+                "output"
+            ) or {}
+        ).get(
+            "mode"
+        )
+    )
+
+    if output_mode != 3:
+        return None, u"structure", (
+            u"unreadable"
+            if output_mode is None
+            else u"unsupported"
+        )
+
+    stage, evidence = prod_bs_static_play_evidence(
+        trace
+    )
+
+    if stage is None:
+        return PROD_BS_STATIC_PLAY, None, None
+
+    return None, stage, evidence
+
+
 def prod_bs_static_scale_trace(trace):
+    return (
+        prod_bs_classify_static_scale(
+            trace
+        )[0]
+        is not None
+    )
+
+
+def prod_bs_static_pass_trace(trace):
+    # Historical output-pass (mode 1) rule, unchanged.
     if not trace["generic_lerp_topology"]:
         return False
 
@@ -23016,9 +23522,22 @@ def prod_bs_index_binding(snapshot, bone_row):
         bone_row,
     )
 
-    if not trace[
+    # M-05: the output-pass topology keeps its historical admission; an
+    # output-play (mode 3) graph is admitted only as the complete static class.
+    if trace[
         "generic_lerp_topology"
     ]:
+        static_output_mode = 1
+
+    elif (
+        prod_bs_classify_static_scale(
+            trace
+        )[0]
+        == PROD_BS_STATIC_PLAY
+    ):
+        static_output_mode = 3
+
+    else:
         raise RuntimeError(
             "This bone scale is outside the qualified generic topology."
         )
@@ -23127,6 +23646,7 @@ def prod_bs_index_binding(snapshot, bone_row):
         ][
             "hi"
         ],
+        "static_output_mode": static_output_mode,
     }
 
 
@@ -23979,8 +24499,52 @@ def prod_bs_capture_trace_diagnostic(
     output = trace.get(
         "output"
     ) or {}
+    output_log = output.get(
+        "log"
+    ) or {}
+    static_class, static_stage, static_evidence = prod_bs_classify_static_scale(
+        trace
+    )
 
     return {
+        "static_class": static_class,
+        "static_stage": static_stage,
+        "static_evidence": static_evidence,
+        "input_values_vary": log.get(
+            "values_vary"
+        ),
+        "output_log_type": output_log.get(
+            "log_type"
+        ),
+        "output_layer_count": output_log.get(
+            "layer_count"
+        ),
+        "output_key_count": output_log.get(
+            "key_count"
+        ),
+        "output_is_empty": output_log.get(
+            "is_empty"
+        ),
+        "output_use_default_value": output_log.get(
+            "use_default_value"
+        ),
+        "output_values_vary": output_log.get(
+            "values_vary"
+        ),
+        "expression_value": (
+            trace.get(
+                "expression"
+            ) or {}
+        ).get(
+            "value"
+        ),
+        "expression_result": (
+            trace.get(
+                "expression"
+            ) or {}
+        ).get(
+            "result"
+        ),
         "historical_static_ok": bool(
             prod_bs_static_scale_trace(
                 trace
@@ -25172,6 +25736,26 @@ def prod_bs_snapshot_matches_baseline(
         "key_value",
     )
 
+    if baseline.get(
+        "output_mode"
+    ) == 3:
+        # M-05: an original mode-3 graph is restored only with its own
+        # readable, empty, non-default-playing output log and layer and its
+        # original expression limits.
+        exact_fields = exact_fields + (
+            "output_log_type",
+            "output_layer_count",
+            "output_key_count",
+            "output_is_empty",
+            "output_use_default_value",
+            "output_log_id",
+            "output_layer_id",
+        )
+        float_fields = float_fields + (
+            "lo",
+            "hi",
+        )
+
     for field in exact_fields:
         if observed.get(
             field
@@ -25522,6 +26106,22 @@ def prod_apply(
         ]
     )
 
+    # M-05: a changed admitted mode-3 scale keeps its output mode and is
+    # verified after one ordinary event-loop opportunity. Only pure data is
+    # retained for that continuation.
+    play_expectations = [
+        prod_bs_play_expectation(
+            item
+        )
+        for item in changed_existing_scales
+        if item[
+            "binding"
+        ].get(
+            "static_output_mode"
+        )
+        == 3
+    ]
+
     total = (
         built[
             "changed_sides"
@@ -25704,6 +26304,86 @@ def prod_apply(
             operation_context
         )
 
+    if play_expectations:
+        pending = {
+            "identity": dict(
+                identity
+            ),
+            "kind": kind,
+            "record": json.loads(
+                json.dumps(
+                    record
+                )
+            ),
+            "flex": json.loads(
+                json.dumps(
+                    flex
+                )
+            ),
+            "scope": scope,
+            "authority_context": authority_context,
+            "operation_context": operation_context,
+            "head_time": float(
+                sfmApp.GetHeadTimeInSeconds()
+            ),
+            "play_expectations": play_expectations,
+            "changed_sides": int(
+                built[
+                    "changed_sides"
+                ]
+            ),
+            "changed_existing_scales": len(
+                changed_existing_scales
+            ),
+            "created_missing_scales": len(
+                created_missing_scales
+            ),
+        }
+
+        try:
+            log_line(
+                "PROD_APPLY outcome='verification-pending' model=%r kind=%r preset=%r "
+                "changed_sides=%d changed_existing_scales=%d created_missing_scales=%d "
+                "play_scales=%d head_time=%r"
+                % (
+                    identity[
+                        "model"
+                    ],
+                    kind,
+                    record.get(
+                        "name"
+                    ),
+                    pending[
+                        "changed_sides"
+                    ],
+                    pending[
+                        "changed_existing_scales"
+                    ],
+                    pending[
+                        "created_missing_scales"
+                    ],
+                    len(
+                        play_expectations
+                    ),
+                    pending[
+                        "head_time"
+                    ],
+                )
+            )
+        except Exception:
+            pass
+
+        result = prod_outcome(
+            "verification-pending",
+            native_committed=True,
+            durable_persisted=False,
+            verified=False,
+        )
+        result[
+            "pending"
+        ] = pending
+        return result
+
 
     fresh_live = prod_live_bindings_for_cached_scope(
         identity,
@@ -25799,6 +26479,427 @@ def prod_apply(
     except Exception:
         pass
 
+
+    return prod_outcome(
+        "committed-verified",
+        native_committed=True,
+        durable_persisted=False,
+        verified=True,
+    )
+
+
+# M-05 deferred Apply verification copy.
+PROD_APPLY_CHECKING_COPY = u"Checking the applied Body Preset..."
+PROD_APPLY_UNVERIFIED_COPY = (
+    u"CPM couldn't verify the applied Body Preset. Check the model before continuing. "
+    u"If needed, use SFM Undo to return to its previous state."
+)
+
+
+def prod_apply_deferred_unverified(reason):
+    """Terminal committed-unverified result of a deferred Apply verification.
+    Never an automatic Undo: native Undo stays with the user."""
+    result = prod_outcome(
+        "committed-unverified",
+        native_committed=True,
+        durable_persisted=False,
+        verified=False,
+        recovery=u"Use SFM Undo or inspect the result before retrying.",
+    )
+    result[
+        "reason"
+    ] = u(
+        reason
+    )
+    return result
+
+
+def prod_bs_play_expectation(item):
+    """Pure M-05 expectation for one changed mode-3 scale (no DME object)."""
+    baseline = item[
+        "baseline"
+    ]
+
+    return {
+        "key": [
+            int(
+                item[
+                    "key"
+                ][0]
+            ),
+            u(
+                item[
+                    "key"
+                ][1]
+            ),
+        ],
+        "bone_name": u(
+            item[
+                "bone_name"
+            ]
+        ),
+        "desired_native": float(
+            item[
+                "desired_native"
+            ]
+        ),
+        "desired_physical": float(
+            item[
+                "desired_physical"
+            ]
+        ),
+        "control_id": baseline[
+            "control_id"
+        ],
+        "input_channel_id": baseline[
+            "input_channel_id"
+        ],
+        "expression_id": baseline[
+            "expression_id"
+        ],
+        "output_id": baseline[
+            "output_id"
+        ],
+        "transform_id": baseline[
+            "transform_id"
+        ],
+        "input_log_id": baseline[
+            "input_log_id"
+        ],
+        "input_layer_id": baseline[
+            "input_layer_id"
+        ],
+        "output_log_id": baseline[
+            "output_log_id"
+        ],
+        "output_layer_id": baseline[
+            "output_layer_id"
+        ],
+        "lo": baseline[
+            "lo"
+        ],
+        "hi": baseline[
+            "hi"
+        ],
+    }
+
+
+def prod_bs_play_expectations_hold(snapshot, expectations):
+    """
+    M-05: the committed authored state and graph relationships of every
+    changed mode-3 scale still hold on fresh bindings. Physical evaluation is
+    judged separately by the full-map verification.
+    """
+    for expectation in expectations:
+        row = snapshot[
+            "bone_index"
+        ].get(
+            (
+                int(
+                    expectation[
+                        "key"
+                    ][0]
+                ),
+                u(
+                    expectation[
+                        "key"
+                    ][1]
+                ),
+            )
+        )
+
+        if (
+            row is None
+            or row.get(
+                "classification"
+            )
+            != "CHANNEL_DRIVEN_SCALE"
+        ):
+            return False
+
+        trace = prod_bs_index_trace(
+            snapshot,
+            row,
+        )
+        static_class, stage, _evidence = prod_bs_classify_static_scale(
+            trace
+        )
+
+        if not (
+            static_class == PROD_BS_STATIC_PLAY
+            or (
+                static_class is None
+                and stage == u"evaluated"
+            )
+        ):
+            return False
+
+        if prod_bs_mode(
+            trace[
+                "output"
+            ][
+                "mode"
+            ]
+        ) != 3:
+            return False
+
+        input_row = trace[
+            "inputs"
+        ][0]
+
+        if (
+            input_row[
+                "source_id"
+            ] != expectation[
+                "control_id"
+            ]
+            or input_row[
+                "channel_id"
+            ] != expectation[
+                "input_channel_id"
+            ]
+            or trace[
+                "expression"
+            ][
+                "id"
+            ] != expectation[
+                "expression_id"
+            ]
+            or trace[
+                "output"
+            ][
+                "id"
+            ] != expectation[
+                "output_id"
+            ]
+            or trace[
+                "transform_id"
+            ] != expectation[
+                "transform_id"
+            ]
+        ):
+            return False
+
+        # Equivalent-valued replacement objects and a changed scale mapping
+        # are not the committed graph, whatever their current values.
+        input_log_id, input_layer_id = prod_bs_channel_log_ids(
+            input_row[
+                "_channel"
+            ]
+        )
+        output_log_id, output_layer_id = prod_bs_channel_log_ids(
+            trace[
+                "output"
+            ][
+                "_channel"
+            ]
+        )
+
+        if (
+            expectation[
+                "input_log_id"
+            ] is None
+            or expectation[
+                "output_log_id"
+            ] is None
+            or input_log_id != expectation[
+                "input_log_id"
+            ]
+            or input_layer_id != expectation[
+                "input_layer_id"
+            ]
+            or output_log_id != expectation[
+                "output_log_id"
+            ]
+            or output_layer_id != expectation[
+                "output_layer_id"
+            ]
+            or not close_enough(
+                trace[
+                    "expression"
+                ][
+                    "lo"
+                ],
+                expectation[
+                    "lo"
+                ],
+            )
+            or not close_enough(
+                trace[
+                    "expression"
+                ][
+                    "hi"
+                ],
+                expectation[
+                    "hi"
+                ],
+            )
+        ):
+            return False
+
+        native = expectation[
+            "desired_native"
+        ]
+
+        if not (
+            close_enough(
+                input_row[
+                    "log"
+                ][
+                    "key0_value"
+                ],
+                native,
+            )
+            and close_enough(
+                input_row[
+                    "source_value"
+                ],
+                native,
+            )
+            and close_enough(
+                trace[
+                    "expression"
+                ][
+                    "value"
+                ],
+                native,
+            )
+        ):
+            return False
+
+    return True
+
+
+def prod_apply_deferred_verify(pending):
+    """
+    M-05 read-only postcommit verification, run once after the ordinary event
+    loop. It never writes, moves the playhead, forces evaluation or retries.
+    A changed context, authored state or graph, or an unmatched physical
+    result, is committed-unverified. Delivery of this callback is not proof of
+    evaluation; only the observed values are.
+    """
+    identity = pending[
+        "identity"
+    ]
+    kind = pending[
+        "kind"
+    ]
+    reason = None
+
+    if (
+        pending.get(
+            "operation_context"
+        )
+        is not None
+        and not prod_context_token_matches(
+            pending[
+                "operation_context"
+            ]
+        )
+    ):
+        reason = u"context-changed"
+
+    elif not close_enough(
+        float(
+            sfmApp.GetHeadTimeInSeconds()
+        ),
+        pending[
+            "head_time"
+        ],
+    ):
+        reason = u"time-changed"
+
+    if reason is None:
+        snapshot = prod_bs_index_snapshot(
+            identity
+        )
+
+        try:
+            if not prod_bs_play_expectations_hold(
+                snapshot,
+                pending[
+                    "play_expectations"
+                ],
+            ):
+                reason = u"authored"
+
+            else:
+                fresh_live = prod_live_bindings_for_cached_scope(
+                    identity,
+                    pending[
+                        "scope"
+                    ],
+                    kind,
+                    authority_context=pending[
+                        "authority_context"
+                    ],
+                )
+
+                if not p03_verify_saved_values(
+                    fresh_live[
+                        "accepted"
+                    ],
+                    pending[
+                        "flex"
+                    ],
+                ):
+                    reason = u"flex"
+
+                fresh_live = None
+
+                if (
+                    reason is None
+                    and not prod_bs_index_verify_saved(
+                        pending[
+                            "record"
+                        ],
+                        snapshot,
+                    )
+                ):
+                    reason = u"bone-scales"
+
+        finally:
+            if isinstance(
+                snapshot,
+                dict,
+            ):
+                snapshot.clear()
+
+            snapshot = None
+
+    try:
+        log_line(
+            "PROD_APPLY_DEFERRED_VERIFY outcome=%r reason=%r model=%r kind=%r preset=%r play_scales=%d"
+            % (
+                (
+                    u"committed-verified"
+                    if reason is None
+                    else u"committed-unverified"
+                ),
+                reason,
+                identity.get(
+                    "model"
+                ),
+                kind,
+                pending[
+                    "record"
+                ].get(
+                    "name"
+                ),
+                len(
+                    pending[
+                        "play_expectations"
+                    ]
+                ),
+            )
+        )
+    except Exception:
+        pass
+
+    if reason is not None:
+        return prod_apply_deferred_unverified(
+            reason
+        )
 
     return prod_outcome(
         "committed-verified",
@@ -27918,7 +29019,10 @@ class ProdWindow(QtGui.QDialog):
                     u"completed"
                 )
 
-            if self.operation is not None:
+            if (
+                self.operation is not None
+                and not self.operation_continuation_owned()
+            ):
                 self.operation[
                     "phase"
                 ] = u"UI_PUBLISH"
@@ -28078,9 +29182,18 @@ class ProdWindow(QtGui.QDialog):
             self.prod_cpm_request_stale_rebuild_if_needed()
 
         finally:
+            # M-05: a queued Apply verification now owns this operation and
+            # ends it exactly once at its terminal result; this synchronous
+            # return is sampled distinctly from terminal completion.
+            pending_owner = self.operation_continuation_owned()
+
             try:
                 prod_resource_snapshot(
-                    u"ACTION_END:%s"
+                    (
+                        u"ACTION_RETURN_PENDING:%s"
+                        if pending_owner
+                        else u"ACTION_END:%s"
+                    )
                     % u(
                         label
                     )
@@ -28088,9 +29201,10 @@ class ProdWindow(QtGui.QDialog):
             except Exception:
                 pass
 
-            self.operation_end(
-                label
-            )
+            if not pending_owner:
+                self.operation_end(
+                    label
+                )
 
     def refresh_animset_display_metadata(
         self,
@@ -30708,6 +31822,19 @@ class ProdWindow(QtGui.QDialog):
                 ),
             )
 
+            if result[
+                "phase"
+            ] == u"verification-pending":
+                # M-05: not a terminal outcome. Ownership of this operation
+                # passes to one queued verification turn.
+                self.apply_begin_verification(
+                    kind,
+                    result[
+                        "pending"
+                    ],
+                )
+                return
+
 
             prod_log_outcome(
                 {
@@ -30760,6 +31887,367 @@ class ProdWindow(QtGui.QDialog):
             ),
             work,
         )
+
+    def operation_continuation_owned(
+        self,
+    ):
+        """M-05: True while a queued Apply verification owns the operation."""
+        operation = self.operation
+        continuation = getattr(
+            self,
+            "apply_continuation",
+            None,
+        )
+
+        return bool(
+            operation is not None
+            and continuation is not None
+            and operation.get(
+                "continuation"
+            )
+            is not None
+            and operation.get(
+                "continuation"
+            )
+            == continuation.get(
+                "token"
+            )
+        )
+
+    def apply_begin_verification(
+        self,
+        kind,
+        pending,
+    ):
+        """
+        M-05: hand a natively committed Apply to one queued, read-only
+        verification turn after the ordinary event loop. CPM keeps the
+        operation until that turn publishes a terminal result; guard()
+        transfers ownership instead of ending it.
+        """
+        operation = self.operation
+        label = (
+            "Apply Body Preset"
+            if kind == P03_KIND_BODY
+            else "Apply Expression"
+        )
+        token = (
+            int(
+                operation[
+                    "operation_id"
+                ]
+            ),
+            int(
+                operation[
+                    "generation"
+                ]
+            ),
+        )
+        continuation = {
+            "token": token,
+            "kind": kind,
+            "label": label,
+            "pending": pending,
+        }
+
+        self.operation_mark_phase(
+            u"verification-pending",
+            {
+                "kind": kind,
+                "play_scales": len(
+                    pending[
+                        "play_expectations"
+                    ]
+                ),
+            },
+        )
+        self.set_status(
+            PROD_APPLY_CHECKING_COPY
+        )
+
+        self.apply_continuation = continuation
+        operation[
+            "continuation"
+        ] = token
+
+        try:
+            QtCore.QTimer.singleShot(
+                0,
+                lambda t=token: self.apply_verification_turn(
+                    t
+                ),
+            )
+        except Exception as exc:
+            # Scheduling failure is terminal: the guard ends this operation.
+            self.apply_continuation = None
+            operation[
+                "continuation"
+            ] = None
+
+            try:
+                log_line(
+                    "PROD_APPLY_VERIFY_SCHEDULE_FAIL id=%d error=%r"
+                    % (
+                        token[0],
+                        exc,
+                    )
+                )
+            except Exception:
+                pass
+
+            self.apply_finish_verification(
+                continuation,
+                prod_apply_deferred_unverified(
+                    u"schedule-failed"
+                ),
+            )
+            return
+
+        try:
+            log_line(
+                "PROD_APPLY_VERIFY_SCHEDULED id=%d play_scales=%d"
+                % (
+                    token[0],
+                    len(
+                        pending[
+                            "play_expectations"
+                        ]
+                    ),
+                )
+            )
+        except Exception:
+            pass
+
+    def apply_verification_turn(
+        self,
+        token,
+    ):
+        # Python-owned lifecycle fields only, before any Qt or DME access. A
+        # stale or duplicate turn is harmless and never ends another operation.
+        continuation = getattr(
+            self,
+            "apply_continuation",
+            None,
+        )
+        operation = self.operation
+
+        if (
+            continuation is None
+            or continuation.get(
+                "token"
+            )
+            != token
+            or operation is None
+            or operation.get(
+                "continuation"
+            )
+            != token
+        ):
+            try:
+                log_line(
+                    "PROD_APPLY_VERIFY_STALE token=%r"
+                    % (
+                        token,
+                    )
+                )
+            except Exception:
+                pass
+            return
+
+        # Claimed exactly once.
+        self.apply_continuation = None
+        operation[
+            "continuation"
+        ] = None
+
+        try:
+            try:
+                # Fresh Qt-only access check: the modal watcher's cached flag
+                # can lag a modal opened since its last tick.
+                access_blocked = None
+
+                if (
+                    self.closing_requested
+                    or self.scene_activity_suspended
+                ):
+                    access_blocked = u"scene-access-unavailable"
+
+                else:
+                    try:
+                        app = QtGui.QApplication.instance()
+                    except Exception:
+                        app = None
+
+                    if app is None:
+                        access_blocked = u"qt-application-unavailable"
+
+                    else:
+                        try:
+                            modal = app.activeModalWidget()
+                        except Exception:
+                            access_blocked = u"modal-state-unreadable"
+                        else:
+                            if modal is not None:
+                                access_blocked = u"modal-active"
+
+                if access_blocked is not None:
+                    # Scene access is not permitted: finish without DME access.
+                    outcome = prod_apply_deferred_unverified(
+                        access_blocked
+                    )
+                else:
+                    outcome = prod_apply_deferred_verify(
+                        continuation[
+                            "pending"
+                        ]
+                    )
+            except Exception as exc:
+                try:
+                    log_line(
+                        "PROD_APPLY_VERIFY_ERROR id=%d error=%r"
+                        % (
+                            token[0],
+                            exc,
+                        )
+                    )
+                except Exception:
+                    pass
+                try:
+                    log_line(
+                        traceback.format_exc()
+                    )
+                except Exception:
+                    pass
+                outcome = prod_apply_deferred_unverified(
+                    u"error"
+                )
+
+            self.apply_finish_verification(
+                continuation,
+                outcome,
+            )
+
+        finally:
+            label = continuation[
+                "label"
+            ]
+            continuation = None
+
+            try:
+                prod_resource_snapshot(
+                    u"ACTION_END:%s"
+                    % u(
+                        label
+                    )
+                )
+            except Exception:
+                pass
+
+            self.operation_end(
+                label
+            )
+
+    def apply_finish_verification(
+        self,
+        continuation,
+        outcome,
+    ):
+        """M-05 terminal result of a deferred Apply verification."""
+        verified = (
+            outcome[
+                "phase"
+            ]
+            == u"committed-verified"
+        )
+
+        prod_log_outcome(
+            (
+                u"verified"
+                if verified
+                else u"committed-unverified"
+            ),
+            {
+                "apply_phase": outcome[
+                    "phase"
+                ],
+                "verification": u"deferred",
+                "reason": outcome.get(
+                    "reason"
+                ),
+            },
+        )
+
+        if self.operation is not None:
+            self.operation[
+                "phase"
+            ] = u"UI_PUBLISH"
+
+        if self.closing_requested:
+            return
+
+        if not verified:
+            self.set_status(
+                PROD_APPLY_UNVERIFIED_COPY,
+                u"error",
+            )
+
+        elif continuation[
+            "kind"
+        ] == P03_KIND_BODY:
+            self.set_status(
+                "Body Preset applied.",
+                u"success",
+            )
+
+        else:
+            self.set_status(
+                "Expression applied.",
+                u"success",
+            )
+
+    def apply_close_pending_verification(
+        self,
+    ):
+        """
+        M-05: closing while an Apply check is queued. Finalize without scene
+        access; the queued turn then finds nothing to do.
+        """
+        if not self.operation_continuation_owned():
+            return False
+
+        continuation = self.apply_continuation
+        self.apply_continuation = None
+        self.operation[
+            "continuation"
+        ] = None
+
+        prod_log_outcome(
+            u"committed-unverified",
+            {
+                "apply_phase": u"committed-unverified",
+                "verification": u"deferred",
+                "reason": u"closed-before-verification",
+            },
+        )
+
+        try:
+            prod_resource_snapshot(
+                u"ACTION_END:%s"
+                % u(
+                    continuation[
+                        "label"
+                    ]
+                )
+            )
+        except Exception:
+            pass
+
+        self.operation_end(
+            continuation[
+                "label"
+            ]
+        )
+        return True
 
     def fit_model_folder(self, model_path):
         normalized = prod_norm(model_path)
@@ -32958,7 +34446,11 @@ class ProdWindow(QtGui.QDialog):
             return
 
         if self.operation is not None:
-            if self.operation.get(
+            if self.operation_continuation_owned():
+                # M-05: a queued Apply check is finalized without scene access.
+                self.apply_close_pending_verification()
+
+            elif self.operation.get(
                 "kind"
             ) == u"Clothing Fit":
                 # Pending queued stage: generation is already invalidated, so

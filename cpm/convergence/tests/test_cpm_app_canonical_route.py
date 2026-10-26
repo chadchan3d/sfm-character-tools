@@ -214,9 +214,29 @@ LOGFIX_NAMESPACE_HELPERS = [
     "prod_log_operation_begin", "prod_log_note_recovery", "prod_log_outcome", "prod_log_refused",
     "prod_log_operation_end",
 ]
+# M-05 static mode-3 bone-scale correction (Astra production-correction design,
+# 2026-10-24): one static definition and its readers, the deferred Apply
+# verification helpers, and the ProdWindow continuation methods. prod_apply,
+# guard, apply_kind and closeEvent are already listed above.
+M05_CHANGED_TOP = set([
+    "prod_bs_log_state", "prod_bs_snapshot", "prod_bs_static_one_key_zero", "prod_bs_authored_matches",
+    "prod_bs_static_scale_trace", "prod_bs_index_binding", "prod_bs_capture_trace_diagnostic",
+    "prod_bs_snapshot_matches_baseline",
+])
+M05_NEW_TOP = set([
+    "PROD_BS_VARY_KEY_LIMIT", "PROD_BS_STATIC_PASS", "PROD_BS_STATIC_PLAY", "prod_bs_mode", "prod_bs_keyed_evidence",
+    "prod_bs_static_play_evidence", "prod_bs_classify_static_scale", "prod_bs_static_pass_trace",
+    "PROD_APPLY_CHECKING_COPY", "PROD_APPLY_UNVERIFIED_COPY", "prod_apply_deferred_unverified",
+    "prod_bs_play_expectation", "prod_bs_play_expectations_hold", "prod_apply_deferred_verify",
+    "prod_bs_channel_log_ids",
+])
+M05_NEW_METHODS = set([
+    "operation_continuation_owned", "apply_begin_verification", "apply_verification_turn",
+    "apply_finish_verification", "apply_close_pending_verification",
+])
 EXPECTED_CHANGED_TOP = (STEP2B_CHANGED_TOP | STEP3_CHANGED_TOP | STEP4_CHANGED_TOP | R14_CHANGED_TOP
                         | R15_CHANGED_TOP | ITEM6_CHANGED_TOP | ITEM7_CHANGED_TOP | UIPASS_CHANGED_TOP
-                        | LOGFIX_CHANGED_TOP)
+                        | LOGFIX_CHANGED_TOP | M05_CHANGED_TOP)
 EXPECTED_NEW_TOP = set([
     "PROD_CPM_MAINMENU_RELATIVE_PARTS", "PROD_CPM_ADAPTER_MODULES", "ProdCpmAuthorityBootstrapError",
     "ProdCpmAuthorityNotMigrated", "prod_cpm_mainmenu_dir", "prod_cpm_import_adapter", "prod_cpm_is_main_thread",
@@ -303,7 +323,7 @@ def section_derivation(app):
     removed = set(baseline.top) - set(app.top)
     check("derivation.changed_top_level_is_bounded", changed == EXPECTED_CHANGED_TOP, sorted(changed))
     check("derivation.added_top_level_is_bounded",
-          added == EXPECTED_NEW_TOP | R15_NEW_TOP | ITEM6_NEW_TOP | UIPASS_NEW_TOP | LOGFIX_NEW_TOP,
+          added == EXPECTED_NEW_TOP | R15_NEW_TOP | ITEM6_NEW_TOP | UIPASS_NEW_TOP | LOGFIX_NEW_TOP | M05_NEW_TOP,
           sorted(added))
     check("derivation.removed_is_exactly_item6_and_item7", removed == ITEM6_REMOVED_TOP | ITEM7_REMOVED_TOP
           | LOGFIX_REMOVED_TOP, sorted(removed ^ (ITEM6_REMOVED_TOP | ITEM7_REMOVED_TOP | LOGFIX_REMOVED_TOP)))
@@ -315,7 +335,8 @@ def section_derivation(app):
     expected_methods = (EXPECTED_CHANGED_METHODS | R15_CHANGED_METHODS | set(shortcut_owner) | ITEM7_CHANGED_METHODS
                         | UIPASS_CHANGED_METHODS)
     check("derivation.changed_methods_are_bounded", m_changed == expected_methods, sorted(m_changed))
-    check("derivation.added_methods_are_bounded", set(am) - set(bm) == EXPECTED_NEW_METHODS | R15_NEW_METHODS,
+    check("derivation.added_methods_are_bounded",
+          set(am) - set(bm) == EXPECTED_NEW_METHODS | R15_NEW_METHODS | M05_NEW_METHODS,
           sorted(set(am) - set(bm)))
     check("derivation.removed_methods_are_exactly_item6", set(bm) - set(am) == ITEM6_REMOVED_METHODS,
           sorted(set(bm) - set(am)))
