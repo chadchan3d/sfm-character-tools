@@ -1,121 +1,52 @@
-# SFM Animation Groups Master
+# SFM Character Tools
 
-A curated, structurally-validated `sfm_defaultanimationgroups.txt` for Source
-Filmmaker, plus a compiled binary "sidecar" format that lets SFM's in-game
-Normalizer tooling look up controls in that Master without re-parsing the
-full TXT file on every query.
+SFM character models use different bone and flex names and layouts. SFM Character Tools helps animators use a consistent control layout and reuse character settings across shots.
 
-## What's here
+**Get v1.0.0:** [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3826760383) · [GitHub download](https://github.com/chadchan3d/sfm-character-tools/releases/tag/v1.0.0)
 
-- **`sfm_defaultanimationgroups.txt`** — the canonical Master: SFM's
-  animation-group hierarchy (rig groups, controls, flexes, helper bones,
-  metadata) reorganized and taxonomy-corrected from the stock/community
-  baseline, while preserving every exact control literal.
-- **`reference/`** — comparison data used while building the Master.
-  (The third-party "Silkworm" reference file used during that work is kept
-  locally only and is intentionally not part of this repository — see
-  `.gitignore`.)
-- **`tools/sfm_master_sidecar/`** — the compiled sidecar format: a compiler,
-  binary reader/writer, manifest/publisher, and CLI, built to reproduce the
-  Normalizer's exact lookup/fold/conflict semantics from a compact binary
-  artifact instead of the raw TXT.
-- **`tools/validate_master.py`** — a read-only structural validator for the
-  Master (brace/indentation structure, exact-duplicate controls, and a
-  native-Rebuild ASCII-casefold cross-path invariant).
-- **`tools/verify_phase2_production_order.py`**, **`tools/extract_phase2_human_review.py`**
-  — supporting tools from the taxonomy production pass.
-- **`tests/`** — the pytest suite for the sidecar format, plus a
-  `tests/sidecar/qualification/` harness suite that qualifies the sidecar
-  against the real, unmodified Normalizer/T130 consumer source as a
-  read-only oracle (desktop Python 3, cross-checked against real embedded
-  Python 2.7 where noted).
-- **`docs/qualification/`** — the gate-by-gate design and qualification
-  audit trail for the sidecar work (`SFM_MASTER_SIDECAR_*.md`,
-  `SFM_SIDECAR_*.md`): architecture decisions, resource/performance
-  baselines, and the evidence behind each qualification verdict.
-- **`audit/master-content/`** — the taxonomy classification ledgers and
-  human-review records behind the Master's current organization
-  (`phase2/`, `flex-bone/`, `imports/`, `helpers/`, `sexual-bones/`,
-  `whole-master/`), kept separate from the software qualification material
-  above since it documents Master *content* decisions, not sidecar
-  behavior. See `audit/master-content/README.md` and
-  `docs/qualification/README.md` for what's in each.
-- **`cpm/baseline/`** — a frozen, SHA-256-pinned migration baseline
-  (`SFM_CSP_G18AN_SaveNewCopy.py`) imported verbatim from the now-closed
-  `sfm-character-preset-manager` source archive, serving as the parity
-  oracle for CPM shared-authority convergence; see `cpm/baseline/MANIFEST.md`.
-- **`cpm/quick_launch/`** — CPM Quick Launch, an **optional** CPM button for SFM's
-  Animation Set Editor toolbar. It requires Autoinit Manager to be installed already
-  (never bundled or changed). It ships in the v1.0.0 ZIP's `OPTIONAL - CPM Button`
-  folder, installed separately and outside the core Character Tools software
-  inventory and the Control Group Updater. Character Preset Manager stays available
-  from the Scripts menu without it. See `cpm/quick_launch/README.md` and
-  `release/v1.0.0/OPTIONAL - CPM Button/README.txt`.
-- **`release/v1.0.0/`** — the user READMEs and the external path/SHA-256 manifest of
-  the single `SFM Character Tools v1.0.0.zip` (see
-  `updater_qualification/design/V1_SINGLE_ZIP_DISTRIBUTION_AMENDMENT.md`).
+## What's included
 
-## Editing the Master
+- **Control Group Normalizer** rebuilds model control groups into a consistent layout, making bones and flexes easier to find without changing the shot structure.
+- **Character Preset Manager (CPM)** saves and applies body settings and facial expressions across shots. It also fits clothing to characters.
+- **SFM Control Group Updater** updates Animation Groups data and builds its matching sidecar after you edit or replace the TXT. It updates recognition data, not the applications.
 
-The Master is maintained through deterministic, re-validated Python edits
-rather than free-form text generation — see `CLAUDE.md` for the exact
-editing contract (canonical-file discipline, structural parsing rules,
-duplicate/casefold invariants, and the validate-before-promote workflow).
+The included Animation Groups file catalogues bone and flex names from more than 9,000 SFM models, providing broad model support without model-by-model setup. Its matching sidecar is included, so the tools can run immediately after installation.
 
-## Running the tests
+## Installation
 
-```
-python -m pytest tests/
-python tools/validate_master.py sfm_defaultanimationgroups.txt
-```
+**Steam Workshop:** [Subscribe to SFM Character Tools](https://steamcommunity.com/sharedfiles/filedetails/?id=3826760383), open SFM, then choose **Scripts → SFM Character Tools → Install or Update (Windows Setup)**. Close SFM while keeping Setup open, install the tools, then close Setup and restart SFM. Setup backs up your existing Animation Groups TXT before replacing it; custom edits are not merged.
 
-Most qualification harnesses under `tests/sidecar/qualification/` are fully
-self-contained and need nothing beyond this repository (`desktop_session_owner_qualification.py`,
-`desktop_view_expansion_qualification.py`, `desktop_round3_foundation_qualification.py`,
-`desktop_parity_and_timing.py`, `desktop_minimum_c3_qualification.py`).
+**GitHub manual installation:** Download the software ZIP from the [v1.0.0 release](https://github.com/chadchan3d/sfm-character-tools/releases/tag/v1.0.0). Close SFM, extract the ZIP, and copy its `usermod` folder into `SourceFilmmaker/game`, merging with the existing folder. **Back up a customized `usermod/cfg/sfm_defaultanimationgroups.txt` first:** manual installation replaces it.
 
-One, `desktop_r1_consumer_projection_qualification.py`, additionally
-compares the sidecar against the *real* SFM Normalizer/T130 source as a
-read-only oracle, to prove the compiled sidecar reproduces that consumer's
-exact behavior rather than a reimplementation of it. That real source is:
+Open **Scripts → SFM Character Tools** to use the tools. See the [release README](release/v1.0.0/README.txt) for complete installation and usage instructions.
 
-- `SFM_NORMALIZER_ORACLE_PATH` — the live, currently-deployed
-  `Rebuild_Control_Groups_Normalizer.py` from your own SFM install
-  (`usermod/scripts/sfm/mainmenu/...`);
-- `SFM_T130_ORACLE_PATH` — a T130 live-trigger requalification snapshot of
-  that same Normalizer.
+## Optional CPM toolbar button
 
-Neither oracle file is distributed with this repository — they are
-historical copies kept outside this project, and this repo makes no claim
-about them. This is separate from the final v1 Normalizer
-(`audit_external_runtime/Rebuild_Control_Groups_Normalizer.py`,
-`6b5d2941…`), which is included here and redistributed in the SFM Character
-Tools release with the owner's confirmed redistribution rights. Set both environment variables to the
-exact local paths of your own copies to run this harness end-to-end. If
-either is unset or doesn't resolve to a real file, the harness prints a
-single `SKIPPED: ...` line naming both variables and exits successfully
-(code 0) without running any oracle-dependent check — it never reports a
-false PASS, and it never crashes for lack of these files.
+The button opens Character Preset Manager directly from the Animation Set Editor toolbar. [Autoinit Manager](https://steamcommunity.com/sharedfiles/filedetails/?id=3400621327) is required only for this button; the three main applications work without it.
 
-## Limitations
+Workshop Setup installs both button files automatically. For a GitHub manual install, close SFM and copy `OPTIONAL - CPM Button/usermod` into `SourceFilmmaker/game`, merging folders and replacing files when prompted.
 
-- The sidecar qualification work establishes desktop-Python-3 and
-  real-embedded-Python-2.7 parity against the real Normalizer/T130
-  consumer contract; it does not itself constitute a live-SFM Qt-main-thread
-  production integration (see the `docs/qualification/SFM_MASTER_SIDECAR_*`
-  gate audits for exactly what has and has not been qualified).
-- `desktop_r1_consumer_projection_qualification.py` loads both real oracle
-  files once at startup and uses them throughout, including its
-  hand-audited/manual-profile checks — it is an all-or-nothing harness, not
-  split into an oracle-free subset. Without both external files it reports
-  the SKIPPED result above rather than running any part of the suite.
+To enable or disable the button, open **Scripts → kiwifruit → Autoinit Manager**, tick or untick **ChadChan3D_CPM_ASE_Button**, then restart SFM. The button has been tested alongside Extended Animation Set Editor Buttons, a separate Workshop addon.
+
+## Model compatibility and contributions
+
+Many models are still unrepresented. Share scan data from your model library to improve bone and flex recognition for everyone. Your scans help the Normalizer organize more models correctly and Character Preset Manager support more characters.
+
+Use [SFM Model Scanner](https://github.com/chadchan3d/sfm-model-scanner) and share your scan data through [ChadChat](https://chadchan3d.com/chat/), where you can also get help. See the [release README](release/v1.0.0/README.txt) for the scan and export procedure.
+
+## Known limitations
+
+- **Normalizer rebuilding cannot be undone with SFM Undo.** Save your project before rebuilding. CPM uses the shot under the playhead; Normalizer's Selected Shot(s) uses the Clip Editor selection.
+- Large Normalizer workloads can exhaust SFM's limited memory. A resource stop reduces the risk but cannot prevent every crash. If it stops, save, restart SFM, and finish the remaining shots with Selected Shot(s).
+- Some existing bone-scale configurations can prevent Body Preset saving. See [known issues](docs/MAINTENANCE_BACKLOG.md).
+
+## Development and documentation
+
+- **Animation Groups and shared authority:** [canonical Master](sfm_defaultanimationgroups.txt), [sidecar source](tools/sfm_master_sidecar/) and [Master content records](audit/master-content/README.md).
+- **Applications:** [Normalizer](audit_external_runtime/Rebuild_Control_Groups_Normalizer.py), [CPM](cpm/app/SFM_Character_Preset_Manager.py), [CPM convergence history](cpm/qualification/CPM_CONVERGENCE_LEDGER.md), and [Control Group Updater](updater/packaging/README.md).
+- **Workshop distribution:** [installer source and documentation](workshop_installer/README.md).
+- **Verification and maintenance:** [tests](tests/), [sidecar qualification records](docs/qualification/README.md), [maintenance backlog](docs/MAINTENANCE_BACKLOG.md), and [Master editing guidance](CLAUDE.md). Detailed historical evidence remains in the linked project records.
 
 ## License
 
-Original material in this repository — wholly authored within this
-project — is released under CC0 1.0 (see `LICENSE`): public domain
-dedication, no rights reserved. This does **not** extend to any
-externally-owned material referenced but not included here (the real SFM
-Normalizer/T130 source above, or any other third-party input a harness
-may optionally consume) — CC0 applies only to what this repository
-actually contains and that ChadChan3D has the right to dedicate.
+Original material in this repository, wholly authored within this project, is released under [CC0 1.0](LICENSE): public domain dedication, no rights reserved. This does not extend to externally owned material referenced but not included here, such as historical Normalizer/T130 oracle sources or other third-party inputs a harness may optionally consume. CC0 applies only to material this repository contains and that ChadChan3D has the right to dedicate.
