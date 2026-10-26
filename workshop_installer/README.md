@@ -2,6 +2,8 @@
 
 Setup installs the unchanged v1.0.0 release ZIP, including Control Group Normalizer, Character Preset Manager, Control Group Updater and both CPM toolbar-button files. It requires Autoinit Manager for installation; it does not modify that dependency or its settings.
 
+Setup finds Autoinit Manager in the `Game` mounts declared in `usermod/gameinfo.txt`, including mounted folders such as `workshop_archive`. It supports the standard `|gameinfo_path|.` anchor and ordinary relative directories within the installation. Unsupported paths, conditionals or include directives stop dependency verification with an explanation. Unmounted folders do not qualify.
+
 ## User flow
 
 Subscribe, install Autoinit Manager, then choose **Scripts → SFM Character Tools → Install or Update (Windows Setup)**. Review the destination and replacement notice. Save your project and close SFM normally before choosing **Install** or **Update / Reinstall**. Setup checks again and refuses a running or uncheckable SFM process.

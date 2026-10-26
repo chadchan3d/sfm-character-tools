@@ -125,18 +125,91 @@ def _validate_game(game):
     return game
 
 
+def _autoinit_mounts(game):
+    """Read only ordinary Game mounts from the installation's SearchPaths block."""
+    config = game / "usermod" / "gameinfo.txt"
+    _plain(config)
+    with config.open("rb") as source:
+        raw = source.read(1024 * 1024 + 1)
+    if len(raw) > 1024 * 1024:
+        raise ValueError("gameinfo.txt exceeds the supported configuration size")
+    text = raw.decode("utf-8-sig")
+    token = re.compile(r'(?P<skip>\s+|//[^\r\n]*|/\*.*?\*/)|'
+                       r'(?P<string>"(?:\\.|[^"\\])*")|(?P<brace>[{}])|'
+                       r'(?P<bare>(?:(?!//|/\*)[^\s{}"])+)', re.DOTALL)
+    tokens, pos = [], 0
+    while pos < len(text):
+        match = token.match(text, pos)
+        if match is None:
+            raise ValueError("unsupported or incomplete gameinfo.txt syntax")
+        pos = match.end()
+        kind, value = match.lastgroup, match.group()
+        if kind == "skip":
+            continue
+        if kind == "bare" and any(c in value for c in "#[]"):
+            raise ValueError("conditional/include syntax is not supported")
+        tokens.append((kind, value[1:-1] if kind == "string" else value))
+
+    wanted = ("gameinfo", "filesystem", "searchpaths")
+    blocks = {wanted[:n]: 0 for n in (1, 2, 3)}
+    stack, paths, index = [], [], 0
+    while index < len(tokens):
+        kind, key = tokens[index]
+        if kind == "brace" and key == "}":
+            if not stack:
+                raise ValueError("unbalanced gameinfo.txt blocks")
+            stack.pop()
+            index += 1
+            continue
+        if kind == "brace" or key.startswith("#") or index + 1 >= len(tokens):
+            raise ValueError("unsupported or incomplete gameinfo.txt entry")
+        value_kind, value = tokens[index + 1]
+        if value_kind == "brace":
+            if value != "{":
+                raise ValueError("missing gameinfo.txt entry value")
+            stack.append(key.lower())
+            block = tuple(stack)
+            if block in blocks:
+                blocks[block] += 1
+        elif tuple(stack) == wanted and key.lower() == "game":
+            paths.append(value)
+        index += 2
+    if stack or any(count != 1 for count in blocks.values()):
+        raise ValueError("one complete GameInfo/FileSystem/SearchPaths block is required")
+
+    roots = []
+    for value in paths:
+        if value.lower() == "|gameinfo_path|.":
+            root = game / "usermod"
+        else:
+            relative = value.replace("\\", "/")
+            if any(c in relative for c in "*?|[]\x00\""):
+                raise ValueError("unsupported Game search path")
+            _validate_rel(relative)
+            root = game / Path(*relative.split("/"))
+        # Relative paths have no absolute or traversal components.
+        root.relative_to(game)
+        roots.append(root)
+    return roots
+
+
 def _check_autoinit(game):
-    """Source discovery is supported in both the Workshop and usermod trees."""
-    for mod in ("workshop", "usermod"):
-        root = game / mod / "scripts" / "sfm"
-        manager = root / "autoinit" / "autoinit_manager.py"
-        startup = root / "sfm_init_local.py"
-        menu = root / "mainmenu" / "kiwifruitdev" / "autoinit_manager.py"
-        if manager.is_file() and startup.is_file() and menu.is_file():
-            _plain(manager)
-            _plain(startup)
-            _plain(menu)
-            return True
+    """Require the complete dependency together in a configured safe mount."""
+    game = Path(game).absolute()
+    try:
+        roots = _autoinit_mounts(game)
+        for mount in roots:
+            root = mount / "scripts" / "sfm"
+            files = (root / "autoinit" / "autoinit_manager.py", root / "sfm_init_local.py",
+                     root / "mainmenu" / "kiwifruitdev" / "autoinit_manager.py")
+            if all(path.is_file() for path in files):
+                _plain(mount)
+                for path in files:
+                    _plain(path)
+                return True
+    except (OSError, UnicodeError, ValueError, Refusal) as exc:
+        raise Refusal("Autoinit Manager's location could not be verified from "
+                      "usermod/gameinfo.txt: " + str(exc)) from exc
     return False
 
 

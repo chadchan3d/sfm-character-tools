@@ -37,6 +37,9 @@ class DisposableInstallTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.game = Path(self.tmp.name) / "game"
         (self.game / "usermod" / "cfg").mkdir(parents=True)
+        (self.game / "usermod" / "gameinfo.txt").write_text(
+            '"GameInfo" { "FileSystem" { "SearchPaths" { '
+            '"Game" "|gameinfo_path|." "Game" "workshop" } } }\n', encoding="utf-8")
         for rel in ("scripts/sfm/autoinit/autoinit_manager.py", "scripts/sfm/sfm_init_local.py",
                     "scripts/sfm/mainmenu/kiwifruitdev/autoinit_manager.py"):
             p = self.game / "workshop" / rel
