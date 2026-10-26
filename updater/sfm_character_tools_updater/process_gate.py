@@ -13,16 +13,17 @@ from .messages import Stop
 _TASKLIST = ["tasklist", "/FO", "CSV", "/NH", "/FI", "IMAGENAME eq sfm.exe"]
 
 
-def _query():
+def _query(no_window=False):
     if hooks.process_query is not None:
         return hooks.process_query()
-    cp = subprocess.run(_TASKLIST, capture_output=True, text=True, timeout=30)
+    options = {"creationflags": subprocess.CREATE_NO_WINDOW} if no_window else {}
+    cp = subprocess.run(_TASKLIST, capture_output=True, text=True, timeout=30, **options)
     return cp.returncode, cp.stdout
 
 
-def process_status():
+def process_status(no_window=False):
     try:
-        rc, out = _query()
+        rc, out = _query(no_window=no_window)
         if rc != 0:
             return "UNKNOWN", "nonzero exit %s" % rc
         lines = [l.strip() for l in out.splitlines() if l.strip()]
