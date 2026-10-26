@@ -12,6 +12,8 @@ Leave Setup open while closing SFM. Steam may continue to show SFM as Running un
 
 Setup shows **Preparing Setup** before extracting and verifying the package. Its window stays available while one worker performs file operations. Installation, removal and recovery cannot overlap; Close is unavailable during an active operation. **Back to Setup** returns to a fresh review, without automatically repeating an operation. A running SFM process produces close-SFM instructions; an unreadable process check remains a separate refusal.
 
+Setup displays the established installed/package versions and installation folder before consent. Matching versions are described as a reinstall. If the Windows process check fails, **Could not check Source Filmmaker** explains the refusal and Details shows the available diagnostic reason. Temporary cleanup leaves the current page visible until Setup closes; a cleanup failure is reported separately from the installation or removal result.
+
 Setup replaces known Character Tools program files and installs the package's matching Animation Groups TXT, sidecar and manifest. Custom TXT edits are not merged. Before replacing an existing TXT, Setup creates and verifies a timestamped backup under `usermod/cfg/sfm_character_tools_installer/backups/`. Only TXT backups are retained permanently. Setup does not inspect the CPM library in Documents.
 
 An update may replace data previously installed by Control Group Updater; **Package version** means this Workshop package, not necessarily newer Animation Groups data. **Installed version** is shown only when an installation record establishes it. Known obsolete program files are removed using the previous installation record and the publisher's explicit obsolete-path list. Unrecognized files are not removed.
@@ -29,6 +31,10 @@ Uninstall removes known programs, dependencies, both button files, installed men
 A recognized empty `publisher.lock` is held exclusively while authority files are removed, then deleted through the same verified Windows handle. Busy, unreadable, linked or nonempty locks stop removal before file changes. The sidecar directory is removed only when empty; unrelated contents are reported and retained. The updater's separate installation lock and records are not deleted.
 
 Management is removed last. If Setup is running from its installed executable, Windows may prevent deletion of that executable. **Show Setup File** opens Explorer with the exact remaining file selected. Close Setup before deleting that file; retained folders and unrelated files do not need to be deleted. No service or self-deletion helper is installed. Unsubscribe to remove the Steam-managed Setup entry; uninstall does not modify Workshop-managed files.
+
+File selection uses the Windows Shell API, without command-line quoting. A selection failure reports the exact remaining location and diagnostic error. Routine retained-directory lists are omitted from successful removal pages; unexpected retained authority files remain available in Details.
+
+**Optional CPM toolbar button:** Requires Autoinit Manager. Enable **ChadChan3D_CPM_ASE_Button** under **Scripts → kiwifruit → Autoinit Manager**, then restart SFM.
 
 ## Package and filesystem protection
 

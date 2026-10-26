@@ -152,3 +152,39 @@ e9cd4054c48073deb843cfaff4c907164d4be71be0d3290cb24a377ac58abf73
 All four staged files were verified; the original ZIP and both button-file identities remain unchanged. The new helper's 5,464 decoded code objects also pass the identifying-build-path scan. PUBLIC REPOSITORY SANITATION: PASS following source/history and artifact review.
 
 The preceding startup measurements remain evidence for that candidate, not new timing measurements of this rebuilt executable. The outstanding visible desktop checks and final Owner-operated SFM presentation checks remain pending. No live SFM installation, application source, original release ZIP, signing, PR merge or Workshop publication was changed.
+
+## Owner-approved final copy and presentation correction — 26 October 2026
+
+This follow-up applies the Owner's approved copy. Install/reinstall wording uses the established package and installed versions, the destination remains visible, and absent metadata no longer creates an empty control or spacing. Metadata uses a modestly smaller native font. No custom painting, shading or decorative indicators were added.
+
+UNKNOWN process status now displays **Could not check Source Filmmaker**, explains that the Windows process check failed, and exposes the available specific diagnostic reason in Details. RUNNING remains separate, and interrupted-operation evidence is retained. Optional-toolbar instructions identify **Scripts → kiwifruit → Autoinit Manager** and **ChadChan3D_CPM_ASE_Button**. Autoinit remains optional.
+
+Temporary cleanup leaves the existing page visible and disables actions/Close until the worker finishes. A cleanup error identifies temporary-file cleanup separately and permits exit without repeatedly attempting the failed cleanup. Routine retained-directory lists are omitted from successful removal; unexpected authority-file information remains available.
+
+**Show Setup File** now uses `SHParseDisplayName` and the single-item `SHOpenFolderAndSelectItems` call on the existing worker. HRESULTs are checked, COM initialization/uninitialization is balanced, and the returned item identifier is released. Failures identify the remaining file and actual diagnostic error rather than silently opening another directory.
+
+### Focused verification
+
+- **21/21 interface/process-query tests PASS**, Windows/Python 3.10.6. This is the focused interface suite, not a repeat of the installation or application campaigns.
+- Coverage includes version-dependent copy, exact UNKNOWN explanation and available diagnostics, interrupted-operation preservation, quiet cleanup success/failure, worker exclusion, native-control spacing, routine-directory suppression, unexpected retained-file reporting, and Shell selection success/failure/resource cleanup. The Shell call tests use controlled responses; they do not establish actual Explorer selection.
+- The production helper builds successfully with PyInstaller 6.11.1. Embedded app/window/core code matches the reviewed source. All four staged payload hashes and wrapper-archive members were checked. The original release ZIP and toolbar pair are unchanged.
+- The first disposable GUI preparation refused because the restricted process query returned UNKNOWN; the production gate was preserved. With normal Windows process-query access, a full disposable installation and the actual built helper launch succeeded. The graphical helper did not expose the Setup window, so no button interaction or Explorer selection was observed. The missing visual result is **PENDING**, not PASS.
+- Earlier Owner observations of prompt preparation, successful installation and absence of console flashes remain accepted. No new extended visual-responsiveness claim is made.
+
+Current Setup SHA-256:
+
+```text
+b799f9f987d2396ae0a432f38142aa278a9abe85c0c1b92d6c431f7d780dfe80
+```
+
+Launcher SHA-256: `ae97cdcb171d324dfa6a006a72aa9fb7835f4a2a1462a7b5e537e58ecd022cb2`.
+
+Staging-manifest SHA-256: `02bf22718272c88b13c5cb1284d74a9a38b4c6397a9af1bedc29771da0486e5c`.
+
+### Remaining Owner acceptance
+
+Using this corrected build, verify the final pages and quiet Close behavior. After removal leaves its running helper, **Show Setup File must visibly open its containing folder and select that exact executable at a path containing spaces**. Close Setup and confirm the file can be manually deleted. Actual Explorer observation is required; mocked calls, HRESULT success, or source inspection cannot substitute. This follow-up does not close that acceptance condition.
+
+The previously pending extended move/minimize/repaint check remains pending unless directly observed by the Owner. Final SFM checks remain Owner-operated. No live installation, SFM startup, Gate 0/1 repetition, application changes, merge or Workshop publication occurred.
+
+PUBLIC REPOSITORY SANITATION: PASS for the proposed correction and staged artifact. Source/diff and metadata were inspected; all 5,469 decoded executable code objects passed the identifying-build-path scan. Private raw evidence and disposable fixtures are excluded from the repository. Final published blob identities are checked before handoff.

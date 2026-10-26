@@ -87,6 +87,7 @@ class Window:
         dpi = user32.GetDpiForSystem() if hasattr(user32, "GetDpiForSystem") else 96
         self.scale = max(1.0, dpi / 96.0)
         self.font = gdi32.CreateFontW(-self.px(15), 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 0, 0, "Segoe UI")
+        self.metadata_font = gdi32.CreateFontW(-self.px(14), 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 0, 0, "Segoe UI")
         self.heading_font = gdi32.CreateFontW(-self.px(21), 0, 0, 0, 600, 0, 0, 0, 1, 0, 0, 0, 0, "Segoe UI")
         self.proc = WNDPROC(self._message)  # Keep callback and class alive through window destruction.
         self.classname = "SCT_Setup_%s_%s" % (os.getpid(), id(self))
@@ -110,11 +111,11 @@ class Window:
         if threading.get_ident() != self.owner:
             raise RuntimeError("Setup controls belong to the UI thread")
 
-    def _height(self, text, width, heading=False):
+    def _height(self, text, width, heading=False, metadata=False):
         if not text:
             return 0
         dc = user32.GetDC(self.hwnd)
-        old = gdi32.SelectObject(dc, self.heading_font if heading else self.font)
+        old = gdi32.SelectObject(dc, self.heading_font if heading else self.metadata_font if metadata else self.font)
         try:
             rect = wt.RECT(0, 0, self.px(width), 0)
             # DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX, including long path wrapping.
@@ -130,13 +131,13 @@ class Window:
         user32.SetWindowPos(self.hwnd, None, 0, 0, rect.right - rect.left,
                             rect.bottom - rect.top, 0x16)
 
-    def _control(self, kind, text, style, x, y, width, height, number=0, heading=False):
+    def _control(self, kind, text, style, x, y, width, height, number=0, heading=False, metadata=False):
         self._owned()
         h = user32.CreateWindowExW(0, kind, text, 0x50000000 | style, self.px(x), self.px(y),
                                    self.px(width), self.px(height), self.hwnd, wt.HMENU(number), self.instance, None)
         if not h:
             raise ctypes.WinError(ctypes.get_last_error())
-        user32.SendMessageW(h, 0x30, self.heading_font if heading else self.font, 1)
+        user32.SendMessageW(h, 0x30, self.heading_font if heading else self.metadata_font if metadata else self.font, 1)
         self.children.append(h)
         return h
 
@@ -150,9 +151,12 @@ class Window:
         self.details_handle = None
         content_width = self._client_width - 48
         y = 20
-        for text, heading in ((title, True), (subtitle, False), (message, False)):
-            height = self._height(text, content_width, heading)
-            self._control("STATIC", text, 0x80, 24, y, content_width, height, heading=heading)
+        for text, heading, metadata in ((title, True, False), (subtitle, False, True), (message, False, False)):
+            if not text:
+                continue
+            height = self._height(text, content_width, heading, metadata)
+            self._control("STATIC", text, 0x80, 24, y, content_width, height,
+                          heading=heading, metadata=metadata)
             y += height + (14 if heading else 20)
         self._client_height = max(300, y + 56)
         self._resize(self._client_height)
@@ -230,6 +234,7 @@ class Window:
         user32.DestroyWindow(self.hwnd)
         user32.UnregisterClassW(self.classname, self.instance)
         gdi32.DeleteObject(self.font)
+        gdi32.DeleteObject(self.metadata_font)
         gdi32.DeleteObject(self.heading_font)
 
     def run(self, on_shown=None):
