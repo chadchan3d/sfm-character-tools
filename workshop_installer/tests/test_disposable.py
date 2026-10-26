@@ -200,8 +200,9 @@ class DisposableInstallTests(unittest.TestCase):
             core.install(self.game, self.prepared, summary["snapshot"])
         for status in ("RUNNING", "UNKNOWN"):
             with mock.patch.object(core, "process_status", return_value=(status, "test")):
-                with self.assertRaisesRegex(core.Refusal, "closed"):
+                with self.assertRaises(core.ProcessRefusal) as refusal:
                     self.install()
+                self.assertEqual(refusal.exception.status, status)
         self.assertFalse(self.target(core.HELPER).exists())
 
     def test_real_updater_lock_excludes_install(self):

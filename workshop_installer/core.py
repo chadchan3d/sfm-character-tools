@@ -378,10 +378,17 @@ def _state_root(game):
     return _state_path(game)
 
 
+class ProcessRefusal(Refusal):
+    """Preserve process-check evidence without parsing user-facing prose."""
+    def __init__(self, status, detail):
+        self.status, self.detail = status, detail
+        super().__init__("SFM process check: %s (%s)" % (status, detail))
+
+
 def _process_clear():
-    status, detail = process_status()
+    status, detail = process_status(no_window=True)
     if status != "CLEAR":
-        raise Refusal("SFM must be closed and its process check readable (%s)" % status)
+        raise ProcessRefusal(status, detail)
 
 
 def _updater_records_clear(game):
@@ -492,47 +499,7 @@ def _operation(game):
     if (record.get("schema") != STATE_SCHEMA or record.get("kind") not in ("install", "uninstall") or
             not TXID_RE.fullmatch(record.get("id", ""))):
         raise Refusal("Unrecognized unfinished setup operation")
-    entries = record.get("entries")
-    if not isinstance(entries, list) or len(entries) > 20000:
-        raise Refusal("Invalid unfinished file list")
-    seen = set()
-    for e in entries:
-        p = e.get("path")
-        _validate_rel(p)
-        if (p.casefold() in seen or
-                not (_program_path(p) or p in (MASTER, MANIFEST) or AUTH_RE.fullmatch(p)) or
-                any(v is not None and not _hash_value(v) for v in (e.get("old"), e.get("new")))):
-            raise Refusal("Invalid unfinished file entry")
-        seen.add(p.casefold())
-        if record["kind"] == "uninstall" and (p == MASTER or e.get("new") is not None):
-            raise Refusal("Invalid removal operation")
-    if record["kind"] == "install":
-        if not _hash_value(record.get("package")):
-            raise Refusal("Invalid unfinished package identity")
-        backup = record.get("backup")
-        if backup is not None:
-            if (not isinstance(backup, dict) or
-                    not re.fullmatch(r"Animation Groups - [0-9TZ-]+ - [0-9a-f]{8}\.txt", backup.get("name", "")) or
-                    not _hash_value(backup.get("sha256"))):
-                raise Refusal("Invalid Animation Groups backup record")
-        master = next((e for e in entries if e["path"] == MASTER), None)
-        if master is None or (master["old"] is not None and
-                              (backup is None or backup["sha256"] != master["old"])):
-            raise Refusal("Missing original Animation Groups backup identity")
-    return record
-
-
-def _legacy_record_clear(game):
-    # Pre-release PR candidates used a different rollback contract. Never discard
-    # one of those unfinished operations or reinterpret its backups as this policy.
-    path = _state_path(game, "transaction.json")
-    if path.exists():
-        raise Refusal("An earlier experimental Setup record exists. Resolve it before using this Setup.")
-
-
-def _classify(game, prepared):
-    prior = _current_record(game)
-    programs = {p for p in prepared.files if p not in _authority_paths(prepared)}
+    entr…528 tokens truncated… not in _authority_paths(prepared)}
     obsolete = (_receipt_paths(prior) | set(release.OBSOLETE)) - programs
     if not all(_program_path(p) for p in programs | obsolete):
         raise Refusal("Package contains an unsupported program location")

@@ -58,3 +58,65 @@ Use an explicitly authorized installation, with the current TXT backed up indepe
 4. Confirm installed management works without the Workshop payload; close SFM and uninstall. Check the retained TXT/backup, removed tools/button/sidecars, and accurate reporting of any running Setup executable or unrelated remaining directory contents.
 
 Do not repeat Gate 0/Gate 1. Clean-subscriber distribution and unresolved Valve policy questions remain separate release conditions. No live SFM, Workshop publication, merge or application changes occurred in this revision.
+
+## Owner-approved usability revision — 26 October 2026
+
+The installation engine and original v1.0.0 ZIP remain unchanged apart from typed process refusal reporting and an opt-in hidden tasklist query. The default Updater process query behavior is unchanged; the released Updater was not rebuilt. Both menu filenames remain unchanged.
+
+### Implemented
+
+- One non-daemon worker owns lengthy preparation, preview, installation, recovery, removal and temporary cleanup. The native UI thread alone owns Windows controls. Busy state blocks overlapping work and Close; stale page action IDs cannot trigger new-page actions.
+- The initial preparation window is shown/painted before package extraction and installation scanning. An inherited hidden startup hint cannot leave Setup permanently invisible.
+- Running SFM, unreadable process status, unavailable Workshop package, invalid package, incomplete operation and unreadable operation record have distinct presentation.
+- Back to Setup refreshes consent rather than automatically retrying. Finish Installation/Finish Uninstall use the existing recorded-operation recovery paths.
+- Compact measured text layout, explicit destination before consent, no uninstall ellipsis, useful Details only, and CRLF formatting for the native multiline EDIT control.
+- Accurate completion copy, Open Backup Folder, and Show Setup File selecting the exact retained executable. No self-deletion mechanism.
+
+### Verification performed
+
+The final complete Windows suite passed **39/39 tests** on Python 3.10.6. It includes the existing full mapped-release install/remove, TXT backup, interrupted recovery, changed-file refusal, reparse, updater-lock, mounted-Autoinit and payload-independent uninstall cases. The 15 interface/process-query checks cover serialization, thread ownership, deferred completion, busy closure, stale clicks, reviewed-snapshot binding, distinct errors, missing/invalid packages, CRLF, long paths and exact Explorer selection arguments.
+
+One initial failure was an obsolete assertion expecting the word "closed" in a process refusal. The test now asserts the typed RUNNING/UNKNOWN evidence. Its focused rerun and the final full run passed. This did not relax the process gate.
+
+The Windows one-file helper built with PyInstaller 6.11.1. Its SHA-256 is:
+
+```text
+7eeb472d87287e11b0bb83251e1564069fa0c37204b3ab165c5587307446b6f9
+```
+
+The four-file payload was restaged and verified. The original release ZIP remains:
+
+```text
+5323b1431a200c0bea3641e7dcb2f9fac45920d889f749ac9bf07972f5a89458
+```
+
+### Startup measurement and its limits
+
+One local warm launch of the final helper recorded:
+
+| Stage | Elapsed |
+|---|---:|
+| Equivalent launcher executable/ZIP hash checks, measured separately | 0.018 s |
+| Process launch to helper entry | 0.200 s |
+| Process launch to native window show/paint marker | 0.269 s |
+| Helper entry to native window show/paint marker | 0.068 s |
+| Show/paint marker to preparation completion | 7.305 s |
+
+These are internal timing markers, not a human-observed SFM menu launch or a cold-start guarantee. They demonstrate that expensive preparation occurs after the native show/paint boundary. They do not establish that the owner's previously observed 5–10-second visible launch delay is fully resolved in SFM.
+
+Qualification markers are opt-in through SCT_SETUP_TIMING_FILE, contain stage/time values only, and do not change installation decisions. Raw local evidence is not committed.
+
+### Explicitly pending Owner observations
+
+Graphical inspection could not access the shell-launched disposable Setup window. The subsequent graphical launch request timed out awaiting app approval. No successful graphical responsiveness observation is claimed, and no alternative UI automation was used to bypass that limitation.
+
+- **Owner condition 2:** the built interface repaint/move/minimize check during deliberately delayed work remains unverified. In-process native-control tests prove worker isolation and blocked Close/duplicate actions, but do not substitute for this visible observation.
+- **Owner condition 3:** Show Setup File's exact Explorer command is covered; actual Explorer highlighting and manual deletion after the installed Setup exits remain unverified for this revision.
+- Hidden tasklist execution, captured output, timeout and unchanged status decisions pass source-level tests. Absence of visible console flashes remains an Owner observation.
+- Final SFM presentation/launch checks are Owner-operated. No SFM startup or application qualification was performed by this revision.
+
+The earlier owner-operated bounded practical acceptance remains accepted. It is not repeated. The revised UI still requires the bounded observations above before its additional Owner conditions can be marked complete. This is not authorization to merge or publish.
+
+### Sanitation
+
+PUBLIC REPOSITORY SANITATION: PASS, subject to final published-commit verification. Proposed source/history and PR metadata were checked; the staged manifest contains relative paths only. All 5,464 decoded executable code objects were checked for identifying build paths. Build outputs, private fixture files, raw logs and screenshots are excluded. Authorized public project identifiers and commit email remain.

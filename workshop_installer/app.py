@@ -1,23 +1,45 @@
-"""Small, synchronous Windows Setup window. No background installation or service."""
+"""One responsive native Setup window and one finite worker at a time."""
 import argparse
+import json
 import os
+import queue
+import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
-from . import core, release
+from . import core
 from .window import Window
 
 FRESH = ("Install Control Group Normalizer, Character Preset Manager, Control Group Updater "
-         "and the CPM toolbar button.\n\nSetup will install the included Animation Groups. "
-         "If an Animation Groups file already exists, it will be backed up before replacement."
-         "\n\nClose Source Filmmaker before installing.")
-UPDATE = ("Setup will replace the installed Character Tools programs and Animation Groups "
-          "with this Workshop package.\n\nYour current Animation Groups file will be backed up "
-          "before replacement. Custom edits will not be combined with the replacement."
-          "\n\nClose Source Filmmaker before continuing.")
-REMOVE = ("This will remove Character Tools, its toolbar button, scripts and supporting files, "
-          "including edited program files.\n\nYour Animation Groups file and its backups will remain."
-          "\n\nClose Source Filmmaker before uninstalling.")
+         "and the CPM toolbar button.\n\nThe included Animation Groups will be installed. "
+         "If you already have an Animation Groups file, Setup will back it up before "
+         "replacing it. Custom edits will not be merged.")
+UPDATE = ("Replace the installed Character Tools programs and Animation Groups with this "
+          "package.\n\nYour current Animation Groups file will be backed up before replacement. "
+          "Custom edits will remain in the backup and will not be merged.")
+CLOSE_SFM = ("Save your work and close Source Filmmaker. Leave Setup open, then choose {action}."
+             "\n\nSteam may show SFM as running while Setup is open. "
+             "You do not need to click Stop in Steam.")
+REMOVE = ("Remove the Character Tools programs, toolbar button and generated support files, "
+          "including edited program files.\n\nYour Animation Groups file and its backups will remain.")
+
+
+def timing(stage):
+    """Opt-in local qualification markers containing no paths or environment."""
+    target = os.environ.get("SCT_SETUP_TIMING_FILE")
+    if target:
+        try:
+            with open(target, "a", encoding="utf-8") as out:
+                out.write(json.dumps({"stage": stage, "time": time.time(),
+                                      "monotonic": time.perf_counter()}) + "\n")
+        except OSError:
+            pass
+
+
+def show_setup_file(path):
+    subprocess.Popen(["explorer.exe", "/select," + str(path)], close_fds=True)
 
 
 class SetupWindow:
@@ -26,169 +48,283 @@ class SetupWindow:
         self.prepared = None
         self.busy = False
         self.details = ""
+        self.worker = None
+        self.results = queue.Queue()
+        self.completion = None
         self.window = Window("SFM Character Tools Setup")
-        self.refresh()
+        self.window.on_tick = self.poll
+        self.window.on_close = self.close
+        self.page("Preparing Setup", "Checking the installation package and your installed files. Please wait.", [])
+        self.busy = True
+        self.window.set_busy(True)
 
-    def page(self, title, message, buttons):
-        subtitle = "Version included: " + release.VERSION + "\nInstall location: " + str(self.game / "usermod")
-        self.window.page(title, subtitle, message, buttons)
+    def page(self, title, message, buttons, metadata="", destination=False, details=""):
+        self.details = details
+        if details:
+            buttons = list(buttons)
+            buttons.insert(max(0, len(buttons) - 1), ("Details", self.show_details))
+        if destination:
+            metadata += ("\n" if metadata else "") + "Install location: " + str(self.game / "usermod")
+        self.window.page(title, metadata, message, buttons)
 
     def capture(self):
         if self.prepared is None:
             if not self.package or not self.package.is_file():
-                raise core.Refusal("Obtain the Workshop package and launch Setup from its Workshop menu entry.")
+                raise core.Refusal("Restore the Workshop download to update or reinstall Character Tools.")
             self.prepared = core.prepare(self.package, self.helper)
         return self.prepared
 
-    def refresh(self):
-        try:
-            core._legacy_record_clear(self.game)
-            op = core._operation(self.game)
-            if op:
-                core._resume_states(self.game, op)
-                if op["kind"] == "uninstall":
-                    self.page("Removal incomplete", "Close SFM, then finish removing Character Tools.",
-                              [("Finish Uninstall", lambda: self.perform(self.finish_remove)), ("Close", self.close)])
-                else:
-                    available = False
-                    try:
-                        p = self.capture()
-                        available = p.package == op["package"] and p.files == op["files"]
-                    except Exception as exc:
-                        self.details = str(exc)
-                    message = "Setup could not finish. Keep SFM closed and run Setup again to complete the installation."
-                    if not available:
-                        message += ("\n\nObtain the exact Workshop package used for this unfinished installation. "
-                                    "Required package SHA-256: " + op["package"])
-                    buttons = [("Retry", lambda: self.perform(self.retry))] if available else []
-                    buttons += [("Details", self.show_details), ("Close", self.close)]
-                    self.page("Installation incomplete", message, buttons)
-                return
-            # Removal is available even if the payload or Autoinit Manager is absent.
-            removal = core.removal_preview(self.game)
-            existing = bool(core._current_record(self.game) or any(
-                h is not None for p, h in removal.items() if core._program_path(p)))
-            try:
-                summary = core.preview(self.game, self.capture())
-            except Exception as exc:
-                self.details = str(exc)
-                buttons = [("Uninstall…", self.confirm_remove)] if existing else []
-                buttons += [("Details", self.show_details), ("Close", self.close)]
-                self.page("Setup needs attention", str(exc), buttons)
-                return
-            self.snapshot = summary["snapshot"]
-            message = UPDATE if summary["existing"] else FRESH
-            if summary["installed_version"]:
-                message = "Installed version: " + summary["installed_version"] + "\n\n" + message
-            buttons = [("Update / Reinstall" if summary["existing"] else "Install",
-                        lambda: self.perform(self.install))]
-            if existing:
-                buttons.append(("Uninstall…", self.confirm_remove))
-            buttons.append(("Cancel", self.close))
-            self.page("SFM Character Tools Setup", message, buttons)
-        except Exception as exc:
-            self.error(exc)
-
-    def perform(self, action):
-        if self.busy:
+    def start(self, title, work, completion, message=None):
+        if self.worker is not None or self.busy:
             return
         self.busy = True
+        self.page(title, message or "Please wait. Keep SFM closed until Setup finishes.", [])
         self.window.set_busy(True)
+        self.completion = completion
+
+        def run():
+            try:
+                value = work()
+            except Exception as exc:
+                value = self.failure(exc)
+            self.results.put(value)
+
+        self.worker = threading.Thread(target=run, name="Setup operation", daemon=False)
         try:
-            action()
-        except Exception as exc:
-            self.error(exc)
-        finally:
+            self.worker.start()
+        except Exception:
+            self.worker = None
             self.busy = False
             self.window.set_busy(False)
+            raise
 
-    def error(self, exc):
-        self.details = str(exc)
-        if isinstance(exc, core.RecoveryConflict):
-            self.page("Recovery blocked", str(exc),
-                      [("Details", self.show_details), ("Close", self.close)])
+    def poll(self):
+        if self.worker is None or self.worker.is_alive():
             return
+        self.worker.join()
+        value = self.results.get_nowait()
+        done = self.completion
+        self.worker = self.completion = None
+        self.busy = False
+        self.window.set_busy(False)
+        if isinstance(value, dict) and "failure" in value:
+            self.error(value)
+        else:
+            done(value)
+
+    def failure(self, exc):
+        # Error diagnosis also runs on the worker, never on the window thread.
         try:
-            op = core._operation(self.game)
-        except Exception:
-            op = None
-        message = ("Removal incomplete. Keep SFM closed and run Setup again to finish removal."
-                   if op and op["kind"] == "uninstall" else
-                   "Setup could not finish. Keep SFM closed and run Setup again to complete the installation."
-                   if op else "Setup could not complete this action.\n\n" + str(exc))
+            operation = core._operation(self.game)
+            unreadable = False
+        except Exception as record_error:
+            operation, unreadable = None, True
+            detail = str(exc) + "\n\nOperation record: " + str(record_error)
+        else:
+            detail = str(exc)
+        return {"failure": exc, "operation": operation, "record_unreadable": unreadable,
+                "detail": detail}
+
+    def inspect(self):
+        core._legacy_record_clear(self.game)
+        operation = core._operation(self.game)
+        if operation:
+            core._resume_states(self.game, operation)
+            available, detail = False, ""
+            if operation["kind"] == "install":
+                try:
+                    p = self.capture()
+                    available = p.package == operation["package"] and p.files == operation["files"]
+                except Exception as exc:
+                    detail = str(exc)
+                if not available:
+                    detail += "\nRequired package SHA-256: " + operation["package"]
+            return {"operation": operation, "available": available, "detail": detail.strip()}
+        removal = core.removal_preview(self.game)
+        record = core._current_record(self.game)
+        existing = bool(record or any(h is not None for p, h in removal.items() if core._program_path(p)))
+        state = {"operation": None, "existing": existing,
+                 "installed_version": record["version"] if record else None}
+        if not self.package or not self.package.is_file():
+            state["package_missing"] = True
+            return state
+        try:
+            prepared = self.capture()
+        except Exception as exc:
+            state["package_error"] = str(exc)
+            return state
+        try:
+            state["summary"] = core.preview(self.game, prepared)
+        except Exception as exc:
+            state["preview_error"] = str(exc)
+        return state
+
+    def refresh(self):
+        self.start("Preparing Setup", self.inspect, self.review,
+                   "Checking the installation package and your installed files. Please wait.")
+
+    def review(self, state):
+        timing("preparation_complete")
+        op = state.get("operation")
         if op:
-            message += "\n\n" + str(exc)
-        self.page("Setup needs attention", message,
-                  [("Review / Retry", self.refresh), ("Details", self.show_details), ("Close", self.close)])
+            install = op["kind"] == "install"
+            buttons = []
+            if not install or state["available"]:
+                buttons.append(("Finish Installation" if install else "Finish Uninstall",
+                                self.retry if install else self.finish_remove))
+            buttons.append(("Close", self.close))
+            message = "Keep SFM closed, then finish the interrupted %s." % ("installation" if install else "removal")
+            if install and not state["available"]:
+                message = "Restore the exact Workshop package used for this unfinished installation, then reopen Setup."
+            self.page("Installation incomplete" if install else "Removal incomplete", message,
+                      buttons, destination=True, details=state["detail"])
+            return
+        installed = state["installed_version"]
+        metadata = "Installed version: " + installed if installed else ""
+        buttons = [("Uninstall", self.confirm_remove)] if state["existing"] else []
+        buttons.append(("Close", self.close))
+        if state.get("package_missing"):
+            message = ("Character Tools is installed." if installed else "Character Tools files were found." if state["existing"]
+                       else "No Character Tools installation was found.")
+            message += " The Workshop package is unavailable, so updating or reinstalling is unavailable."
+            if state["existing"]:
+                message += "\n\nYou can still uninstall Character Tools."
+            message += "\n\nTo install, update or reinstall, restore the Workshop download and open Install or Update from SFM."
+            self.page("Manage SFM Character Tools" if state["existing"] else "Workshop package unavailable",
+                      message, buttons, metadata=metadata)
+            return
+        problem = state.get("package_error") or state.get("preview_error")
+        if problem:
+            self.page("Installation package could not be verified" if state.get("package_error") else "Setup needs attention",
+                      "Restore the Workshop package before installing." if state.get("package_error") else problem,
+                      buttons, metadata=metadata, details=problem if state.get("package_error") else "")
+            return
+        summary = state["summary"]
+        self.snapshot = summary["snapshot"]
+        action = "Update / Reinstall" if summary["existing"] else "Install"
+        buttons.insert(0, (action, self.install))
+        metadata += ("\n" if metadata else "") + "Package version: " + summary["version"]
+        self.page("Update or reinstall SFM Character Tools" if summary["existing"] else "Install SFM Character Tools",
+                  (UPDATE if summary["existing"] else FRESH) + "\n\n" + CLOSE_SFM.format(action=action),
+                  buttons, metadata=metadata, destination=True)
+
+    def error(self, failure):
+        exc, op = failure["failure"], failure["operation"]
+        buttons = [("Back to Setup", self.refresh), ("Close", self.close)]
+        detail = failure["detail"]
+        if failure["record_unreadable"]:
+            title = "Setup cannot determine whether installation is complete"
+            message = "The operation record could not be read. Keep SFM closed and preserve the installation records. Open Details for the error."
+            buttons = [("Close", self.close)]
+        elif isinstance(exc, core.RecoveryConflict):
+            title, message = "Recovery blocked", str(exc)
+            buttons = [("Close", self.close)]
+            detail = ""
+        elif isinstance(exc, core.ProcessRefusal):
+            if exc.status == "RUNNING":
+                title = "Close Source Filmmaker to continue"
+                message = ("Save your work and close SFM normally. Leave Setup open, then return to Setup "
+                           "and choose your operation again.")
+                detail = ""
+            else:
+                title = "Setup cannot check whether SFM is closed"
+                message = ("Setup cannot safely continue. Close SFM, then return to Setup and try again. "
+                           "If this message returns, open Details for the error.")
+            if op:
+                message += "\n\nThe interrupted %s still needs to be completed." % ("removal" if op["kind"] == "uninstall" else "installation")
+        elif op:
+            title = "Removal incomplete" if op["kind"] == "uninstall" else "Installation incomplete"
+            message = "Keep SFM closed. Return to Setup to review and finish the recorded operation."
+        else:
+            title = "Setup could not complete this action"
+            message = "Open Details for the error. Return to Setup to review the installation before trying again."
+        self.page(title, message, buttons, details=detail)
 
     def show_details(self):
-        # Details stay in the same owned window; no nested modal event loop.
-        if not self.details:
-            self.details = "Finish the recorded operation using the required package."
-        self.window.details(self.details)
+        if self.details:
+            self.window.details(self.details)
 
     def install(self):
-        result = core.install(self.game, self.capture(), self.snapshot)
-        self.success(result)
+        self.start("Installing SFM Character Tools…",
+                   lambda: core.install(self.game, self.capture(), self.snapshot), self.success)
 
     def retry(self):
-        result = core.recover(self.game, self.capture())
-        self.success(result)
+        self.start("Finishing the interrupted installation…",
+                   lambda: core.recover(self.game, self.capture()), self.success)
 
     def success(self, result):
-        message = ("SFM Character Tools is installed. Open SFM and choose Scripts → SFM Character Tools."
-                   "\n\nIf the CPM toolbar button is disabled, enable it in Autoinit Manager and restart SFM.")
         buttons = []
         if result["backup"]:
-            buttons.append(("Open Backups", lambda: os.startfile(str(core._state_path(self.game, "backups")))))
+            buttons.append(("Open Backup Folder", lambda: os.startfile(str(core._state_path(self.game, "backups")))))
         buttons.append(("Close", self.close))
-        self.page("Installation complete", message, buttons)
+        self.page("Installation complete",
+                  "Close Setup, then open SFM and choose Scripts → SFM Character Tools.\n\n"
+                  "If the CPM toolbar button is disabled, enable it in Autoinit Manager and restart SFM.", buttons)
 
     def confirm_remove(self):
-        try:
-            self.remove_snapshot = core.removal_preview(self.game)
-            self.page("Uninstall SFM Character Tools?", REMOVE,
-                      [("Uninstall", lambda: self.perform(self.finish_remove)), ("Cancel", self.refresh)])
-        except Exception as exc:
-            self.error(exc)
+        self.start("Preparing removal", lambda: core.removal_preview(self.game), self.removal_consent)
+
+    def removal_consent(self, snapshot):
+        self.remove_snapshot = snapshot
+        self.page("Uninstall SFM Character Tools?", REMOVE + "\n\n" + CLOSE_SFM.format(action="Uninstall"),
+                  [("Uninstall", self.finish_remove), ("Back", self.refresh)], destination=True)
 
     def finish_remove(self):
-        result = core.uninstall(self.game, getattr(self, "remove_snapshot", None))
-        message = ("SFM Character Tools has been removed. Your Animation Groups file and backups remain."
-                   "\n\nUnsubscribe from the Workshop item to remove its Setup menu entry.")
+        self.start("Removing SFM Character Tools…",
+                   lambda: core.uninstall(self.game, getattr(self, "remove_snapshot", None)), self.removed)
+
+    def removed(self, result):
+        message = "Your Animation Groups file and backups remain."
+        buttons = []
         if result["remaining_helper"]:
-            message += "\n\nAfter closing Setup, delete the remaining Setup file:\n" + str(core._target(self.game, core.HELPER))
-        if result["authority_remaining"]:
-            message += "\n\nThe sidecar folder remains because it contains unrelated files:\n" + ", ".join(result["authority_remaining"])
+            message += ("\n\nSetup cannot remove its own running file. To remove it, choose Show Setup File, "
+                        "close Setup, then delete SCT_Setup.exe.")
+            buttons.append(("Show Setup File", lambda: show_setup_file(core._target(self.game, core.HELPER))))
+        message += "\n\nUnsubscribe from the Workshop item to remove its installer menu entry."
+        details = []
         if result["remaining_directories"]:
-            self.details = "Folders retained because they are nonempty or unavailable:\n" + "\n".join(result["remaining_directories"])
-            buttons = [("Details", self.show_details), ("Close", self.close)]
-        else:
-            buttons = [("Close", self.close)]
-        self.page("Removal complete", message, buttons)
+            details.append("Folders retained because they are nonempty or unavailable:\n" +
+                           "\n".join(result["remaining_directories"]))
+        if result["authority_remaining"]:
+            details.append("Files retained in the sidecar folder:\n" + "\n".join(result["authority_remaining"]))
+        buttons.append(("Close", self.close))
+        self.page("Character Tools removed", message, buttons, details="\n\n".join(details))
 
     def close(self):
-        if not self.busy:
+        if self.busy:
+            return
+        if self.prepared is not None:
+            def cleanup():
+                self.prepared.close()
+                self.prepared = None
+            self.start("Closing Setup", cleanup, lambda _: self.window.close(), "Removing temporary package files. Please wait.")
+        else:
             self.window.close()
+
+    def shown(self):
+        timing("first_visible_window")
+        self.busy = False
+        self.refresh()
 
     def run(self):
         try:
-            self.window.run()
+            self.window.run(self.shown)
         finally:
-            if self.prepared:
+            if self.worker is not None:
+                self.worker.join()
+            if self.prepared is not None:
                 self.prepared.close()
 
 
 class _SetupParser(argparse.ArgumentParser):
     def _print_message(self, message, file=None):
-        # A windowed executable has no stdout/stderr. argparse help/errors must
-        # not create a bootloader exception dialog before Setup opens.
         output = file or sys.stderr or sys.stdout
         if message and output is not None:
             output.write(message)
 
 
 def main(argv=None):
+    timing("helper_main")
     parser = _SetupParser()
     parser.add_argument("--game", required=True)
     parser.add_argument("--manage", action="store_true")
@@ -202,11 +338,9 @@ def main(argv=None):
         window.run()
         return 1
     executable = Path(sys.executable)
-    # Installed management can uninstall without this source. Install/retry still
-    # require the exact verified package; never use installed application files.
-    candidates = [executable.parent / release.ARCHIVE,
+    candidates = [executable.parent / core.release.ARCHIVE,
                   game / "workshop" / "scripts" / "sfm" / "mainmenu" /
-                  "SFM Character Tools" / "_workshop_installer" / release.ARCHIVE]
+                  "SFM Character Tools" / "_workshop_installer" / core.release.ARCHIVE]
     package = next((p for p in candidates if p.is_file()), None)
     SetupWindow(game, package, executable).run()
     return 0

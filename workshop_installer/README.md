@@ -8,11 +8,17 @@ Setup finds Autoinit Manager in the `Game` mounts declared in `usermod/gameinfo.
 
 Subscribe, install Autoinit Manager, then choose **Scripts → SFM Character Tools → Install or Update (Windows Setup)**. Review the destination and replacement notice. Save your project and close SFM normally before choosing **Install** or **Update / Reinstall**. Setup checks again and refuses a running or uncheckable SFM process.
 
+Leave Setup open while closing SFM. Steam may continue to show SFM as Running until Setup closes; do not use Steam's Stop button to close Setup. After installation, close Setup before starting SFM again.
+
+Setup shows **Preparing Setup** before extracting and verifying the package. Its window stays available while one worker performs file operations. Installation, removal and recovery cannot overlap; Close is unavailable during an active operation. **Back to Setup** returns to a fresh review, without automatically repeating an operation. A running SFM process produces close-SFM instructions; an unreadable process check remains a separate refusal.
+
 Setup replaces known Character Tools program files and installs the package's matching Animation Groups TXT, sidecar and manifest. Custom TXT edits are not merged. Before replacing an existing TXT, Setup creates and verifies a timestamped backup under `usermod/cfg/sfm_character_tools_installer/backups/`. Only TXT backups are retained permanently. Setup does not inspect the CPM library in Documents.
 
-An update may replace data previously installed by Control Group Updater; “included version” means this Workshop package, not necessarily newer Animation Groups data. Known obsolete program files are removed using the previous installation record and the publisher's explicit obsolete-path list. Unrecognized files are not removed.
+An update may replace data previously installed by Control Group Updater; **Package version** means this Workshop package, not necessarily newer Animation Groups data. **Installed version** is shown only when an installation record establishes it. Known obsolete program files are removed using the previous installation record and the publisher's explicit obsolete-path list. Unrecognized files are not removed.
 
 **Scripts → SFM Character Tools → Manage Installation** remains available after Workshop unsubscription. It can uninstall without the ZIP or Autoinit Manager. With the matching Workshop package still present, it also supports reinstalling that release. Installing button files does not re-enable a button disabled in Autoinit Manager; enable it there and restart SFM if necessary.
+
+The two menu entries remain separate: the Workshop entry supplies installation/update files, while the installed entry preserves management access after unsubscription. An unavailable package is an ordinary management state; a package that fails verification is reported separately. Neither condition suppresses uninstall when its safety checks pass.
 
 ## Interruption and removal
 
@@ -22,7 +28,7 @@ Uninstall removes known programs, dependencies, both button files, installed men
 
 A recognized empty `publisher.lock` is held exclusively while authority files are removed, then deleted through the same verified Windows handle. Busy, unreadable, linked or nonempty locks stop removal before file changes. The sidecar directory is removed only when empty; unrelated contents are reported and retained. The updater's separate installation lock and records are not deleted.
 
-Management is removed last. If Setup is running from its installed executable, Windows may prevent deletion of that executable. The result identifies it for manual deletion after Setup closes. No service or self-deletion helper is installed. Unsubscribe to remove the Steam-managed Setup entry; uninstall does not modify Workshop-managed files.
+Management is removed last. If Setup is running from its installed executable, Windows may prevent deletion of that executable. **Show Setup File** opens Explorer with the exact remaining file selected. Close Setup before deleting that file; retained folders and unrelated files do not need to be deleted. No service or self-deletion helper is installed. Unsubscribe to remove the Steam-managed Setup entry; uninstall does not modify Workshop-managed files.
 
 ## Package and filesystem protection
 
@@ -47,4 +53,4 @@ Publication is separate: follow the already-qualified Scripts-category procedure
 
 ## Acceptance boundary
 
-Disposable tests cover the installer, not a live SFM installation. Remaining practical acceptance is installed-menu launch, installation after normal SFM exit, opening the three tools, CPM button activation, updater coordination and removal. Clean-subscriber download/launch and Valve policy disposition remain separate public-Workshop release conditions. Gate 0 and Gate 1 are not repeated by this revision.
+The prior owner-operated practical acceptance is complete within its recorded boundary, including installation, bounded tool use, toolbar activation, payload-independent uninstall, retained TXT/backups and reinstallation. Earlier accepted lock evidence remains applicable. This usability revision requires focused Windows interface checks, not repetition of unchanged application qualification. Final SFM checks are Owner-operated. Clean-subscriber download/launch and Valve policy disposition remain separate public-Workshop release conditions. Gate 0 and Gate 1 are not repeated.
