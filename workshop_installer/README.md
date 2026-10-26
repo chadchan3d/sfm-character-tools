@@ -14,7 +14,7 @@ An update may replace data previously installed by Control Group Updater; “inc
 
 ## Interruption and removal
 
-An interrupted installation is completed from the exact verified package used to begin it. Keep SFM closed and run Setup again. If that package is absent, obtain it again. Setup does not restore an older program version, retain previous application binaries, or claim that a multi-file update is atomic. Unexpected intervening edits stop automatic retry; a TXT edit must receive fresh consent and a verified backup before replacement. The original backup is never overwritten on retry.
+An interrupted installation is completed from the exact verified package used to begin it. Keep SFM closed and run Setup again. If that package is absent, obtain it again. Restore Autoinit Manager if it is missing. Setup does not restore an older program version, retain previous application binaries, or claim that a multi-file update is atomic. If a destination file changed after the interruption, Setup identifies it and stops automatic recovery. Preserve the change and seek recovery assistance; Setup will not overwrite it on retry. The original TXT backup is never overwritten on retry.
 
 Uninstall removes known programs, dependencies, both button files, installed menu entries, the manifest and recognized sidecars. It keeps the TXT, TXT backups, unrelated files, and existing updater records and independent backups. Modified program files are included in the explicit removal consent. Shared directories are never recursively deleted.
 

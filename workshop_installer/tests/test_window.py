@@ -72,6 +72,26 @@ class WindowTests(unittest.TestCase):
         finally:
             window.dispose()
 
+    def test_changed_file_shows_blocked_recovery_without_retry(self):
+        window = Window("Disposable recovery check")
+        setup = app.SetupWindow.__new__(app.SetupWindow)
+        setup.game = Path("game")
+        setup.package, setup.prepared = None, None
+        setup.helper, setup.window = Path("SCT_Setup.exe"), window
+        setup.details, setup.busy = "", False
+        changed = core.MASTER
+        try:
+            with mock.patch.object(app.core, "_legacy_record_clear"), \
+                    mock.patch.object(app.core, "_operation", return_value={"kind": "install"}), \
+                    mock.patch.object(app.core, "_resume_states", side_effect=core.RecoveryConflict(changed)):
+                setup.refresh()
+            message = caption(window.children[2])
+            self.assertIn(changed, message)
+            self.assertIn("Preserve your changes", message)
+            self.assertEqual({caption(h) for h in window.buttons}, {"Details", "Close"})
+        finally:
+            window.dispose()
+
 
 if __name__ == "__main__":
     unittest.main()

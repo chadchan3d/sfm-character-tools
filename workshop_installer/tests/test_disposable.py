@@ -167,12 +167,28 @@ class DisposableInstallTests(unittest.TestCase):
         with self.assertRaisesRegex(core.Refusal, "exact package"):
             core.recover(self.game, wrong)
         self.target(core.MASTER).write_bytes(b"later TXT edit")
-        with self.assertRaisesRegex(core.Refusal, "changed after"):
+        with self.assertRaisesRegex(core.RecoveryConflict, core.MASTER):
             core.recover(self.game, self.prepared)
         self.assertEqual(self.target(core.MASTER).read_bytes(), b"later TXT edit")
         self.assertEqual(self.backups()[0].read_bytes(), b"original TXT")
         with self.assertRaises(TypeError):
             core.recover(self.game)  # No fallback to installed files or a different package.
+
+    def test_recover_requires_autoinit_but_uninstall_does_not(self):
+        self.interrupt_install()
+        autoinit = self.game / "workshop" / "scripts" / "sfm" / "autoinit" / "autoinit_manager.py"
+        original = autoinit.read_bytes()
+        autoinit.unlink()
+        with mock.patch.object(core, "_put_file", side_effect=AssertionError("recovery wrote a file")):
+            with self.assertRaisesRegex(core.Refusal, "Restore Autoinit Manager"):
+                core.recover(self.game, self.prepared)
+        self.assertEqual(core._operation(self.game)["kind"], "install")
+        autoinit.write_bytes(original)
+        core.recover(self.game, self.prepared)
+        self.assertIsNone(core._operation(self.game))
+        autoinit.unlink()
+        self.uninstall()
+        self.assertFalse(self.target(core.MANAGER).exists())
 
     def test_consent_snapshot_and_process_checks(self):
         summary = core.preview(self.game, self.prepared)

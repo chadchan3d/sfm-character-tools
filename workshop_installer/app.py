@@ -45,6 +45,7 @@ class SetupWindow:
             core._legacy_record_clear(self.game)
             op = core._operation(self.game)
             if op:
+                core._resume_states(self.game, op)
                 if op["kind"] == "uninstall":
                     self.page("Removal incomplete", "Close SFM, then finish removing Character Tools.",
                               [("Finish Uninstall", lambda: self.perform(self.finish_remove)), ("Close", self.close)])
@@ -103,6 +104,10 @@ class SetupWindow:
 
     def error(self, exc):
         self.details = str(exc)
+        if isinstance(exc, core.RecoveryConflict):
+            self.page("Recovery blocked", str(exc),
+                      [("Details", self.show_details), ("Close", self.close)])
+            return
         try:
             op = core._operation(self.game)
         except Exception:
@@ -111,6 +116,8 @@ class SetupWindow:
                    if op and op["kind"] == "uninstall" else
                    "Setup could not finish. Keep SFM closed and run Setup again to complete the installation."
                    if op else "Setup could not complete this action.\n\n" + str(exc))
+        if op:
+            message += "\n\n" + str(exc)
         self.page("Setup needs attention", message,
                   [("Review / Retry", self.refresh), ("Details", self.show_details), ("Close", self.close)])
 

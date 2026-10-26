@@ -13,6 +13,8 @@ This report covers the owner-approved lightweight installer revision on PR #3. I
 | Reinstall of modified programs and partial button repair | PASS | Known files replaced after a captured consent snapshot |
 | Synthetic next-release addition and obsolete-file/bytecode removal | PASS | Small test-only extension; not a claim of another released version |
 | Interrupted installation completion, exact-package binding and original-backup retention | PASS | Injected interruption; no previous program backups or rollback |
+| Changed-file recovery guidance | PASS | Focused regression verifies relative path and no futile Retry action |
+| Autoinit required on installation recovery | PASS | Focused regression verifies no resumed writes until restored; uninstall remains independent |
 | Intervening TXT edit, running/unreadable process status, busy updater lock | PASS | Edit/status checks; real Windows updater lock |
 | Uninstall without payload or Autoinit, additional sidecar removal, unrelated-file preservation | PASS | Disposable filesystem; no real unsubscription |
 | Interrupted uninstall and failed lock cleanup retain management for retry | PASS | Injected failures with direct management-file assertions |
@@ -25,7 +27,7 @@ This report covers the owner-approved lightweight installer revision on PR #3. I
 | Self-contained helper build and staged payload hashes | PASS | Windows, Python 3.10.6, PyInstaller 6.11.1 |
 | Public repository sanitation | PASS | Complete proposed branch/history, PR text, staging manifest and decoded helper reviewed |
 
-There are 20 checks in the unittest suite: 16 disposable installation tests and four interface/launcher tests.
+There are 22 checks in the unittest suite: 17 disposable installation tests and five interface/launcher tests. The two added checks, the existing changed-TXT refusal, ordinary interrupted-installation retry and no-Autoinit uninstall were run together after this correction.
 
 Run with `SCT_V1_RELEASE_ZIP` set to the unchanged archive:
 
@@ -33,10 +35,10 @@ Run with `SCT_V1_RELEASE_ZIP` set to the unchanged archive:
 python -m unittest discover -s workshop_installer/tests -v
 ```
 
-The final helper is 6,720,732 bytes, SHA-256:
+The corrected helper SHA-256:
 
 ```text
-b9e408ec35962eb84a05b73753c8d41187921899c276d70868903803618c252e
+2e746a7a527312b0a6482e064cede0550c9259a7b43b8d2e2507c96489b28fab
 ```
 
 Build output and original release ZIP are not committed. Generated manifests contain relative paths only. Earlier PR qualification requiring restoration of previous software and preservation of modified program files is superseded by the owner's explicit replacement/removal policy.

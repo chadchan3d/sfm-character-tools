@@ -45,6 +45,15 @@ class Refusal(RuntimeError):
     """A safe, expected refusal with no success claim."""
 
 
+class RecoveryConflict(Refusal):
+    """A recorded destination changed after an interrupted operation."""
+
+    def __init__(self, path):
+        self.path = path
+        super().__init__("Automatic recovery cannot continue because this file changed after Setup was interrupted:\n" +
+                         path + "\n\nPreserve your changes and seek recovery assistance.")
+
+
 def digest_file(path):
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -626,7 +635,7 @@ def _resume_states(game, record):
     for e in record["entries"]:
         current = _existing_hash(_target(game, e["path"]))
         if current not in (e["old"], e["new"]):
-            raise Refusal("A file changed after Setup was interrupted. No further files were changed.")
+            raise RecoveryConflict(e["path"])
 
 
 def _clean_dirs(game, paths):
@@ -721,6 +730,8 @@ def install(game, prepared, expected_snapshot):
 def recover(game, prepared):
     game = _validate_game(game)
     _legacy_record_clear(game)
+    if not _check_autoinit(game):
+        raise Refusal("Restore Autoinit Manager before Setup can finish the interrupted installation.")
     _process_clear()
     with _Lock(game), _LegacyLock(game):
         _process_clear()
