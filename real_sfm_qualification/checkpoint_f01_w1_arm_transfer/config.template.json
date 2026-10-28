@@ -1,0 +1,39 @@
+{
+  "format": "F01W1-config-v1",
+  "specification": "Astra F-01 Final Adjudication 2026-10-27 (sha256 41bd5bf7c3867765df467bd1867c7fd547cf56ca487d49383ed8c80b6b554a5f)",
+  "original_session": "<SESSIONS_DIR>\\<SOURCE_SESSION>.dmx",
+  "original_session_sha256": "3af2ad5425c5aa623df47ecfb2737015b8f80260b1ffebe5c2a868ed039b687b",
+  "r2_fixture": "<R2_FIXTURE_DIR>\\F01_R2_DISPOSABLE_<SOURCE_SESSION>.dmx",
+  "r2_fixture_sha256": "259ea8a614bc9e43e5bde15afdf38e1a1295dffb50b14cf75692df4221a05a2c",
+  "disposable_session": "<RUN_DIR>\\F01_W1_DISPOSABLE_<SOURCE_SESSION>.dmx",
+  "disposable_session_sha256": "259ea8a614bc9e43e5bde15afdf38e1a1295dffb50b14cf75692df4221a05a2c",
+  "reports_dir": "<RUN_DIR>\\reports",
+  "cpm_source": "<REPO>\\cpm\\app\\SFM_Character_Preset_Manager.py",
+  "animation_set": "Krystal",
+  "model": "models/fursonas/starfox/krystal/bodies/krystal2020.mdl",
+  "places": {
+    "source": {"shot": "shot15", "movie_frame": 5, "head_seconds": 0.2083, "start_ticks": 1667,
+               "end_ticks": 2917, "media_seconds": 0.0208},
+    "destination": {"shot": "shot10", "movie_frame": 10, "head_seconds": 0.4167, "start_ticks": 3751,
+                    "end_ticks": 5001, "media_seconds": 0.0208}
+  },
+  "retime_frame": 11,
+  "bracket_ticks": [30000, 70415],
+  "tolerances": {
+    "position": 0.001,
+    "angle_degrees": 0.01,
+    "collar_mapping": 0.001,
+    "bone_offset": 0.0001,
+    "effective_position": 0.00001,
+    "effective_angle_degrees": 0.001,
+    "log_evaluation_position": 0.00001,
+    "log_evaluation_angle_degrees": 0.001,
+    "cross_check_position": 0.0001,
+    "cross_check_angle_degrees": 0.001
+  },
+  "astra_cross_check": {
+    "hand_position": [-3.010184, 10.634945, 39.0318],
+    "hand_orientation": [0.371737, -0.504114, 0.601212, -0.496211],
+    "elbow_position": [-16.9014, 6.999737, 54.868684]
+  }
+}

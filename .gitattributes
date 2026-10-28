@@ -356,3 +356,8 @@ updater/SHA256SUMS.txt text eol=lf
 # v1 Release Baseline Amendment (2026-10-21): owner-approved, hash-pinned LF text listed in
 # updater_qualification/SHA256SUMS.txt.
 updater_qualification/design/V1_RELEASE_BASELINE_AMENDMENT.md text eol=lf
+
+# F-01 W1 pose arm-transfer research checkpoint (2026-10-28): the accepted harness, tools, offline suite
+# and package README are byte-exact copies SHA-256 pinned in SHA256SUMS.txt and in the W1 evidence
+# manifest; keep exact LF bytes on every checkout and archive export.
+real_sfm_qualification/checkpoint_f01_w1_arm_transfer/** text eol=lf
