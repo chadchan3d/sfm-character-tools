@@ -688,16 +688,19 @@ def integration():
     env.settle()
     chunk = env.log()[len(mark):]
     check("7.clothing_fit_without_targets_refused", u"PROD_OPERATION_REFUSED" in chunk and u"no-target-selected" in chunk, chunk)
-    real_candidates = ns["g09a_candidates"]
+    # The production model list's discovery function (M-06 W1: prod_selection_rows; historically
+    # g09a_candidates) receives the synthetic failure; the assertion below is unchanged.
+    discovery = "prod_selection_rows" if "prod_selection_rows" in ns else "g09a_candidates"
+    real_candidates = ns[discovery]
 
     def failing():
         raise RuntimeError("synthetic discovery failure")
-    ns["g09a_candidates"] = failing
+    ns[discovery] = failing
     mark = env.log()
     window2.populate()
     env.settle()
     chunk = env.log()[len(mark):]
-    ns["g09a_candidates"] = real_candidates
+    ns[discovery] = real_candidates
     check("7.real_refresh_failure_correlated_failed_precommit", outcome_of(chunk) == u"failed-precommit" and correlated(chunk)
           and u"PROD_ACTION_ERROR label='Refresh Models'" in chunk and u"Traceback" in chunk, chunk[-800:])
     SAMPLES["failed_refresh"] = chunk

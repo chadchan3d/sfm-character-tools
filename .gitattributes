@@ -356,3 +356,7 @@ updater/SHA256SUMS.txt text eol=lf
 # v1 Release Baseline Amendment (2026-10-21): owner-approved, hash-pinned LF text listed in
 # updater_qualification/SHA256SUMS.txt.
 updater_qualification/design/V1_RELEASE_BASELINE_AMENDMENT.md text eol=lf
+
+# M-06 W2 native qualification instruments (2026-11-02): preserve exact accepted bytes
+# (ACCEPTED_W2_SHA256SUMS 2cb3e4f9...); deferred_fixture_scan.json is CRLF.
+real_sfm_qualification/m06_w2_qualification/** -text

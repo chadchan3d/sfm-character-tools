@@ -371,6 +371,8 @@ TOP_EXTRACT = [
     "u", "b", "native_attr_name", "name", "typ", "dme_id", "same_dme", "get_attr", "attr_value", "arr",
     "as_float", "close_enough", "seconds", "handle", "ptr", "key_count", "layer_count", "get_layer",
     "EPSILON", "dm", "undo_state", "P03_KIND_BODY", "P04_SCALE_LOGICAL_ID",
+    # M-06 W1 selected-instance context helpers (context-free calls are unchanged)
+    "PROD_INSTANCE_TOKEN_KIND", "prod_instance_token", "prod_instance_kw", "prod_instance_pair_check",
     # bone-scale definition, traces, capture and parity
     "PROD_BS_BONE_RE", "PROD_BS_VARY_KEY_LIMIT", "prod_bs_group_paths", "prod_bs_scale_channels",
     "prod_bs_bone_rows", "prod_bs_log_state", "prod_bs_control_membership", "prod_bs_trace_scaled_bone",
@@ -547,6 +549,17 @@ def build_namespace(app):
                                                                        flex["values"][u"flex.Smile"])
     ns["p03_verify_baselines"] = lambda accepted, baselines: route_close(Scene.current.flex[u"Smile"],
                                                                          Scene.current.flex_baseline[u"Smile"])
+    # M-06 flex entry points, stubbed like the rest of this suite's flex layer (no static-play sides; same match
+    # semantics as the p03_verify_saved_values stub). The real M-06 flex code is qualified by
+    # test_cpm_app_m06_static_play_flex.py.
+    ns["PROD_FLEX_STATIC_PLAY"] = "STATIC_PLAY_ONE_KEY_ZERO"
+    ns["prod_flex_body_policy_bindings"] = lambda accepted, verify=False: dict(accepted)
+    ns["prod_flex_capture_refusal"] = lambda bindings, exc: exc
+    ns["p03_flex_expectations"] = lambda built: [
+        {"literal": u"Smile", "side_name": u"value", "origin": u"ONE_KEY_ZERO", "desired": item["desired"],
+         "needs_write": item["needs_write"], "baseline": {}} for item in built["plan"]]
+    ns["p03_verify_plan_results"] = lambda accepted, expectations: route_close(Scene.current.flex[u"Smile"],
+                                                                               expectations[0]["desired"])
     # Save boundaries.
     ns["prod_discover"] = lambda identity, kind: []
     ns["prod_assert_unique_preset_name_items"] = lambda items, kind, name: None
