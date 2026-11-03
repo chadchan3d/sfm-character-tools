@@ -1,0 +1,88 @@
+{
+ "format": "cpm-pose-profiles",
+ "mappings": [
+  {
+   "evidence": null,
+   "from": "krystal-v1",
+   "region": "left_arm",
+   "status": "experimental",
+   "to": "krystal-v1"
+  },
+  {
+   "evidence": null,
+   "from": "krystal-v1",
+   "region": "right_arm",
+   "status": "experimental",
+   "to": "krystal-v1"
+  }
+ ],
+ "profiles": {
+  "arm_left_v1": {
+   "anchor": "CollarL",
+   "arm_bones": ["bip_UpperArm_l", "bip_lowerArm_l", "bip_hand_l"],
+   "collar_bone": "bip_collar_l",
+   "elbow": "Elbow_l",
+   "hand": "Hand_l",
+   "observed_channels": {
+    "Elbow_l_o": ["Elbow_l", "orientationChannel", "valueOrientation", "orientation", "DmeQuaternionLog", "DmeQuaternionLogLayer"]
+   },
+   "pole_target": "Elbow_l",
+   "region": "left_arm",
+   "root": "rig_root",
+   "tolerances": {
+    "angle_degrees": 0.01,
+    "bone_offset": 0.0001,
+    "collar_mapping": 0.001,
+    "cross_check_angle_degrees": 0.001,
+    "cross_check_position": 0.0001,
+    "effective_angle_degrees": 0.001,
+    "effective_position": 1e-05,
+    "position": 0.001,
+    "weight": 1e-06
+   },
+   "written_channels": {
+    "Elbow_l_p": ["Elbow_l", "positionChannel", "valuePosition", "position", "DmeVector3Log", "DmeVector3LogLayer"],
+    "Hand_l_o": ["Hand_l", "orientationChannel", "valueOrientation", "orientation", "DmeQuaternionLog", "DmeQuaternionLogLayer"],
+    "Hand_l_p": ["Hand_l", "positionChannel", "valuePosition", "position", "DmeVector3Log", "DmeVector3LogLayer"]
+   }
+  },
+  "arm_right_v1": {
+   "anchor": "CollarR",
+   "arm_bones": ["bip_UpperArm_r", "bip_lowerArm_r", "bip_hand_r"],
+   "collar_bone": "bip_collar_r",
+   "elbow": "Elbow_r",
+   "hand": "Hand_r",
+   "observed_channels": {
+    "Elbow_r_o": ["Elbow_r", "orientationChannel", "valueOrientation", "orientation", "DmeQuaternionLog", "DmeQuaternionLogLayer"]
+   },
+   "pole_target": "Elbow_r",
+   "region": "right_arm",
+   "root": "rig_root",
+   "tolerances": {
+    "angle_degrees": 0.01,
+    "bone_offset": 0.0001,
+    "collar_mapping": 0.001,
+    "cross_check_angle_degrees": 0.001,
+    "cross_check_position": 0.0001,
+    "effective_angle_degrees": 0.001,
+    "effective_position": 1e-05,
+    "position": 0.001,
+    "weight": 1e-06
+   },
+   "written_channels": {
+    "Elbow_r_p": ["Elbow_r", "positionChannel", "valuePosition", "position", "DmeVector3Log", "DmeVector3LogLayer"],
+    "Hand_r_o": ["Hand_r", "orientationChannel", "valueOrientation", "orientation", "DmeQuaternionLog", "DmeQuaternionLogLayer"],
+    "Hand_r_p": ["Hand_r", "positionChannel", "valuePosition", "position", "DmeVector3Log", "DmeVector3LogLayer"]
+   }
+  }
+ },
+ "rig_classes": {
+  "krystal-v1": {
+   "models": [
+    {"checksum": null, "model_ref": "models/fursonas/starfox/krystal/bodies/krystal2020.mdl"}
+   ],
+   "profiles": ["arm_left_v1", "arm_right_v1"]
+  }
+ },
+ "version": 1
+}

@@ -284,6 +284,41 @@ M06W1_CHANGED_METHODS = set(["current", "fit_candidate_rows"])
 # W1 context helpers placed into extraction namespaces (context-free calls pass no instance keyword).
 M06W1_NAMESPACE_HELPERS = ["PROD_INSTANCE_TOKEN_KIND", "prod_instance_token", "prod_instance_kw",
                            "prod_instance_pair_check"]
+# F-01 Pose Library M1 stage A (F01 M1 Implementation Addendum R2, 09_FIRST_CODING_ASSIGNMENT.md): one appended,
+# self-contained offline block; no existing definition is changed.
+F01_STAGEA_NEW_TOP = set([
+    "PROD_POSE_CONSTRAINT_TYPES", "PROD_POSE_CONVENTIONS", "PROD_POSE_FORMAT", "PROD_POSE_LABELS",
+    "PROD_POSE_MAPPING_STATUSES", "PROD_POSE_MAX_BYTES", "PROD_POSE_MAX_LAYER_KEYS", "PROD_POSE_MAX_MAGNITUDE",
+    "PROD_POSE_MESSAGES", "PROD_POSE_PART_NAMES", "PROD_POSE_QUAT_TOLERANCE", "PROD_POSE_REASONS",
+    "PROD_POSE_REGIONS", "PROD_POSE_REGISTRY_FORMAT", "PROD_POSE_SNAPSHOT_FIELDS", "PROD_POSE_SOLVER_FIELDS",
+    "PROD_POSE_VERSION", "ProdPoseError", "prod_pose_angle_deg", "prod_pose_browse_eligible",
+    "prod_pose_canonical_bytes", "prod_pose_check", "prod_pose_check_frames", "prod_pose_check_postconditions",
+    "prod_pose_check_typed_value", "prod_pose_compose", "prod_pose_cross_check", "prod_pose_distance",
+    "prod_pose_f32", "prod_pose_finite_vector", "prod_pose_hemisphere", "prod_pose_int_types", "prod_pose_invert",
+    "prod_pose_is_number", "prod_pose_key_plan", "prod_pose_layer_problems", "prod_pose_mb_angle_deg",
+    "prod_pose_mb_apply", "prod_pose_mb_from_quaternion", "prod_pose_mb_mul", "prod_pose_mb_to_quaternion",
+    "prod_pose_model_key", "prod_pose_noop_test", "prod_pose_parse", "prod_pose_parts_dialog_state",
+    "prod_pose_parts_phrase", "prod_pose_payload_digest", "prod_pose_plan_matrix", "prod_pose_plan_quaternion",
+    "prod_pose_plan_region", "prod_pose_qmul", "prod_pose_qrot", "prod_pose_quaternion_input",
+    "prod_pose_record_schema", "prod_pose_region_schema", "prod_pose_registry_parse", "prod_pose_registry_schema",
+    "prod_pose_registry_select", "prod_pose_reject_constant", "prod_pose_rig_class", "prod_pose_serialize",
+    "prod_pose_shoulder_guard", "prod_pose_snapshot_evidence_problems", "prod_pose_strict_json",
+    "prod_pose_text_types", "prod_pose_ticks", "prod_pose_time_decide", "prod_pose_ui_state",
+    "prod_pose_unique_pairs", "prod_pose_unit", "prod_pose_validate"
+])
+# F-01 Pose Library M1 stage B (Addendum R2 section 4.3): one appended offline library block after stage A.
+F01_STAGEB_NEW_TOP = set([
+    "PROD_POSE_FOLDER", "PROD_POSE_FOREIGN_FAVORITES", "PROD_POSE_FOREIGN_FAVORITES_KIND",
+    "PROD_POSE_INVALID_ATTRIBUTES", "PROD_POSE_LIBRARY_META", "PROD_POSE_NAME_MAX", "PROD_POSE_REPARSE_POINT",
+    "PROD_POSE_UNSAFE_NAME_CHARS", "ProdPoseLibraryError", "prod_pose_assert_contained",
+    "prod_pose_assert_unique_name", "prod_pose_attributes", "prod_pose_build_record", "prod_pose_check_name",
+    "prod_pose_create_exclusive", "prod_pose_discover", "prod_pose_favorite_key", "prod_pose_inside",
+    "prod_pose_is_favorite", "prod_pose_library_paths", "prod_pose_load_foreign_favorites", "prod_pose_load_meta",
+    "prod_pose_name_key", "prod_pose_new_preset_id", "prod_pose_read_bytes", "prod_pose_read_file",
+    "prod_pose_rename", "prod_pose_replace", "prod_pose_require", "prod_pose_safe_stem", "prod_pose_save_new",
+    "prod_pose_set_favorite", "prod_pose_set_foreign_favorite", "prod_pose_stem_matches_id",
+    "prod_pose_strict_json_file", "prod_pose_trash", "prod_pose_update", "prod_pose_verify_written"
+])
 EXPECTED_CHANGED_TOP = (STEP2B_CHANGED_TOP | STEP3_CHANGED_TOP | STEP4_CHANGED_TOP | R14_CHANGED_TOP
                         | R15_CHANGED_TOP | ITEM6_CHANGED_TOP | ITEM7_CHANGED_TOP | UIPASS_CHANGED_TOP
                         | LOGFIX_CHANGED_TOP | M05_CHANGED_TOP | M06_CHANGED_TOP | M06W1_CHANGED_TOP)
@@ -374,7 +409,7 @@ def section_derivation(app):
     check("derivation.changed_top_level_is_bounded", changed == EXPECTED_CHANGED_TOP, sorted(changed))
     check("derivation.added_top_level_is_bounded",
           added == EXPECTED_NEW_TOP | R15_NEW_TOP | ITEM6_NEW_TOP | UIPASS_NEW_TOP | LOGFIX_NEW_TOP | M05_NEW_TOP
-          | M06_NEW_TOP | M06W1_NEW_TOP,
+          | M06_NEW_TOP | M06W1_NEW_TOP | F01_STAGEA_NEW_TOP | F01_STAGEB_NEW_TOP,
           sorted(added))
     check("derivation.removed_is_exactly_item6_and_item7", removed == ITEM6_REMOVED_TOP | ITEM7_REMOVED_TOP
           | LOGFIX_REMOVED_TOP, sorted(removed ^ (ITEM6_REMOVED_TOP | ITEM7_REMOVED_TOP | LOGFIX_REMOVED_TOP)))

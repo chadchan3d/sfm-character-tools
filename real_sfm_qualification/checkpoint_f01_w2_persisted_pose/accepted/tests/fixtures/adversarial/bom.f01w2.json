@@ -1,0 +1,378 @@
+﻿{
+ "animation_set": "Krystal",
+ "compatibility": {
+  "arm_chain": [
+   {
+    "index": 4,
+    "local_position": [
+     4.999999999999999,
+     0.0,
+     0.0
+    ],
+    "name": "bip_UpperArm_l",
+    "parent": "bip_collar_l"
+   },
+   {
+    "index": 3,
+    "local_position": [
+     3.000000000000001,
+     1.0000000000000002,
+     6.0
+    ],
+    "name": "bip_collar_l",
+    "parent": "bip_spine_4"
+   },
+   {
+    "index": 6,
+    "local_position": [
+     10.0,
+     0.0,
+     -7.105427357601002e-15
+    ],
+    "name": "bip_hand_l",
+    "parent": "bip_lowerArm_l"
+   },
+   {
+    "index": 5,
+    "local_position": [
+     11.0,
+     7.105427357601002e-15,
+     7.105427357601002e-15
+    ],
+    "name": "bip_lowerArm_l",
+    "parent": "bip_UpperArm_l"
+   }
+  ],
+  "channels": {
+   "Elbow_l_o": {
+    "control": "Elbow_l",
+    "control_attribute": "orientationChannel",
+    "curve_info": "none",
+    "from_attribute": "valueOrientation",
+    "from_index": 0,
+    "layer_count": 1,
+    "layer_type": "DmeQuaternionLogLayer",
+    "log_type": "DmeQuaternionLog",
+    "mode": 3,
+    "to_attribute": "orientation",
+    "to_index": 0,
+    "to_rig_handle": "Elbow_l"
+   },
+   "Elbow_l_p": {
+    "control": "Elbow_l",
+    "control_attribute": "positionChannel",
+    "curve_info": "none",
+    "from_attribute": "valuePosition",
+    "from_index": 0,
+    "layer_count": 1,
+    "layer_type": "DmeVector3LogLayer",
+    "log_type": "DmeVector3Log",
+    "mode": 3,
+    "to_attribute": "position",
+    "to_index": 0,
+    "to_rig_handle": "Elbow_l"
+   },
+   "Hand_l_o": {
+    "control": "Hand_l",
+    "control_attribute": "orientationChannel",
+    "curve_info": "none",
+    "from_attribute": "valueOrientation",
+    "from_index": 0,
+    "layer_count": 1,
+    "layer_type": "DmeQuaternionLogLayer",
+    "log_type": "DmeQuaternionLog",
+    "mode": 3,
+    "to_attribute": "orientation",
+    "to_index": 0,
+    "to_rig_handle": "Hand_l"
+   },
+   "Hand_l_p": {
+    "control": "Hand_l",
+    "control_attribute": "positionChannel",
+    "curve_info": "none",
+    "from_attribute": "valuePosition",
+    "from_index": 0,
+    "layer_count": 1,
+    "layer_type": "DmeVector3LogLayer",
+    "log_type": "DmeVector3Log",
+    "mode": 3,
+    "to_attribute": "position",
+    "to_index": 0,
+    "to_rig_handle": "Hand_l"
+   }
+  },
+  "constraints": {
+   "collar_orient": {
+    "offsets": {
+     "oOffset": {
+      "present": true,
+      "value": [
+       0.0,
+       0.0,
+       0.0,
+       1.0
+      ]
+     },
+     "vecOffset": {
+      "present": true,
+      "value": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     }
+    },
+    "slave_bone": "bip_collar_l",
+    "solver": {},
+    "target_rig_handle": "CollarL",
+    "target_weight": 1.0,
+    "type": "DmeRigOrientConstraintOperator"
+   },
+   "collar_point": {
+    "offsets": {
+     "oOffset": {
+      "present": true,
+      "value": [
+       0.0,
+       0.0,
+       0.0,
+       1.0
+      ]
+     },
+     "vecOffset": {
+      "present": true,
+      "value": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     }
+    },
+    "slave_bone": "bip_collar_l",
+    "solver": {},
+    "target_rig_handle": "CollarL",
+    "target_weight": 1.0,
+    "type": "DmeRigPointConstraintOperator"
+   },
+   "hand_orient": {
+    "offsets": {
+     "oOffset": {
+      "present": true,
+      "value": [
+       0.0,
+       0.0,
+       0.0,
+       1.0
+      ]
+     },
+     "vecOffset": {
+      "present": true,
+      "value": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     }
+    },
+    "slave_bone": "bip_hand_l",
+    "solver": {},
+    "target_rig_handle": "Hand_l",
+    "target_weight": 1.0,
+    "type": "DmeRigOrientConstraintOperator"
+   },
+   "ik": {
+    "joints": {
+     "endJoint": "bip_hand_l",
+     "midJoint": "bip_lowerArm_l",
+     "startJoint": "bip_UpperArm_l"
+    },
+    "offsets": {
+     "oOffset": {
+      "present": true,
+      "value": [
+       0.0,
+       0.0,
+       0.0,
+       1.0
+      ]
+     },
+     "vecOffset": {
+      "present": true,
+      "value": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     }
+    },
+    "pole_target_rig_handle": "Elbow_l",
+    "solver": {
+     "midOffset": {
+      "present": true,
+      "value": [
+       0.0,
+       0.0,
+       0.0,
+       1.0
+      ]
+     },
+     "mode": {
+      "present": true,
+      "value": 0
+     },
+     "poleVector": {
+      "present": true,
+      "value": [
+       0.0,
+       0.0,
+       1.0
+      ]
+     },
+     "startOffset": {
+      "present": true,
+      "value": [
+       0.0,
+       0.0,
+       0.0,
+       1.0
+      ]
+     }
+    },
+    "target_rig_handle": "Hand_l",
+    "target_weight": 1.0,
+    "type": "DmeRigIKConstraintOperator"
+   }
+  },
+  "handles": {
+   "CollarL": {
+    "parent": {
+     "name": "spine_4",
+     "type": "DmeRigHandle"
+    }
+   },
+   "Elbow_l": {
+    "parent": {
+     "name": "rig_root",
+     "type": "DmeRigHandle"
+    }
+   },
+   "Hand_l": {
+    "parent": {
+     "name": "rig_root",
+     "type": "DmeRigHandle"
+    }
+   },
+   "rig_root": {
+    "parent": {
+     "name": "rig_Krystal",
+     "type": "DmeRig"
+    }
+   }
+  },
+  "scale_state": "unit"
+ },
+ "conventions": {
+  "pose_frame": "source-CollarL-world-at-capture",
+  "quaternion_order": "x,y,z,w",
+  "quaternion_unit_tolerance": 0.0001,
+  "transform_composition": "parent-times-child",
+  "transform_representation": "rigid-position-unit-quaternion",
+  "units": "sfm-native-units"
+ },
+ "diagnostics": {
+  "capture_movie_frame": 5,
+  "capture_shot": "shot15",
+  "hand_target_residual": 6.88300472355543
+ },
+ "format": "F01W2-left-arm-pose",
+ "model": "models/fursonas/starfox/krystal/bodies/krystal2020.mdl",
+ "pose": {
+  "elbow": {
+   "position": [
+    5.035748270511423,
+    14.30445011380705,
+    -6.583965624474985
+   ]
+  },
+  "hand": {
+   "orientation": [
+    0.2961374257595293,
+    -0.08018180224527505,
+    -0.15402783166493336,
+    0.939227837495151
+   ],
+   "position": [
+    13.665717565725013,
+    15.589051747277693,
+    -17.98016800101057
+   ]
+  }
+ },
+ "skeleton": {
+  "bones": {
+   "bip_UpperArm_l": {
+    "collar_orientation": [
+     0.6924323366759775,
+     0.5661633675589816,
+     -0.4222842139925732,
+     -0.14721597390362867
+    ],
+    "collar_position": [
+     4.999999999999998,
+     0.0,
+     0.0
+    ],
+    "local_orientation": [
+     0.6924323366759774,
+     0.5661633675589818,
+     -0.42228421399257343,
+     -0.14721597390362867
+    ]
+   },
+   "bip_hand_l": {
+    "collar_orientation": [
+     0.2961374257595294,
+     -0.08018180224527506,
+     -0.15402783166493336,
+     0.939227837495151
+    ],
+    "collar_position": [
+     10.142986002999143,
+     13.307333250225902,
+     -12.52490659007222
+    ],
+    "local_orientation": [
+     0.732418252722297,
+     0.20811875421308804,
+     -0.5436755023893257,
+     -0.3530821934418731
+    ]
+   },
+   "bip_lowerArm_l": {
+    "collar_orientation": [
+     0.8681174255521751,
+     0.21535002923831842,
+     -0.4446612834380133,
+     0.04767434709545737
+    ],
+    "collar_position": [
+     5.024971844632855,
+     9.992329718057519,
+     -4.599208976835051
+    ],
+    "local_orientation": [
+     1.535508706231926e-17,
+     5.374280471811741e-17,
+     0.42797432922790307,
+     0.9037908903733908
+    ]
+   }
+  },
+  "upper_arm_origin": [
+   4.999999999999998,
+   0.0,
+   0.0
+  ]
+ },
+ "version": 1
+}

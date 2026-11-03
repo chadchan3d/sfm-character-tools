@@ -1,0 +1,181 @@
+{
+ "animation_set": "Krystal",
+ "compatibility": {
+  "arm_chain": [
+   {
+    "index": 4,
+    "local_position": [
+     4.999999999999999,
+     0.0,
+     0.0
+    ],
+    "name": "bip_UpperArm_l",
+    "parent": "bip_collar_l"
+   },
+   {
+    "index": 3,
+    "local_position": [
+     3.000000000000001,
+     1.0000000000000002,
+     6.0
+    ],
+    "name": "bip_collar_l",
+    "parent": "bip_spine_4"
+   },
+   {
+    "index": 6,
+    "local_position": [
+     10.0,
+     0.0,
+     -7.105427357601002e-15
+    ],
+    "name": "bip_hand_l",
+    "parent": "bip_lowerArm_l"
+   },
+   {
+    "index": 5,
+    "local_position": [
+     11.0,
+     7.105427357601002e-15,
+     7.105427357601002e-15
+    ],
+    "name": "bip_lowerArm_l",
+    "parent": "bip_UpperArm_l"
+   }
+  ],
+  "channels": {
+   "Elbow_l_o": {
+    "control": "Elbow_l",
+    "control_attribute": "orientationChannel",
+    "curve_info": "none",
+    "from_attribute": "valueOrientation",
+    "from_index": 0,
+    "layer_count": 1,
+    "layer_type": "DmeQuaternionLogLayer",
+    "log_type": "DmeQuaternionLog",
+    "mode": 3,
+    "to_attribute": "orientation",
+    "to_index": 0,
+    "to_rig_handle": "Elbow_l"
+   },
+   "Elbow_l_p": {
+    "control": "Elbow_l",
+    "control_attribute": "positionChannel",
+    "curve_info": "none",
+    "from_attribute": "valuePosition",
+    "from_index": 0,
+    "layer_count": 1,
+    "layer_type": "DmeVector3LogLayer",
+    "log_type": "DmeVector3Log",
+    "mode": 3,
+    "to_attribute": "position",
+    "to_index": 0,
+    "to_rig_handle": "Elbow_l"
+   },
+   "Hand_l_o": {
+    "control": "Hand_l",
+    "control_attribute": "orientationChannel",
+    "curve_info": "none",
+    "from_attribute": "valueOrientation",
+    "from_index": 0,
+    "layer_count": 1,
+    "layer_type": "DmeQuaternionLogLayer",
+    "log_type": "DmeQuaternionLog",
+    "mode": 3,
+    "to_attribute": "orientation",
+    "to_index": 0,
+    "to_rig_handle": "Hand_l"
+   },
+   "Hand_l_p": {
+    "control": "Hand_l",
+    "control_attribute": "positionChannel",
+    "curve_info": "none",
+    "from_attribute": "valuePosition",
+    "from_index": 0,
+    "layer_count": 1,
+    "layer_type": "DmeVector3LogLayer",
+    "log_type": "DmeVector3Log",
+    "mode": 3,
+    "to_attribute": "position",
+    "to_index": 0,
+    "to_rig_handle": "Hand_l"
+   }
+  },
+  "constraints": {
+   "collar_orient": {
+    "offsets": {
+     "oOffset": {
+      "present": true,
+      "value": [
+       0.0,
+       0.0,
+       0.0,
+       1.0
+      ]
+     },
+     "vecOffset": {
+      "present": true,
+      "value": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     }
+    },
+    "slave_bone": "bip_collar_l",
+    "solver": {},
+    "target_rig_handle": "CollarL",
+    "target_weight": 1.0,
+    "type": "DmeRigOrientConstraintOperator"
+   },
+   "collar_point": {
+    "offsets": {
+     "oOffset": {
+      "present": true,
+      "value": [
+       0.0,
+       0.0,
+       0.0,
+       1.0
+      ]
+     },
+     "vecOffset": {
+      "present": true,
+      "value": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     }
+    },
+    "slave_bone": "bip_collar_l",
+    "solver": {},
+    "target_rig_handle": "CollarL",
+    "target_weight": 1.0,
+    "type": "DmeRigPointConstraintOperator"
+   },
+   "hand_orient": {
+    "offsets": {
+     "oOffset": {
+      "present": true,
+      "value": [
+       0.0,
+       0.0,
+       0.0,
+       1.0
+      ]
+     },
+     "vecOffset": {
+      "present": true,
+      "value": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     }
+    },
+    "slave_bone": "bip_hand_l",
+    "solver": {},
+    "target_rig_handle": "Hand_l",
+    "target_weight": 1.0,
+    "type": "DmeRigOrientConstraintO

@@ -1,0 +1,4 @@
+# F-01 W2: byte-stable line endings for the reviewed files and fixtures in this folder only.
+* text eol=lf
+*.bin binary
+tests/fixtures/adversarial/* binary

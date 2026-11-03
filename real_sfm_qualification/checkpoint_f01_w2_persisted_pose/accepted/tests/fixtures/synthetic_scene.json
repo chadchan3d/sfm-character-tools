@@ -1,0 +1,48 @@
+{
+ "description": "F-01 W2 synthetic, source-independent offline fixture. A deterministic stand-in for the R2 fixture's Krystal left-arm rig: same element types, names, bindings, bracket ticks and shot timing as W1's configuration; invented transforms. Not native evidence.",
+ "model": "models/fursonas/starfox/krystal/bodies/krystal2020.mdl",
+ "animation_set": "Krystal",
+ "bones": [
+  {"name": "bip_pelvis", "index": 0, "parent": null, "local_position": [0.0, 0.0, 38.0]},
+  {"name": "bip_spine_0", "index": 1, "parent": "bip_pelvis", "local_position": [0.0, 0.0, 6.0]},
+  {"name": "bip_spine_4", "index": 2, "parent": "bip_spine_0", "local_position": [0.0, 0.0, 12.0]},
+  {"name": "bip_collar_l", "index": 3, "parent": "bip_spine_4", "local_position": [3.0, 1.0, 6.0]},
+  {"name": "bip_UpperArm_l", "index": 4, "parent": "bip_collar_l", "local_position": [5.0, 0.0, 0.0]},
+  {"name": "bip_lowerArm_l", "index": 5, "parent": "bip_UpperArm_l", "local_position": [11.0, 0.0, 0.0]},
+  {"name": "bip_hand_l", "index": 6, "parent": "bip_lowerArm_l", "local_position": [10.0, 0.0, 0.0]},
+  {"name": "bip_finger_l", "index": 7, "parent": "bip_hand_l", "local_position": [3.0, 0.0, 0.0]},
+  {"name": "bip_head", "index": 8, "parent": "bip_spine_4", "local_position": [0.0, 0.0, 9.0]},
+  {"name": "bip_collar_r", "index": 9, "parent": "bip_spine_4", "local_position": [-3.0, 1.0, 6.0]}
+ ],
+ "shots": {
+  "shot15": {
+   "start_ticks": 1667, "end_ticks": 2917, "frame_ticks": 2083,
+   "spine_orientations": {"bip_pelvis": [0.0, 0.0, 0.0871557, 0.9961947], "bip_spine_0": [0.0, 0.0, 0.0, 1.0],
+                          "bip_spine_4": [0.0436194, 0.0, 0.0, 0.9990482], "bip_finger_l": [0.0, 0.0, 0.0, 1.0],
+                          "bip_head": [0.0, 0.0, 0.0, 1.0], "bip_collar_r": [0.0, 0.0, 0.0, 1.0]},
+   "handles": {
+    "rig_root": {"position": [0.0, 0.0, 0.0], "orientation": [0.0, 0.0, 0.0, 1.0]},
+    "spine_4": {"position": [0.0, 0.0, 56.0], "orientation": [0.0, 0.0, 0.1736482, 0.9848078]},
+    "CollarL": {"position": [3.0, 1.0, 6.0], "orientation": [0.0871557, 0.0, 0.0, 0.9961947]},
+    "Hand_l": {"position": [9.0, 24.0, 47.0], "orientation": [0.3826834, 0.0, 0.0, 0.9238795]},
+    "Elbow_l": {"position": [2.0, 18.0, 58.0], "orientation": [0.0, 0.2588190, 0.0, 0.9659258]}
+   },
+   "extra_keys": {"Hand_l_p": [[10000, [9.5, 23.0, 46.0]]]}
+  },
+  "shot10": {
+   "start_ticks": 3751, "end_ticks": 5001, "frame_ticks": 4167,
+   "spine_orientations": {"bip_pelvis": [0.0, 0.0, -0.1305262, 0.9914449], "bip_spine_0": [0.0, 0.0436194, 0.0, 0.9990482],
+                          "bip_spine_4": [0.0, 0.0, 0.0, 1.0], "bip_finger_l": [0.0, 0.0, 0.0, 1.0],
+                          "bip_head": [0.0, 0.0, 0.0, 1.0], "bip_collar_r": [0.0, 0.0, 0.0, 1.0]},
+   "handles": {
+    "rig_root": {"position": [5.0, -3.0, 0.0], "orientation": [0.0, 0.0, 0.3007058, 0.9537170]},
+    "spine_4": {"position": [0.0, 0.0, 55.0], "orientation": [0.0, -0.1305262, 0.0, 0.9914449]},
+    "CollarL": {"position": [3.0, 1.0, 6.0], "orientation": [0.0, 0.0, -0.1045285, 0.9945219]},
+    "Hand_l": {"position": [-4.0, 20.0, 38.0], "orientation": [0.0, 0.0, 0.7071068, 0.7071068]},
+    "Elbow_l": {"position": [-6.0, 14.0, 52.0], "orientation": [0.1305262, 0.0, 0.0, 0.9914449]}
+   },
+   "extra_keys": {"Hand_l_o": [[5000, [0.0, 0.0, 0.0, 1.0]], [90000, [0.0, 0.0, 0.3826834, 0.9238795]]],
+                  "Elbow_l_p": [[95000, [-7.0, 15.0, 50.0]]]}
+  }
+ }
+}

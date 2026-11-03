@@ -1,0 +1,39 @@
+{
+  "format": "F01W2-config-v1",
+  "specification": "F01_W2_Astra_Corrected_Design_Contract_2026-10-28 (sha256 168d10910ac48d32016566e29d24823175b56f8a6459e8e459a1143ee62cbe43)",
+  "original_session": "<SESSIONS_DIR>\\<SOURCE_SESSION>.dmx",
+  "original_session_sha256": "3af2ad5425c5aa623df47ecfb2737015b8f80260b1ffebe5c2a868ed039b687b",
+  "r2_fixture": "<R2_FIXTURE_DIR>\\F01_R2_DISPOSABLE_<SOURCE_SESSION>.dmx",
+  "r2_fixture_sha256": "259ea8a614bc9e43e5bde15afdf38e1a1295dffb50b14cf75692df4221a05a2c",
+  "run_dir": "<RUN_DIR>",
+  "capture_session": "<RUN_DIR>\\F01_W2_CAPTURE_DISPOSABLE.dmx",
+  "capture_session_sha256": "259ea8a614bc9e43e5bde15afdf38e1a1295dffb50b14cf75692df4221a05a2c",
+  "apply_session": "<RUN_DIR>\\F01_W2_APPLY_DISPOSABLE.dmx",
+  "apply_session_sha256": "259ea8a614bc9e43e5bde15afdf38e1a1295dffb50b14cf75692df4221a05a2c",
+  "reports_dir": "<RUN_DIR>\\reports",
+  "pose_path": "<RUN_DIR>\\poses\\left_arm_pose.f01w2.json",
+  "cpm_source": "<REPO>\\cpm\\app\\SFM_Character_Preset_Manager.py",
+  "animation_set": "Krystal",
+  "model": "models/fursonas/starfox/krystal/bodies/krystal2020.mdl",
+  "places": {
+    "source": {"shot": "shot15", "movie_frame": 5, "head_seconds": 0.2083, "start_ticks": 1667,
+               "end_ticks": 2917, "media_seconds": 0.0208},
+    "destination": {"shot": "shot10", "movie_frame": 10, "head_seconds": 0.4167, "start_ticks": 3751,
+                    "end_ticks": 5001, "media_seconds": 0.0208}
+  },
+  "retime_frame": 11,
+  "bracket_ticks": [30000, 70415],
+  "tolerances": {
+    "position": 0.001,
+    "angle_degrees": 0.01,
+    "collar_mapping": 0.001,
+    "bone_offset": 0.0001,
+    "weight": 0.000001,
+    "effective_position": 0.00001,
+    "effective_angle_degrees": 0.001,
+    "log_evaluation_position": 0.00001,
+    "log_evaluation_angle_degrees": 0.001,
+    "cross_check_position": 0.0001,
+    "cross_check_angle_degrees": 0.001
+  }
+}
