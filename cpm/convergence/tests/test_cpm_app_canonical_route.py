@@ -234,9 +234,59 @@ M05_NEW_METHODS = set([
     "operation_continuation_owned", "apply_begin_verification", "apply_verification_turn",
     "apply_finish_verification", "apply_close_pending_verification",
 ])
+# M-06 imported static flex compatibility (Astra M-06 Production Correction Design): the static-play class in
+# the flex snapshot/classification/write/restore/baseline helpers, the saved-value and planning helpers, and the
+# new policy, discovery, admission and plan-verification names. prod_apply, prod_capture_body_snapshot,
+# prod_verify_apply_abort_baseline and prod_apply_deferred_verify are already listed above.
+M06_CHANGED_TOP = set([
+    "side_snapshot", "binding_snapshot", "state_kind", "coherent", "matches_baseline", "write_side",
+    "restore_side", "p02_saved_value_record", "p03_build_plan",
+])
+M06_NEW_TOP = set([
+    "PROD_FLEX_STATIC_PLAY", "PROD_FLEX_BODY_POLICY", "PROD_FLEX_DISCOVERY_NODE_CAP",
+    "PROD_FLEX_EVIDENCE_EXACT_FIELDS", "PROD_FLEX_WRITER_FIELDS", "prod_flex_static_play_policy",
+    "prod_flex_body_policy_bindings", "prod_flex_element_key", "prod_flex_writer_index", "prod_flex_policy_writers",
+    "flex_static_play_evidence", "flex_static_play_admitted", "flex_effective_value", "flex_effective_matches",
+    "flex_structure_preserved", "flex_authored_change_ok", "p03_flex_expectations", "p03_verify_plan_results",
+    # M-06 P1 evidence-integrity correction
+    "PROD_FLEX_UNRESOLVED_RECORD_CAP", "PROD_FLEX_SELF_CONTAINED_OPERATORS", "PROD_FLEX_CONSTRAINT_OPERATORS",
+    "PROD_FLEX_SLAVE_TARGET_TYPES", "prod_flex_strict_read", "prod_flex_strict_list", "prod_flex_strict_state",
+    "prod_flex_controller_peers", "flex_static_play_writers_ok",
+    # M-06 P1 correction 2 (strict native types/identity, key arrays, bookmarks)
+    "prod_flex_strict_type", "prod_flex_identified_key", "prod_flex_strict_seconds", "prod_flex_strict_number",
+    "prod_flex_strict_entries", "flex_key_arrays_match", "flex_bookmarks_ok",
+    # M-06 verified-null IK primary correction (Body capture refusal diagnostic)
+    "prod_flex_capture_refusal",
+])
+# M-06 W1 selected-instance resolution (Astra M-06/M-05 Integration Correction Design, 2026-10-29): the
+# bone-scale resolver and its context-carrying callers, the operation context token, and context-free resolution
+# that no longer retargets. prod_resolve, prod_scope, prod_probe_semantic_provider,
+# prod_live_bindings_for_cached_scope, prod_save, prod_update_preset, prod_apply, the abort verifiers,
+# prod_set_override, prod_clear_override, prod_body_source(_live_from_baseline), prod_bs_index_snapshot,
+# prod_bs_index_capture_map, prod_capture_body_snapshot, prod_capture_bone_scale_map, prod_q1_compare_body_capture
+# and prod_apply_deferred_verify are already listed above. prod_model_candidates is part of the separately
+# recorded historical addition residual and is not re-listed here.
+M06W1_CHANGED_TOP = set([
+    "prod_bs_find_model_row", "prod_bs_current_bone_index", "prod_bs_resolve_binding",
+    "prod_bs_resolve_clean_fixture", "prod_context_token", "prod_context_token_matches", "prod_resolve_from_rows",
+])
+M06W1_NEW_TOP = set([
+    "PROD_INSTANCE_TOKEN_KIND", "PROD_INSTANCE_SESSION", "PROD_INSTANCE_RESELECT_COPY",
+    "PROD_INSTANCE_CHANNEL_ATTRS", "prod_strict_identity", "prod_instance_document", "prod_instance_rows",
+    "prod_bone_layout_sha256", "prod_instance_model", "prod_selection_token", "prod_instance_token",
+    "prod_instance_kw", "prod_resolve_instance", "prod_selection_rows", "prod_instance_channels_clip",
+    "prod_instance_pair_check",
+    # W1 correction (Astra W1 review, CORRECTION REQUIRED): strict text and array readers used only by
+    # prod_instance_channels_clip() to prove clip ownership; the permissive r26_* helpers are unchanged.
+    "prod_instance_strict_text", "prod_instance_strict_members",
+])
+M06W1_CHANGED_METHODS = set(["current", "fit_candidate_rows"])
+# W1 context helpers placed into extraction namespaces (context-free calls pass no instance keyword).
+M06W1_NAMESPACE_HELPERS = ["PROD_INSTANCE_TOKEN_KIND", "prod_instance_token", "prod_instance_kw",
+                           "prod_instance_pair_check"]
 EXPECTED_CHANGED_TOP = (STEP2B_CHANGED_TOP | STEP3_CHANGED_TOP | STEP4_CHANGED_TOP | R14_CHANGED_TOP
                         | R15_CHANGED_TOP | ITEM6_CHANGED_TOP | ITEM7_CHANGED_TOP | UIPASS_CHANGED_TOP
-                        | LOGFIX_CHANGED_TOP | M05_CHANGED_TOP)
+                        | LOGFIX_CHANGED_TOP | M05_CHANGED_TOP | M06_CHANGED_TOP | M06W1_CHANGED_TOP)
 EXPECTED_NEW_TOP = set([
     "PROD_CPM_MAINMENU_RELATIVE_PARTS", "PROD_CPM_ADAPTER_MODULES", "ProdCpmAuthorityBootstrapError",
     "ProdCpmAuthorityNotMigrated", "prod_cpm_mainmenu_dir", "prod_cpm_import_adapter", "prod_cpm_is_main_thread",
@@ -323,7 +373,8 @@ def section_derivation(app):
     removed = set(baseline.top) - set(app.top)
     check("derivation.changed_top_level_is_bounded", changed == EXPECTED_CHANGED_TOP, sorted(changed))
     check("derivation.added_top_level_is_bounded",
-          added == EXPECTED_NEW_TOP | R15_NEW_TOP | ITEM6_NEW_TOP | UIPASS_NEW_TOP | LOGFIX_NEW_TOP | M05_NEW_TOP,
+          added == EXPECTED_NEW_TOP | R15_NEW_TOP | ITEM6_NEW_TOP | UIPASS_NEW_TOP | LOGFIX_NEW_TOP | M05_NEW_TOP
+          | M06_NEW_TOP | M06W1_NEW_TOP,
           sorted(added))
     check("derivation.removed_is_exactly_item6_and_item7", removed == ITEM6_REMOVED_TOP | ITEM7_REMOVED_TOP
           | LOGFIX_REMOVED_TOP, sorted(removed ^ (ITEM6_REMOVED_TOP | ITEM7_REMOVED_TOP | LOGFIX_REMOVED_TOP)))
@@ -333,7 +384,7 @@ def section_derivation(app):
     shortcut_owner = [n for n in bm if "g18an_parity_shortcut = QtGui.QShortcut" in baseline.method_text("ProdWindow", n)]
     check("derivation.shortcut_owner_found", len(shortcut_owner) == 1, shortcut_owner)
     expected_methods = (EXPECTED_CHANGED_METHODS | R15_CHANGED_METHODS | set(shortcut_owner) | ITEM7_CHANGED_METHODS
-                        | UIPASS_CHANGED_METHODS)
+                        | UIPASS_CHANGED_METHODS | M06W1_CHANGED_METHODS)
     check("derivation.changed_methods_are_bounded", m_changed == expected_methods, sorted(m_changed))
     check("derivation.added_methods_are_bounded",
           set(am) - set(bm) == EXPECTED_NEW_METHODS | R15_NEW_METHODS | M05_NEW_METHODS,
@@ -546,7 +597,7 @@ def build_namespace(app):
                  "acquire_semantic_provider_for_mode", "prod_semantic_provider_health_from_descriptor"):
         ns[name] = forbidden(name)
     ns["log_line"] = lambda *a, **k: None
-    for name in LOGFIX_NAMESPACE_HELPERS:
+    for name in LOGFIX_NAMESPACE_HELPERS + M06W1_NAMESPACE_HELPERS:
         if name in app.top:  # pinned historical references predate these helpers
             _run_source(app.top_text(name), "app:%s" % name, ns)
     ns["p01_master_path"] = lambda: os.path.join(Env.live_root, MASTER_NAME)

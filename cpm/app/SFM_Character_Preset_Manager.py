@@ -1185,7 +1185,7 @@ def key_count(layer):
             return None
 
 
-def side_snapshot(control, side):
+def side_snapshot(control, side, policy=None):
     count = key_count(side["layer"])
 
     try:
@@ -1220,7 +1220,7 @@ def side_snapshot(control, side):
         except Exception:
             pass
 
-    return {
+    result = {
         "source": as_float(
             attr_value(
                 control,
@@ -1244,6 +1244,21 @@ def side_snapshot(control, side):
         "destination_id": dme_id(side["destination"]),
     }
 
+    if policy is not None:
+        # M-06: strict evidence, gathered only under an explicit operation
+        # policy (production Body Save/Apply). Without it the snapshot is
+        # exactly the historical one.
+        result.update(
+            flex_static_play_evidence(
+                control,
+                side,
+                result,
+                policy,
+            )
+        )
+
+    return result
+
 
 def binding_snapshot(binding):
     result = {
@@ -1258,9 +1273,1980 @@ def binding_snapshot(binding):
         result["sides"][side_name] = side_snapshot(
             binding["control"],
             side,
+            binding.get(
+                "static_play_policy"
+            ),
         )
 
     return result
+
+
+# M-06: imported static flex compatibility (Astra M-06 Production Correction
+# Design; P1 evidence-integrity correction). A mode-3 (Play) channel with
+# exactly one key at local time zero whose key, native evaluation and
+# destination agree, while the stored control value differs, is the static
+# class STATIC_PLAY_ONE_KEY_ZERO. It is admitted only under the explicit Body
+# Save/Apply operation policy, with strict evidence and complete writer
+# discovery; every other operation keeps the historical EMPTY / ONE_KEY_ZERO
+# rules. The effective value is the key.
+PROD_FLEX_STATIC_PLAY = "STATIC_PLAY_ONE_KEY_ZERO"
+PROD_FLEX_BODY_POLICY = u"body-static-play"
+PROD_FLEX_DISCOVERY_NODE_CAP = 2000000
+PROD_FLEX_UNRESOLVED_RECORD_CAP = 32
+
+# Supported discovery boundary (M-06 P1 survey of preserved SFM sessions: every
+# DmeChannel lives in a channels clip reachable from the movie; operator lists
+# hold only the types below). Expression and pack-colour operators carry no
+# element references and write only their own attributes. Point, orient and IK
+# constraint operators write only the transforms of their constraint-slave
+# targets. Any other operator type, or any unreadable relationship, leaves the
+# discovery unresolved and prevents admission.
+PROD_FLEX_SELF_CONTAINED_OPERATORS = (
+    u"DmeExpressionOperator",
+    u"DmePackColorOperator",
+)
+PROD_FLEX_CONSTRAINT_OPERATORS = {
+    u"DmeRigPointConstraintOperator": (
+        "slave",
+    ),
+    u"DmeRigOrientConstraintOperator": (
+        "slave",
+    ),
+    u"DmeRigIKConstraintOperator": (
+        "slave",
+        "startJoint",
+        "midJoint",
+        "endJoint",
+    ),
+}
+PROD_FLEX_SLAVE_TARGET_TYPES = (
+    u"DmeDag",
+    u"DmeRigHandle",
+    u"DmeGameModel",
+)
+
+PROD_FLEX_EVIDENCE_EXACT_FIELDS = (
+    "mode",
+    "endpoints_ok",
+    "from_index",
+    "to_index",
+    "log_type",
+    "layer_type",
+    "native_layer_count",
+    "native_key_count",
+    "times_len",
+    "values_len",
+    "usedefaultvalue",
+    "log_curveinfo",
+    "layer_curveinfo",
+    "curvetypes",
+    "compressed_len",
+    "bookmarks",
+    "global_index",
+)
+PROD_FLEX_WRITER_FIELDS = (
+    "writers_complete",
+    "unresolved_relationships",
+    "destination_writer_ids",
+    "control_writer_ids",
+    "log_channel_ids",
+    "layer_log_ids",
+    "flex_controller_peer_ids",
+)
+
+
+def prod_flex_static_play_policy(verify=False):
+    """A fresh Body operation policy; its writer index is built at most once.
+    A verification policy gathers writer evidence for every one-key side, so
+    the obligations of an admitted side survive its post-write classification."""
+    return {
+        "name": PROD_FLEX_BODY_POLICY,
+        "verify": bool(
+            verify
+        ),
+        "writers": None,
+    }
+
+
+def prod_flex_body_policy_bindings(accepted, verify=False):
+    """Copies of the accepted bindings carrying one fresh Body policy."""
+    policy = prod_flex_static_play_policy(
+        verify
+    )
+    result = {}
+
+    for literal, binding in accepted.items():
+        flagged = dict(
+            binding
+        )
+        flagged[
+            "static_play_policy"
+        ] = policy
+        result[
+            literal
+        ] = flagged
+
+    return result
+
+
+def prod_flex_element_key(element):
+    return (
+        handle(element),
+        ptr(element),
+    )
+
+
+def prod_flex_strict_read(element, attr_name):
+    """
+    (state, value) for one attribute: u"present" (value may be None for a null
+    element reference), u"absent" (the attribute verifiably does not exist) or
+    u"unreadable". Unlike attr_value(), no failure becomes an apparent value.
+
+    SFM's vs wrapper CDmElement.GetAttribute() raises AttributeError for a
+    missing attribute instead of returning None, so absence is established
+    only by agreement with HasAttribute(): the getter returns None or raises
+    AttributeError, and HasAttribute() of the same native name is exactly
+    False. Any other combination, accessor failure or non-Boolean presence
+    result is u"unreadable".
+    """
+    if element is None:
+        return u"unreadable", None
+
+    native_name = native_attr_name(
+        attr_name
+    )
+
+    try:
+        getter = getattr(
+            element,
+            "GetAttribute",
+            None,
+        )
+        presence = getattr(
+            element,
+            "HasAttribute",
+            None,
+        )
+    except Exception:
+        return u"unreadable", None
+
+    if not callable(getter) or not callable(presence):
+        return u"unreadable", None
+
+    try:
+        attr = getter(
+            native_name
+        )
+    except AttributeError:
+        # Possible absence only; confirmed by HasAttribute() below.
+        attr = None
+    except Exception:
+        return u"unreadable", None
+
+    try:
+        has = presence(
+            native_name
+        )
+    except Exception:
+        return u"unreadable", None
+
+    if type(has) is not bool:
+        return u"unreadable", None
+
+    if attr is None:
+        if has is False:
+            return u"absent", None
+
+        return u"unreadable", None
+
+    if has is not True:
+        return u"unreadable", None
+
+    try:
+        value_getter = getattr(
+            attr,
+            "GetValue",
+            None,
+        )
+    except Exception:
+        return u"unreadable", None
+
+    if not callable(value_getter):
+        return u"unreadable", None
+
+    try:
+        return u"present", value_getter()
+    except Exception:
+        return u"unreadable", None
+
+
+def prod_flex_strict_list(element, attr_name):
+    """(state, list) for an array attribute; unlike arr(), an existing but
+    unreadable collection is never reported as empty."""
+    state, value = prod_flex_strict_read(
+        element,
+        attr_name,
+    )
+
+    if state != u"present":
+        return state, None
+
+    if value is None:
+        return u"unreadable", None
+
+    try:
+        return u"present", list(
+            value
+        )
+    except Exception:
+        pass
+
+    try:
+        return u"present", [
+            value[index]
+            for index in range(
+                len(
+                    value
+                )
+            )
+        ]
+    except Exception:
+        return u"unreadable", None
+
+
+def prod_flex_strict_state(element, attr_name):
+    """A comparable, pure description of a scalar or element attribute."""
+    state, value = prod_flex_strict_read(
+        element,
+        attr_name,
+    )
+
+    if state != u"present":
+        return state
+
+    if value is None:
+        return u"null"
+
+    # typ() falls back to the Python class name, so an element is recognised
+    # by its native type accessor instead.
+    if callable(
+        getattr(
+            value,
+            "GetTypeString",
+            None,
+        )
+    ):
+        return [
+            u"element",
+            dme_id(
+                value
+            ),
+        ]
+
+    return [
+        u"value",
+        u(
+            repr(
+                value
+            )
+        ),
+    ]
+
+
+def prod_flex_strict_type(element):
+    """
+    The verified native type string of an element, or None when it cannot be
+    established. Unlike typ(), a failed native read never becomes the Python
+    class name.
+    """
+    if element is None:
+        return None
+
+    try:
+        getter = getattr(
+            element,
+            "GetTypeString",
+        )
+        value = getter()
+    except Exception:
+        return None
+
+    if value is None:
+        return None
+
+    try:
+        text = u(
+            value
+        )
+    except Exception:
+        return None
+
+    return text or None
+
+
+def prod_flex_identified_key(element):
+    """prod_flex_element_key(), or None when neither the native handle nor the
+    native pointer can be read (such elements cannot be told apart)."""
+    key = prod_flex_element_key(
+        element
+    )
+
+    if key[0] is None and key[1] is None:
+        return None
+
+    return key
+
+
+def prod_flex_strict_seconds(item):
+    """Finite seconds of one DmeTime_t (or plain number) array entry, else None."""
+    if item is None or isinstance(
+        item,
+        bool,
+    ):
+        return None
+
+    getter = None
+
+    try:
+        getter = getattr(
+            item,
+            "GetSeconds",
+            None,
+        )
+    except Exception:
+        return None
+
+    if callable(
+        getter
+    ):
+        try:
+            value = getter()
+        except Exception:
+            return None
+
+        return prod_flex_strict_number(
+            value
+        )
+
+    return prod_flex_strict_number(
+        item
+    )
+
+
+def prod_flex_strict_number(item):
+    """A finite float for an int/float array entry, else None (no string or
+    other permissive conversion)."""
+    if item is None or isinstance(
+        item,
+        bool,
+    ) or not isinstance(
+        item,
+        (
+            int,
+            long,
+            float,
+        ),
+    ):
+        return None
+
+    return as_float(
+        item
+    )
+
+
+def prod_flex_strict_entries(items, convert):
+    """Every array entry converted strictly, or u"unreadable" when any entry
+    cannot be (an unreadable entry is never kept as an apparent None)."""
+    result = []
+
+    for item in items:
+        value = convert(
+            item
+        )
+
+        if value is None:
+            return u"unreadable"
+
+        result.append(
+            value
+        )
+
+    return result
+
+
+def prod_flex_writer_index():
+    """
+    Complete channel/operator discovery for the active document, within the
+    supported boundary documented above. Traverses the movie through film-clip
+    subClipTrackGroup / trackGroups, tracks, track children and channels
+    clips, and classifies every film-clip and animation-set operator. Every
+    unreadable relationship or unresolved operator is recorded; discovery is
+    complete only when none exists. Read-only.
+
+    Node types are read strictly (prod_flex_strict_type), never through typ(),
+    and a node whose native identity cannot be read is unresolved: either
+    would otherwise let a node be skipped (or merged with another) silently.
+    """
+    index = {
+        "complete": False,
+        "destination": {},
+        "log": {},
+        "layer": {},
+        "unresolved": [],
+        "unresolved_count": 0,
+        "channels": 0,
+        "operators": 0,
+        # IK operators whose primary slave is verified unbound (see below).
+        "ik_unbound_primary": 0,
+    }
+
+    def note(reason):
+        index[
+            "unresolved_count"
+        ] += 1
+
+        if len(
+            index[
+                "unresolved"
+            ]
+        ) < PROD_FLEX_UNRESOLVED_RECORD_CAP:
+            index[
+                "unresolved"
+            ].append(
+                u(
+                    reason
+                )
+            )
+
+    try:
+        movie = sfmApp.GetMovie()
+    except Exception:
+        movie = None
+
+    if movie is None:
+        note(
+            u"movie unavailable"
+        )
+        return index
+
+    seen = set()
+    channels = {}
+    operators = {}
+    stack = [
+        movie
+    ]
+    nodes = 0
+
+    def push_list(element, attr_name, required):
+        state, items = prod_flex_strict_list(
+            element,
+            attr_name,
+        )
+
+        if state == u"unreadable" or (
+            state == u"absent"
+            and required
+        ):
+            note(
+                u"%s.%s %s"
+                % (
+                    typ(
+                        element
+                    ),
+                    attr_name,
+                    state,
+                )
+            )
+            return []
+
+        return [
+            item
+            for item in (
+                items
+                or []
+            )
+            if item is not None
+        ]
+
+    def register_operator(operator):
+        operator_key = prod_flex_identified_key(
+            operator
+        )
+
+        if operator_key is None:
+            note(
+                u"operator identity unreadable"
+            )
+            return
+
+        operators[
+            operator_key
+        ] = operator
+
+    try:
+        while stack:
+            element = stack.pop()
+            key = prod_flex_identified_key(
+                element
+            )
+
+            if key is None:
+                note(
+                    u"element identity unreadable"
+                )
+                continue
+
+            if key in seen:
+                continue
+
+            seen.add(
+                key
+            )
+            nodes += 1
+
+            if nodes > PROD_FLEX_DISCOVERY_NODE_CAP:
+                note(
+                    u"discovery cap"
+                )
+                break
+
+            kind = prod_flex_strict_type(
+                element
+            )
+
+            if kind is None:
+                note(
+                    u"element type unreadable"
+                )
+                continue
+
+            if kind == u"DmeChannel":
+                channels[
+                    key
+                ] = element
+                continue
+
+            if kind == u"DmeFilmClip":
+                state, sub = prod_flex_strict_read(
+                    element,
+                    "subClipTrackGroup",
+                )
+
+                if state == u"unreadable":
+                    note(
+                        u"DmeFilmClip.subClipTrackGroup unreadable"
+                    )
+                elif state == u"present" and sub is not None:
+                    stack.append(
+                        sub
+                    )
+
+                stack.extend(
+                    push_list(
+                        element,
+                        "trackGroups",
+                        False,
+                    )
+                )
+
+                for operator in push_list(
+                    element,
+                    "operators",
+                    False,
+                ):
+                    register_operator(
+                        operator
+                    )
+
+                for animset in push_list(
+                    element,
+                    "animationSets",
+                    False,
+                ):
+                    for operator in push_list(
+                        animset,
+                        "operators",
+                        False,
+                    ):
+                        register_operator(
+                            operator
+                        )
+                continue
+
+            if kind == u"DmeTrackGroup":
+                stack.extend(
+                    push_list(
+                        element,
+                        "tracks",
+                        True,
+                    )
+                )
+                continue
+
+            if kind == u"DmeTrack":
+                stack.extend(
+                    push_list(
+                        element,
+                        "children",
+                        True,
+                    )
+                )
+                continue
+
+            if kind == u"DmeChannelsClip":
+                stack.extend(
+                    push_list(
+                        element,
+                        "channels",
+                        True,
+                    )
+                )
+                continue
+
+            # Other clip kinds (sound, camera, ...) hold no channels.
+
+        for key, operator in operators.items():
+            kind = prod_flex_strict_type(
+                operator
+            )
+            index[
+                "operators"
+            ] += 1
+
+            if kind is None:
+                note(
+                    u"operator type unreadable"
+                )
+                continue
+
+            if kind == u"DmeChannel":
+                channels[
+                    key
+                ] = operator
+                continue
+
+            if kind in PROD_FLEX_SELF_CONTAINED_OPERATORS:
+                continue
+
+            if kind in PROD_FLEX_CONSTRAINT_OPERATORS:
+                # Native IK constraints write through their three joint
+                # slaves; their primary slave may be unbound. Only that
+                # relationship, only with an explicitly readable null target
+                # and only when every joint resolves, is classified verified
+                # unbound (it has no write target). Everything else keeps the
+                # strict rule.
+                unbound_primary = False
+                joints_resolved = True
+
+                for slave_attr in PROD_FLEX_CONSTRAINT_OPERATORS[
+                    kind
+                ]:
+                    state, slave = prod_flex_strict_read(
+                        operator,
+                        slave_attr,
+                    )
+
+                    if (
+                        state != u"present"
+                        or slave is None
+                        or prod_flex_strict_type(
+                            slave
+                        )
+                        != u"DmeConstraintSlave"
+                    ):
+                        note(
+                            u"%s.%s %s"
+                            % (
+                                kind,
+                                slave_attr,
+                                state,
+                            )
+                        )
+                        if slave_attr != "slave":
+                            joints_resolved = False
+                        continue
+
+                    target_state, target = prod_flex_strict_read(
+                        slave,
+                        "target",
+                    )
+
+                    if (
+                        kind == u"DmeRigIKConstraintOperator"
+                        and slave_attr == "slave"
+                        and target_state == u"present"
+                        and target is None
+                    ):
+                        if prod_flex_identified_key(
+                            slave
+                        ) is None:
+                            note(
+                                u"%s.slave identity unreadable" % kind
+                            )
+                        else:
+                            unbound_primary = True
+                        continue
+
+                    if (
+                        target_state != u"present"
+                        or target is None
+                        or prod_flex_strict_type(
+                            target
+                        )
+                        not in PROD_FLEX_SLAVE_TARGET_TYPES
+                    ):
+                        note(
+                            u"%s.%s.target unresolved"
+                            % (
+                                kind,
+                                slave_attr,
+                            )
+                        )
+                        if slave_attr != "slave":
+                            joints_resolved = False
+
+                if unbound_primary:
+                    if joints_resolved:
+                        index[
+                            "ik_unbound_primary"
+                        ] += 1
+                    else:
+                        note(
+                            u"%s unbound primary slave with unresolved joints"
+                            % kind
+                        )
+                continue
+
+            note(
+                u"unresolved operator type %s" % kind
+            )
+
+        for key, channel in channels.items():
+            channel_id = dme_id(
+                channel
+            )
+            state, destination = prod_flex_strict_read(
+                channel,
+                "toElement",
+            )
+
+            if state == u"unreadable":
+                note(
+                    u"DmeChannel.toElement unreadable"
+                )
+                continue
+
+            if state == u"present" and destination is not None:
+                attr_state, to_attribute = prod_flex_strict_read(
+                    channel,
+                    "toAttribute",
+                )
+
+                if attr_state != u"present" or to_attribute is None:
+                    note(
+                        u"DmeChannel.toAttribute %s" % attr_state
+                    )
+                    continue
+
+                destination_key = prod_flex_identified_key(
+                    destination
+                )
+
+                if destination_key is None:
+                    note(
+                        u"DmeChannel.toElement identity unreadable"
+                    )
+                    continue
+
+                index[
+                    "destination"
+                ].setdefault(
+                    (
+                        destination_key,
+                        u(
+                            to_attribute
+                        ),
+                    ),
+                    [],
+                ).append(
+                    channel_id
+                )
+
+            log_state, log = prod_flex_strict_read(
+                channel,
+                "log",
+            )
+
+            if log_state == u"unreadable":
+                note(
+                    u"DmeChannel.log unreadable"
+                )
+                continue
+
+            if log_state != u"present" or log is None:
+                continue
+
+            log_key = prod_flex_identified_key(
+                log
+            )
+
+            if log_key is None:
+                note(
+                    u"DmeChannel.log identity unreadable"
+                )
+                continue
+
+            index[
+                "log"
+            ].setdefault(
+                log_key,
+                [],
+            ).append(
+                channel_id
+            )
+
+            if len(
+                index[
+                    "log"
+                ][
+                    log_key
+                ]
+            ) > 1:
+                continue
+
+            for layer in push_list(
+                log,
+                "layers",
+                True,
+            ):
+                layer_key = prod_flex_identified_key(
+                    layer
+                )
+
+                if layer_key is None:
+                    note(
+                        u"DmeLog.layers identity unreadable"
+                    )
+                    continue
+
+                index[
+                    "layer"
+                ].setdefault(
+                    layer_key,
+                    [],
+                ).append(
+                    dme_id(
+                        log
+                    )
+                )
+
+        index[
+            "channels"
+        ] = len(
+            channels
+        )
+
+    except Exception as exc:
+        note(
+            u"discovery error %r" % (
+                exc,
+            )
+        )
+
+    index[
+        "complete"
+    ] = index[
+        "unresolved_count"
+    ] == 0
+
+    try:
+        if index[
+            "complete"
+        ]:
+            log_line(
+                "M06_FLEX_WRITER_DISCOVERY_COMPLETE channels=%d operators=%d ik_unbound_primary=%d"
+                % (
+                    index[
+                        "channels"
+                    ],
+                    index[
+                        "operators"
+                    ],
+                    index[
+                        "ik_unbound_primary"
+                    ],
+                )
+            )
+        else:
+            log_line(
+                "M06_FLEX_WRITER_DISCOVERY_INCOMPLETE unresolved=%d ik_unbound_primary=%d first=%r"
+                % (
+                    index[
+                        "unresolved_count"
+                    ],
+                    index[
+                        "ik_unbound_primary"
+                    ],
+                    index[
+                        "unresolved"
+                    ][:4],
+                )
+            )
+    except Exception:
+        pass
+
+    return index
+
+
+def prod_flex_capture_refusal(bindings, exc):
+    """A Body capture refusal, made specific when the Body policy's writer
+    discovery was incomplete (the reason imported static flexes were not
+    admitted). The original message is kept; nothing else changes."""
+    writers = None
+
+    for binding in bindings.values():
+        policy = binding.get(
+            "static_play_policy"
+        ) if isinstance(
+            binding,
+            dict,
+        ) else None
+
+        if policy is not None:
+            writers = policy.get(
+                "writers"
+            )
+            break
+
+    if writers is None or writers.get(
+        "complete"
+    ):
+        return exc
+
+    return RuntimeError(
+        "%s Imported static flex values were not admitted: writer discovery "
+        "was incomplete (%d unresolved relationship(s); first %r)."
+        % (
+            exc,
+            writers.get(
+                "unresolved_count"
+            ),
+            writers.get(
+                "unresolved"
+            )[:2],
+        )
+    )
+
+
+def prod_flex_policy_writers(policy):
+    if policy.get(
+        "writers"
+    ) is None:
+        policy[
+            "writers"
+        ] = prod_flex_writer_index()
+
+    return policy[
+        "writers"
+    ]
+
+
+def prod_flex_controller_peers(destination, global_index):
+    """Ids of the destination model's global flex controllers sharing its
+    native global index (each drives the same model flex), or u"unreadable"."""
+    state, model = prod_flex_strict_read(
+        destination,
+        "gameModel",
+    )
+
+    if state != u"present" or model is None:
+        return u"unreadable"
+
+    state, controllers = prod_flex_strict_list(
+        model,
+        "globalFlexControllers",
+    )
+
+    if state != u"present":
+        return u"unreadable"
+
+    peers = []
+
+    for controller in controllers:
+        if controller is None:
+            continue
+
+        try:
+            peer_index = int(
+                controller.GetGlobalIndex()
+            )
+        except Exception:
+            return u"unreadable"
+
+        if peer_index == global_index:
+            peers.append(
+                dme_id(
+                    controller
+                )
+            )
+
+    return sorted(
+        peers
+    )
+
+
+def flex_static_play_evidence(control, side, state, policy):
+    """
+    Strict, read-only evidence for the M-06 class. Every read distinguishes
+    present / absent / unreadable; no permissive fallback supplies a value.
+    """
+    channel = side["channel"]
+    log = side["log"]
+    layer = side["layer"]
+    evidence = {
+        "policy": u(
+            policy.get(
+                "name"
+            )
+        ),
+        "mode": None,
+        "endpoints_ok": False,
+        "from_index": prod_flex_strict_state(
+            channel,
+            "fromIndex",
+        ),
+        "to_index": prod_flex_strict_state(
+            channel,
+            "toIndex",
+        ),
+        "log_type": prod_flex_strict_type(
+            log
+        ),
+        "layer_type": prod_flex_strict_type(
+            layer
+        ),
+        "native_layer_count": None,
+        "native_key_count": None,
+        "times_len": None,
+        "values_len": None,
+        "times": None,
+        "values": None,
+        "key0_time_native": None,
+        "key0_value_native": None,
+        "usedefaultvalue": None,
+        "defaultvalue": None,
+        "log_curveinfo": prod_flex_strict_state(
+            log,
+            "curveinfo",
+        ),
+        "layer_curveinfo": prod_flex_strict_state(
+            layer,
+            "curveinfo",
+        ),
+        "curvetypes": None,
+        "compressed_len": None,
+        "bookmarks": None,
+        "global_index": side.get(
+            "global"
+        ),
+        "candidate": False,
+    }
+
+    mode_state, mode = prod_flex_strict_read(
+        channel,
+        "mode",
+    )
+
+    if mode_state == u"present":
+        try:
+            evidence[
+                "mode"
+            ] = int(
+                mode
+            )
+        except Exception:
+            pass
+
+    reads = dict(
+        (
+            name,
+            prod_flex_strict_read(
+                channel,
+                name,
+            ),
+        )
+        for name in (
+            "fromElement",
+            "fromAttribute",
+            "toElement",
+            "toAttribute",
+        )
+    )
+    evidence[
+        "endpoints_ok"
+    ] = bool(
+        all(
+            reads[name][0] == u"present"
+            for name in reads
+        )
+        and same_dme(
+            reads["fromElement"][1],
+            control,
+        )
+        and u(
+            reads["fromAttribute"][1]
+        )
+        == u(
+            side["source_attr"]
+        )
+        and same_dme(
+            reads["toElement"][1],
+            side["destination"],
+        )
+        and u(
+            reads["toAttribute"][1]
+        )
+        == u"flexWeight"
+    )
+
+    try:
+        evidence[
+            "native_layer_count"
+        ] = int(
+            log.GetNumLayers()
+        )
+    except Exception:
+        pass
+
+    try:
+        evidence[
+            "native_key_count"
+        ] = int(
+            layer.GetKeyCount()
+        )
+    except Exception:
+        pass
+
+    times_state, times = prod_flex_strict_list(
+        layer,
+        "times",
+    )
+    values_state, values = prod_flex_strict_list(
+        layer,
+        "values",
+    )
+
+    # The layer's own arrays are evidence in their own right: every entry must
+    # convert strictly (finite), or the whole array is u"unreadable".
+    if times_state == u"present":
+        evidence[
+            "times"
+        ] = prod_flex_strict_entries(
+            times,
+            prod_flex_strict_seconds,
+        )
+        evidence[
+            "times_len"
+        ] = len(
+            times
+        )
+
+    if values_state == u"present":
+        evidence[
+            "values"
+        ] = prod_flex_strict_entries(
+            values,
+            prod_flex_strict_number,
+        )
+        evidence[
+            "values_len"
+        ] = len(
+            values
+        )
+
+    if evidence[
+        "native_key_count"
+    ] == 1:
+        try:
+            evidence[
+                "key0_time_native"
+            ] = float(
+                layer.GetKeyTime(
+                    0
+                ).GetSeconds()
+            )
+        except Exception:
+            pass
+
+        try:
+            evidence[
+                "key0_value_native"
+            ] = as_float(
+                layer.GetKeyValue(
+                    0
+                )
+            )
+        except Exception:
+            pass
+
+    flag_state, flag = prod_flex_strict_read(
+        log,
+        "usedefaultvalue",
+    )
+
+    if flag_state == u"present" and flag is not None:
+        evidence[
+            "usedefaultvalue"
+        ] = bool(
+            flag
+        )
+
+    default_state, default = prod_flex_strict_read(
+        log,
+        "defaultvalue",
+    )
+
+    if default_state == u"present":
+        evidence[
+            "defaultvalue"
+        ] = as_float(
+            default
+        )
+
+    curve_state, curvetypes = prod_flex_strict_list(
+        layer,
+        "curvetypes",
+    )
+
+    if curve_state == u"present":
+        try:
+            evidence[
+                "curvetypes"
+            ] = [
+                int(
+                    item
+                )
+                for item in curvetypes
+            ]
+        except Exception:
+            evidence[
+                "curvetypes"
+            ] = u"unreadable"
+    else:
+        evidence[
+            "curvetypes"
+        ] = curve_state
+
+    compressed_state, compressed = prod_flex_strict_read(
+        layer,
+        "compressed",
+    )
+
+    if compressed_state == u"present" and compressed is not None:
+        try:
+            evidence[
+                "compressed_len"
+            ] = len(
+                compressed
+            )
+        except Exception:
+            evidence[
+                "compressed_len"
+            ] = u"unreadable"
+    else:
+        evidence[
+            "compressed_len"
+        ] = compressed_state
+
+    bookmark_state, bookmarks = prod_flex_strict_list(
+        log,
+        "bookmarks",
+    )
+
+    if bookmark_state == u"present":
+        evidence[
+            "bookmarks"
+        ] = prod_flex_strict_entries(
+            bookmarks,
+            prod_flex_strict_seconds,
+        )
+    else:
+        evidence[
+            "bookmarks"
+        ] = bookmark_state
+
+    evidence[
+        "candidate"
+    ] = bool(
+        evidence[
+            "native_key_count"
+        ] == 1
+        and evidence[
+            "key0_value_native"
+        ] is not None
+        and state[
+            "source"
+        ] is not None
+        and not close_enough(
+            evidence[
+                "key0_value_native"
+            ],
+            state[
+                "source"
+            ],
+        )
+    )
+
+    if evidence[
+        "candidate"
+    ] or (
+        policy.get(
+            "verify"
+        )
+        and evidence[
+            "native_key_count"
+        ] == 1
+    ):
+        writers = prod_flex_policy_writers(
+            policy
+        )
+        evidence[
+            "writers_complete"
+        ] = bool(
+            writers.get(
+                "complete"
+            )
+        )
+        evidence[
+            "unresolved_relationships"
+        ] = int(
+            writers.get(
+                "unresolved_count"
+            )
+            or 0
+        )
+        evidence[
+            "destination_writer_ids"
+        ] = sorted(
+            writers[
+                "destination"
+            ].get(
+                (
+                    prod_flex_element_key(
+                        side["destination"]
+                    ),
+                    u"flexWeight",
+                ),
+                [],
+            )
+        )
+        evidence[
+            "control_writer_ids"
+        ] = sorted(
+            writers[
+                "destination"
+            ].get(
+                (
+                    prod_flex_element_key(
+                        control
+                    ),
+                    u(
+                        side["source_attr"]
+                    ),
+                ),
+                [],
+            )
+        )
+        evidence[
+            "log_channel_ids"
+        ] = sorted(
+            writers[
+                "log"
+            ].get(
+                prod_flex_element_key(
+                    log
+                ),
+                [],
+            )
+        )
+        evidence[
+            "layer_log_ids"
+        ] = sorted(
+            writers[
+                "layer"
+            ].get(
+                prod_flex_element_key(
+                    layer
+                ),
+                [],
+            )
+        )
+        evidence[
+            "flex_controller_peer_ids"
+        ] = prod_flex_controller_peers(
+            side["destination"],
+            side.get(
+                "global"
+            ),
+        )
+
+    return evidence
+
+
+def flex_static_play_writers_ok(state):
+    """Writer and sharing obligations of an admitted side (pure)."""
+    return bool(
+        state.get(
+            "writers_complete"
+        ) is True
+        and state.get(
+            "unresolved_relationships"
+        ) == 0
+        and state.get(
+            "destination_writer_ids"
+        ) == [
+            state.get(
+                "channel_id"
+            )
+        ]
+        and state.get(
+            "control_writer_ids"
+        ) == []
+        and state.get(
+            "log_channel_ids"
+        ) == [
+            state.get(
+                "channel_id"
+            )
+        ]
+        and state.get(
+            "layer_log_ids"
+        ) == [
+            state.get(
+                "log_id"
+            )
+        ]
+        and state.get(
+            "flex_controller_peer_ids"
+        ) == [
+            state.get(
+                "destination_id"
+            )
+        ]
+    )
+
+
+def flex_key_arrays_match(state, key_time, key_value):
+    """
+    The captured one-key representation agrees with itself and with the given
+    key (pure): the native key count, the layer's own times/values arrays
+    (strictly read, one finite entry each) and the native key getters all
+    report the same time and value. Getter agreement alone never suffices.
+    """
+    times = state.get(
+        "times"
+    )
+    values = state.get(
+        "values"
+    )
+
+    return bool(
+        state.get(
+            "native_key_count"
+        ) == 1
+        and state.get(
+            "times_len"
+        ) == 1
+        and state.get(
+            "values_len"
+        ) == 1
+        and isinstance(
+            times,
+            list,
+        )
+        and len(
+            times
+        ) == 1
+        and isinstance(
+            values,
+            list,
+        )
+        and len(
+            values
+        ) == 1
+        and close_enough(
+            times[0],
+            key_time,
+        )
+        and close_enough(
+            state.get(
+                "key0_time_native"
+            ),
+            key_time,
+        )
+        and close_enough(
+            values[0],
+            key_value,
+        )
+        and close_enough(
+            state.get(
+                "key0_value_native"
+            ),
+            key_value,
+        )
+    )
+
+
+def flex_bookmarks_ok(state):
+    """Bookmarks strictly read (every entry finite) or verifiably absent."""
+    bookmarks = state.get(
+        "bookmarks"
+    )
+
+    return bool(
+        isinstance(
+            bookmarks,
+            list,
+        )
+        or bookmarks == u"absent"
+    )
+
+
+def flex_static_play_admitted(state):
+    """The complete M-06 admission rule on one side snapshot (pure)."""
+    if state.get(
+        "policy"
+    ) != PROD_FLEX_BODY_POLICY or not state.get(
+        "candidate"
+    ):
+        return False
+
+    key = state.get(
+        "key0_value_native"
+    )
+    key_time = state.get(
+        "key0_time_native"
+    )
+    curvetypes = state.get(
+        "curvetypes"
+    )
+
+    return bool(
+        state.get(
+            "mode"
+        ) == 3
+        and state.get(
+            "endpoints_ok"
+        ) is True
+        # Scalar endpoints: index 0 at both ends (every surveyed flex channel).
+        and state.get(
+            "from_index"
+        ) == [
+            u"value",
+            u"0",
+        ]
+        and state.get(
+            "to_index"
+        ) == [
+            u"value",
+            u"0",
+        ]
+        and state.get(
+            "log_type"
+        ) == u"DmeFloatLog"
+        and state.get(
+            "layer_type"
+        ) == u"DmeFloatLogLayer"
+        and state.get(
+            "native_layer_count"
+        ) == 1
+        and state.get(
+            "native_key_count"
+        ) == 1
+        and state.get(
+            "times_len"
+        ) == 1
+        and state.get(
+            "values_len"
+        ) == 1
+        and state.get(
+            "key_count"
+        ) == 1
+        and state.get(
+            "is_empty"
+        ) is False
+        and key_time is not None
+        and close_enough(
+            key_time,
+            0.0,
+        )
+        and flex_key_arrays_match(
+            state,
+            key_time,
+            key,
+        )
+        and close_enough(
+            state.get(
+                "key0_value"
+            ),
+            key,
+        )
+        and state.get(
+            "source"
+        ) is not None
+        and key is not None
+        and state.get(
+            "evaluated"
+        ) is not None
+        and state.get(
+            "destination"
+        ) is not None
+        and close_enough(
+            key,
+            state.get(
+                "evaluated"
+            ),
+        )
+        and close_enough(
+            key,
+            state.get(
+                "destination"
+            ),
+        )
+        and not close_enough(
+            state.get(
+                "source"
+            ),
+            key,
+        )
+        and state.get(
+            "usedefaultvalue"
+        ) is not None
+        and state.get(
+            "defaultvalue"
+        ) is not None
+        # Supported metadata (every surveyed flex log/layer): no curve info,
+        # no per-key curve types, an empty compressed block; readable
+        # bookmarks are preserved but carry no evaluation meaning.
+        and state.get(
+            "log_curveinfo"
+        ) in (
+            u"null",
+            u"absent",
+        )
+        and state.get(
+            "layer_curveinfo"
+        ) in (
+            u"null",
+            u"absent",
+        )
+        and (
+            curvetypes == []
+            or curvetypes == u"absent"
+        )
+        and state.get(
+            "compressed_len"
+        ) in (
+            0,
+            u"absent",
+        )
+        and flex_bookmarks_ok(
+            state
+        )
+        and state.get(
+            "global_index"
+        ) is not None
+        and flex_static_play_writers_ok(
+            state
+        )
+    )
+
+
+def flex_effective_value(state):
+    """The canonical effective value of an admitted side: the key for the M-06
+    class, the evaluated value (historical behaviour) otherwise."""
+    if state_kind(
+        state
+    ) == PROD_FLEX_STATIC_PLAY:
+        return state[
+            "key0_value_native"
+        ]
+
+    return state[
+        "evaluated"
+    ]
+
+
+def flex_effective_matches(state, desired):
+    """Planning/no-op match. The M-06 class matches on its effective value and
+    needs no write even though its stored source differs; every other class
+    keeps the historical matches_value()."""
+    if state_kind(
+        state
+    ) == PROD_FLEX_STATIC_PLAY:
+        return (
+            close_enough(
+                state[
+                    "key0_value_native"
+                ],
+                desired,
+            )
+            and close_enough(
+                state[
+                    "evaluated"
+                ],
+                desired,
+            )
+            and close_enough(
+                state[
+                    "destination"
+                ],
+                desired,
+            )
+        )
+
+    return matches_value(
+        state,
+        desired,
+    )
+
+
+def flex_structure_preserved(state, baseline):
+    """Identities, endpoints, mode, layer/key structure and metadata recorded
+    for the baseline are unchanged (exact), the key time included."""
+    if not same_side_identity(
+        state,
+        baseline,
+    ):
+        return False
+
+    for field in PROD_FLEX_EVIDENCE_EXACT_FIELDS:
+        if state.get(
+            field
+        ) != baseline.get(
+            field
+        ):
+            return False
+
+    return (
+        prod_optional_float_matches(
+            state.get(
+                "defaultvalue"
+            ),
+            baseline.get(
+                "defaultvalue"
+            ),
+        )
+        and close_enough(
+            state.get(
+                "key0_time_native"
+            ),
+            baseline.get(
+                "key0_time_native"
+            ),
+        )
+    )
+
+
+def flex_authored_change_ok(state, baseline, desired):
+    """A changed M-06 side: requested source AND key, effective/destination
+    agreement, the original key time and preserved structure. The layer's own
+    times/values arrays must carry exactly the authored one-key state (the
+    baseline key time, the requested value), not merely the key getters."""
+    return bool(
+        state.get(
+            "native_key_count"
+        ) == 1
+        and flex_key_arrays_match(
+            state,
+            baseline.get(
+                "key0_time_native"
+            ),
+            desired,
+        )
+        and flex_bookmarks_ok(
+            state
+        )
+        and close_enough(
+            state.get(
+                "source"
+            ),
+            desired,
+        )
+        and close_enough(
+            state.get(
+                "key0_value_native"
+            ),
+            desired,
+        )
+        and close_enough(
+            state.get(
+                "evaluated"
+            ),
+            desired,
+        )
+        and close_enough(
+            state.get(
+                "destination"
+            ),
+            desired,
+        )
+        and flex_structure_preserved(
+            state,
+            baseline,
+        )
+        # The admitted side's writer and sharing obligations still hold, even
+        # though source and key now agree (verification policies gather this
+        # evidence for every one-key side).
+        and all(
+            state.get(
+                field
+            )
+            == baseline.get(
+                field
+            )
+            for field in PROD_FLEX_WRITER_FIELDS
+        )
+        and flex_static_play_writers_ok(
+            state
+        )
+    )
+
+
+def p03_flex_expectations(built):
+    """Detached (pure-data) per-side expectations of a Body plan."""
+    result = []
+
+    for item in built[
+        "plan"
+    ]:
+        result.append({
+            "literal": u(
+                item[
+                    "literal"
+                ]
+            ),
+            "side_name": item[
+                "side_name"
+            ],
+            "origin": item[
+                "origin"
+            ],
+            "desired": float(
+                item[
+                    "desired"
+                ]
+            ),
+            "needs_write": bool(
+                item[
+                    "needs_write"
+                ]
+            ),
+            "baseline": dict(
+                built[
+                    "baselines"
+                ][
+                    item[
+                        "literal"
+                    ]
+                ][
+                    "sides"
+                ][
+                    item[
+                        "side_name"
+                    ]
+                ]
+            ),
+        })
+
+    return result
+
+
+def p03_verify_plan_results(accepted, expectations):
+    """
+    Body plan verification on (policy) bindings: changed M-06 sides need their
+    authored source and key; unchanged M-06 sides must still match their
+    admitted baseline exactly; every historical side keeps matches_value().
+    Every accepted side must be covered by exactly one expectation.
+    """
+    covered = set()
+
+    for expectation in expectations:
+        literal = expectation[
+            "literal"
+        ]
+        side_name = expectation[
+            "side_name"
+        ]
+
+        if literal not in accepted:
+            return False
+
+        observed = binding_snapshot(
+            accepted[
+                literal
+            ]
+        )[
+            "sides"
+        ].get(
+            side_name
+        )
+
+        if observed is None:
+            return False
+
+        covered.add(
+            (
+                literal,
+                side_name,
+            )
+        )
+        desired = expectation[
+            "desired"
+        ]
+
+        if expectation[
+            "origin"
+        ] == PROD_FLEX_STATIC_PLAY:
+            if expectation[
+                "needs_write"
+            ]:
+                ok = flex_authored_change_ok(
+                    observed,
+                    expectation[
+                        "baseline"
+                    ],
+                    desired,
+                )
+            else:
+                ok = matches_baseline(
+                    observed,
+                    expectation[
+                        "baseline"
+                    ],
+                    PROD_FLEX_STATIC_PLAY,
+                )
+        else:
+            ok = matches_value(
+                observed,
+                desired,
+            )
+
+        if not ok:
+            return False
+
+    expected = set(
+        (
+            literal,
+            side_name,
+        )
+        for literal, binding in accepted.items()
+        for side_name, _side in binding[
+            "sides"
+        ]
+    )
+
+    return covered == expected
 
 
 def state_kind(state):
@@ -1284,12 +3270,25 @@ def state_kind(state):
     ):
         return "ONE_KEY_ZERO"
 
+    # M-06: only with the Body policy's complete admission evidence.
+    if flex_static_play_admitted(
+        state
+    ):
+        return PROD_FLEX_STATIC_PLAY
+
     return "UNSUPPORTED"
 
 
 def coherent(state):
+    kind = state_kind(state)
+
+    if kind == PROD_FLEX_STATIC_PLAY:
+        # Admission already requires key = evaluation = destination; the
+        # stored source may differ by definition.
+        return True
+
     return (
-        state_kind(state) != "UNSUPPORTED"
+        kind != "UNSUPPORTED"
         and close_enough(
             state["source"],
             state["destination"],
@@ -1356,6 +3355,39 @@ def matches_baseline(state, baseline, origin):
             )
         )
 
+    if origin == PROD_FLEX_STATIC_PLAY:
+        # M-06: the original source/key disagreement, structure, metadata and
+        # writer evidence are each restored; matching visible values alone
+        # never suffice.
+        if not (
+            state_kind(state) == PROD_FLEX_STATIC_PLAY
+            and state["key_count"] == 1
+            and state["is_empty"] is False
+            and close_enough(
+                state["key0_time"],
+                baseline["key0_time"],
+            )
+            and close_enough(
+                state["key0_value"],
+                baseline["key0_value"],
+            )
+            and close_enough(
+                state.get("key0_value_native"),
+                baseline.get("key0_value_native"),
+            )
+            and flex_structure_preserved(
+                state,
+                baseline,
+            )
+        ):
+            return False
+
+        for field in PROD_FLEX_WRITER_FIELDS:
+            if state.get(field) != baseline.get(field):
+                return False
+
+        return True
+
     return False
 
 
@@ -1390,7 +3422,13 @@ def write_side(
         side["channel"].Operate()
         return
 
-    if origin == "ONE_KEY_ZERO":
+    if origin in (
+        "ONE_KEY_ZERO",
+        PROD_FLEX_STATIC_PLAY,
+    ):
+        # M-06 uses the same in-place sequence: the existing key value, then
+        # the stored source, then the channel operation. Key time, mode, log
+        # and layer are never replaced.
         side["layer"].SetKeyValue(
             0,
             float(desired),
@@ -1421,7 +3459,12 @@ def restore_side(
         side["channel"].Operate()
         return
 
-    if origin == "ONE_KEY_ZERO":
+    if origin in (
+        "ONE_KEY_ZERO",
+        PROD_FLEX_STATIC_PLAY,
+    ):
+        # Source and key are restored separately; for M-06 they differ, and the
+        # source is never derived from the key.
         side["layer"].SetKeyValue(
             0,
             float(baseline["key0_value"]),
@@ -2669,13 +4712,13 @@ def p02_saved_value_record(
         record[
             "mono"
         ] = float(
-            snap[
-                "sides"
-            ][
-                "mono"
-            ][
-                "evaluated"
-            ]
+            flex_effective_value(
+                snap[
+                    "sides"
+                ][
+                    "mono"
+                ]
+            )
         )
         return record
 
@@ -2685,24 +4728,24 @@ def p02_saved_value_record(
         record[
             "left"
         ] = float(
-            snap[
-                "sides"
-            ][
-                "left"
-            ][
-                "evaluated"
-            ]
+            flex_effective_value(
+                snap[
+                    "sides"
+                ][
+                    "left"
+                ]
+            )
         )
         record[
             "right"
         ] = float(
-            snap[
-                "sides"
-            ][
-                "right"
-            ][
-                "evaluated"
-            ]
+            flex_effective_value(
+                snap[
+                    "sides"
+                ][
+                    "right"
+                ]
+            )
         )
         return record
 
@@ -4098,7 +6141,9 @@ def p03_build_plan(
                     )
                 )
 
-            needs_write = not matches_value(
+            # M-06: an admitted static-play side already at the requested
+            # effective value needs no write; historical classes are unchanged.
+            needs_write = not flex_effective_matches(
                 state,
                 desired,
             )
@@ -13828,7 +15873,7 @@ def prod_model_candidates():
         return [], u"no-session"
     if sfmApp.GetShotAtCurrentTime() is None:
         return [], u"no-shot"
-    candidates = g09a_candidates()
+    candidates = prod_selection_rows()
     return candidates, (None if candidates else u"no-models")
 
 
@@ -17014,7 +19059,7 @@ def prod_cpm_release_fit_stage(stage, index):
         )
     return None
 
-def prod_probe_semantic_provider(identity):
+def prod_probe_semantic_provider(identity, instance_context=None):
     """Migrated authority health (R3): healthy only after canonical
     bootstrap, admission, authorization, cpm_compat_v1 contract, complete
     requested coverage and exact interpretation succeed for the selected
@@ -17038,7 +19083,8 @@ def prod_probe_semantic_provider(identity):
         return None, health
 
     row = prod_resolve(
-        identity
+        identity,
+        **prod_instance_kw(instance_context)
     )
     literals = sorted(
         set(
@@ -17151,10 +19197,25 @@ def prod_resolve_from_rows(
         )
     ]
 
+    requested_name = identity.get(
+        "animset_name"
+    )
+
+    # M-06 W1: a single surviving same-model instance is accepted only if it
+    # is the named selection; a deleted selection never silently retargets.
     if len(
         durable
     ) == 1:
-        return durable[0]
+        if (
+            requested_name is None
+            or durable[0].get("animset_name") == requested_name
+        ):
+            return durable[0]
+
+        raise RuntimeError(
+            "The selected model instance was not found; another instance of the same model remains. "
+            "Refresh Model List and reselect the intended instance."
+        )
 
     if not durable:
         raise RuntimeError(
@@ -17162,9 +19223,6 @@ def prod_resolve_from_rows(
             "found 0 model-path/checksum matches."
         )
 
-    requested_name = identity.get(
-        "animset_name"
-    )
     named = [
         row
         for row in durable
@@ -17202,7 +19260,16 @@ def prod_resolve_from_rows(
 
 def prod_resolve(
     identity,
+    instance_context=None,
 ):
+    if instance_context is not None:
+        return prod_resolve_instance(
+            prod_instance_token(
+                instance_context
+            ),
+            identity,
+        )
+
     shot = sfmApp.GetShotAtCurrentTime()
 
     if shot is None:
@@ -17670,7 +19737,82 @@ def prod_scope_pure_assert(scope):
     return True
 
 
-def prod_context_token(identity):
+# ---------------------------------------------------------------------------
+# M-06 W1: selected-instance identity (Astra M-06/M-05 Integration Correction
+# Design, 2026-10-29). Three identities are kept apart:
+#   - model path, checksum and bone layout: portable preset compatibility;
+#   - document, shot, animation set and game model: the selected mutation
+#     target, valid only in the current live document;
+#   - the operation context: authority for one operation and its verification.
+# Animation-set names are display metadata; they never establish identity.
+# ---------------------------------------------------------------------------
+
+PROD_INSTANCE_TOKEN_KIND = u"prod-selected-instance-v1"
+PROD_INSTANCE_SESSION = binascii.hexlify(os.urandom(8)).decode("ascii")
+PROD_INSTANCE_RESELECT_COPY = (
+    u"The selected character instance could not be verified. Refresh Model List and reselect the model."
+)
+
+
+def prod_strict_identity(obj, what):
+    """(type, handle, unique ID) of a live element, read through the native
+    primitives: GetTypeString(), GetHandle(), GetId() validated with
+    vs.tier1.IsUniqueIdValid(), and the data model's own handle lookup
+    (IDataModel.GetElement / GetElementId) agreeing with that unique ID.
+    Unlike dme_id(), a missing element, an unreadable value, an invalid or
+    disagreeing ID, or a Python class/name fallback never yields an identity.
+    SWIG pointer equality is not used, and the ID's text must be a content
+    rendering: the element's and the data model's wrappers render alike and
+    no pointer-style representation is accepted."""
+    if obj is None:
+        raise RuntimeError(
+            "%s is missing." % what
+        )
+
+    try:
+        kind = u(obj.GetTypeString())
+        native_handle = obj.GetHandle()
+        unique_id = obj.GetId()
+        if isinstance(native_handle, bool):
+            raise ValueError("boolean handle")
+        native_handle = int(native_handle)
+        valid = vs.tier1.IsUniqueIdValid(unique_id)
+        registered = vs.g_pDataModel.GetElementId(native_handle)
+        same_registered = vs.tier1.IsUniqueIdEqual(unique_id, registered)
+        live = vs.g_pDataModel.GetElement(native_handle)
+        same_live = live is not None and vs.tier1.IsUniqueIdEqual(unique_id, live.GetId())
+        id_text = u(str(unique_id))
+        registered_text = u(str(registered))
+    except Exception:
+        raise RuntimeError(
+            "%s identity is unreadable." % what
+        )
+
+    if (
+        not kind
+        or valid is not True
+        or same_registered is not True
+        or same_live is not True
+        or not id_text
+        or id_text != registered_text
+        or id_text.startswith(u"<")
+        or u"swig" in id_text.lower()
+        or u" at 0x" in id_text.lower()
+    ):
+        raise RuntimeError(
+            "%s identity is unreadable or not registered with the data model." % what
+        )
+
+    return (kind, native_handle, id_text)
+
+
+def prod_instance_document():
+    """The current document and shot, read strictly: (identities, shot)."""
+    if not sfmApp.HasDocument():
+        raise RuntimeError(
+            "No SFM document is open."
+        )
+
     shot = sfmApp.GetShotAtCurrentTime()
 
     if shot is None:
@@ -17678,113 +19820,625 @@ def prod_context_token(identity):
             "No current shot."
         )
 
-    row = prod_resolve(
-        identity
-    )
-
     try:
-        file_id = int(
-            shot.GetFileId()
-        )
+        file_id = shot.GetFileId()
+        if isinstance(file_id, bool):
+            raise ValueError("boolean file id")
+        file_id = int(file_id)
     except Exception:
-        file_id = u(
-            shot.GetFileId()
+        raise RuntimeError(
+            "The current shot's document identity is unreadable."
         )
 
     return {
+        "document_key": prod_strict_identity(
+            sfmApp.GetDocumentRoot(),
+            "The SFM document",
+        ),
         "document_file_id": file_id,
+        "shot_key": prod_strict_identity(
+            shot,
+            "The current shot",
+        ),
+    }, shot
+
+
+def prod_instance_rows(shot):
+    """Every model-backed animation-set membership of the shot, each with
+    strict animation-set and game-model identities. An unreadable identity
+    refuses: it could be the selected instance."""
+    rows = []
+
+    for animset in list(shot.animationSets):
+        gm = get_game_model(animset)
+
+        if gm is None:
+            continue
+
+        rows.append({
+            "animset": animset,
+            "gm": gm,
+            "animset_key": prod_strict_identity(
+                animset,
+                "An animation set",
+            ),
+            "gm_key": prod_strict_identity(
+                gm,
+                "A game model",
+            ),
+        })
+
+    return rows
+
+
+def prod_bone_layout_sha256(gm):
+    """Digest of the game model's bone layout (index and name of every bone
+    transform), read strictly."""
+    state, bones = prod_flex_strict_list(
+        gm,
+        "bones",
+    )
+
+    if state != u"present":
+        raise RuntimeError(
+            "The selected model's bone layout is unreadable."
+        )
+
+    layout = []
+
+    for bone in bones:
+        bone_name = name(bone)
+
+        if bone_name is None:
+            raise RuntimeError(
+                "The selected model's bone layout is unreadable."
+            )
+
+        match = PROD_BS_BONE_RE.match(u(bone_name))
+        layout.append(
+            [int(match.group(1)), u(match.group(2))]
+            if match
+            else [None, u(bone_name)]
+        )
+
+    if not layout:
+        raise RuntimeError(
+            "The selected model has no readable bones."
+        )
+
+    return prod_json_digest(
+        layout
+    )
+
+
+def prod_instance_model(gm):
+    model = model_asset(gm)
+    check = checksum(gm)
+
+    if model is None or check is None:
+        raise RuntimeError(
+            "The selected model's path or checksum is unreadable."
+        )
+
+    return model, check
+
+
+def prod_selection_token(document, row):
+    """Runtime selection token captured from the actual model-list row."""
+    model, check = prod_instance_model(
+        row["gm"]
+    )
+
+    return {
+        "kind": PROD_INSTANCE_TOKEN_KIND,
+        "session": PROD_INSTANCE_SESSION,
+        "document_key": document["document_key"],
+        "document_file_id": document["document_file_id"],
+        "shot_key": document["shot_key"],
+        "animset_key": row["animset_key"],
+        "gm_key": row["gm_key"],
+        "model": model,
+        "checksum": check,
+        "bone_layout_sha256": prod_bone_layout_sha256(
+            row["gm"]
+        ),
+    }
+
+
+def prod_instance_token(context):
+    """The selection token carried by a selection token or by a pinned
+    operation context; None when there is none (legacy, context-free)."""
+    if not isinstance(context, dict):
+        return None
+
+    if context.get("kind") == PROD_INSTANCE_TOKEN_KIND:
+        return context
+
+    token = context.get("instance")
+
+    if isinstance(token, dict) and token.get("kind") == PROD_INSTANCE_TOKEN_KIND:
+        return token
+
+    return None
+
+
+def prod_instance_kw(context):
+    """Keyword arguments carrying an explicit instance context; empty when
+    there is none, so context-free historical calls are unchanged."""
+    token = prod_instance_token(context)
+
+    if token is None:
+        return {}
+
+    return {"instance_context": token}
+
+
+def prod_resolve_instance(token, identity=None):
+    """Freshly resolve exactly the selected instance: the same document and
+    shot, exactly one current animation-set membership with the selected
+    identity, the same game-model relationship, and a compatible model path,
+    checksum and bone layout. Never falls back to another instance."""
+    if prod_instance_token(token) is not token:
+        raise RuntimeError(
+            PROD_INSTANCE_RESELECT_COPY
+        )
+
+    if token.get("session") != PROD_INSTANCE_SESSION:
+        raise RuntimeError(
+            "The selection belongs to an earlier session. Refresh Model List and reselect the model."
+        )
+
+    document, shot = prod_instance_document()
+
+    for key in ("document_key", "document_file_id", "shot_key"):
+        if document[key] != token.get(key):
+            raise RuntimeError(
+                "The active document or shot changed. Reselect the model before continuing."
+            )
+
+    matches = [
+        row
+        for row in prod_instance_rows(shot)
+        if row["animset_key"] == token.get("animset_key")
+    ]
+
+    if len(matches) != 1:
+        raise RuntimeError(
+            "The selected character instance is no longer present in the current shot "
+            "(found %d). Refresh Model List and reselect the model." % len(matches)
+        )
+
+    row = matches[0]
+
+    if row["gm_key"] != token.get("gm_key"):
+        raise RuntimeError(
+            "The selected animation set no longer uses the selected game model. "
+            "Refresh Model List and reselect the model."
+        )
+
+    model, check = prod_instance_model(
+        row["gm"]
+    )
+
+    if (
+        u(model).lower() != u(token.get("model")).lower()
+        or int(check) != int(token.get("checksum"))
+    ):
+        raise RuntimeError(
+            "The selected instance's model path or checksum changed. Reselect the model."
+        )
+
+    if identity is not None and (
+        u(identity.get("model")).lower() != u(model).lower()
+        or int(identity.get("checksum")) != int(check)
+    ):
+        raise RuntimeError(
+            "The selected instance is not compatible with the selected model identity."
+        )
+
+    if prod_bone_layout_sha256(row["gm"]) != token.get("bone_layout_sha256"):
+        raise RuntimeError(
+            "The selected instance's bone layout changed. Reselect the model."
+        )
+
+    animset_name = name(row["animset"])
+
+    return {
+        "shot": shot,
+        "animset": row["animset"],
+        "gm": row["gm"],
+        "model": model,
+        "checksum": check,
+        "animset_name": animset_name,
+        "name": animset_name,
+        "instance": token,
+    }
+
+
+def prod_selection_rows():
+    """The current shot's model-backed instances with supported flex
+    bindings (production model list). Each row carries the runtime selection
+    token captured from its own animation set; a row whose runtime identity
+    cannot be read strictly is still listed but has no token, so selecting it
+    refuses (no name-based fallback)."""
+    shot = sfmApp.GetShotAtCurrentTime()
+
+    if shot is None:
+        raise RuntimeError(
+            "No current shot."
+        )
+
+    try:
+        document, _ = prod_instance_document()
+    except Exception:
+        document = None
+
+    result = []
+
+    for animset in list(shot.animationSets):
+        gm = get_game_model(animset)
+
+        if gm is None:
+            continue
+
+        model = model_asset(gm)
+        check = checksum(gm)
+
+        if model is None or check is None:
+            continue
+
+        bindings = p01_all_supported_flex_bindings(animset)
+
+        if not bindings:
+            continue
+
+        token = None
+
+        if document is not None:
+            try:
+                token = prod_selection_token(
+                    document,
+                    {
+                        "animset": animset,
+                        "gm": gm,
+                        "animset_key": prod_strict_identity(
+                            animset,
+                            "An animation set",
+                        ),
+                        "gm_key": prod_strict_identity(
+                            gm,
+                            "A game model",
+                        ),
+                    },
+                )
+            except Exception:
+                token = None
+
+        result.append({
+            "model": model,
+            "checksum": check,
+            "animset_name": name(animset),
+            "binding_count": len(bindings),
+            "selection_token": token,
+        })
+
+    return sorted(
+        result,
+        key=lambda item: (
+            (item.get("animset_name") or u"").lower(),
+            (item.get("model") or u"").lower(),
+            item.get("checksum") or 0,
+            u(item["selection_token"]["animset_key"][2]) if item.get("selection_token") else u"",
+        ),
+    )
+
+
+def prod_context_token(identity, selection_token=None):
+    """Pin the selected instance into a new operation context. Requires the
+    runtime selection token; an instance that cannot be freshly resolved
+    refuses before the operation starts."""
+    if prod_instance_token(selection_token) is None:
+        raise RuntimeError(
+            PROD_INSTANCE_RESELECT_COPY
+        )
+
+    row = prod_resolve_instance(
+        selection_token,
+        identity,
+    )
+
+    return {
+        "document_file_id": selection_token["document_file_id"],
         "shot_id": dme_id(
-            shot
+            row["shot"]
         ),
         "animset_id": dme_id(
-            row[
-                "animset"
-            ]
+            row["animset"]
         ),
         "model_instance_id": dme_id(
-            row[
-                "gm"
-            ]
+            row["gm"]
         ),
         "library_identity": dict(
             identity
+        ),
+        "instance": dict(
+            selection_token
         ),
     }
 
 
 def prod_context_token_matches(token):
+    """True only if the pinned instance freshly resolves to exactly the same
+    document, shot, animation set and game model. A token without a pinned
+    instance never matches."""
     if not isinstance(
         token,
         dict,
     ):
         return False
 
+    instance = prod_instance_token(token)
     identity = token.get(
         "library_identity"
     )
 
-    if not isinstance(
+    if instance is None or not isinstance(
         identity,
         dict,
     ):
         return False
 
-    shot = sfmApp.GetShotAtCurrentTime()
-
-    if shot is None:
-        return False
-
     try:
-        current_file_id = int(
-            shot.GetFileId()
-        )
-    except Exception:
-        try:
-            current_file_id = u(
-                shot.GetFileId()
-            )
-        except Exception:
-            return False
-
-    if (
-        current_file_id
-        != token.get(
-            "document_file_id"
-        )
-        or dme_id(
-            shot
-        )
-        != token.get(
-            "shot_id"
-        )
-    ):
-        return False
-
-    try:
-        row = prod_resolve(
-            identity
+        row = prod_resolve_instance(
+            instance,
+            identity,
         )
     except Exception:
         return False
 
     return (
         dme_id(
-            row[
-                "animset"
-            ]
+            row["shot"]
+        )
+        == token.get(
+            "shot_id"
+        )
+        and dme_id(
+            row["animset"]
         )
         == token.get(
             "animset_id"
         )
         and dme_id(
-            row[
-                "gm"
-            ]
+            row["gm"]
         )
         == token.get(
             "model_instance_id"
         )
     )
+
+
+PROD_INSTANCE_CHANNEL_ATTRS = (
+    "channel",
+    "leftvaluechannel",
+    "rightvaluechannel",
+    "positionChannel",
+    "orientationChannel",
+)
+
+
+def prod_instance_strict_text(obj, method, what):
+    """A native type string or name, read strictly: a failure, a null or a
+    non-text value refuses (unlike typ()/name(), never a fallback value)."""
+    if obj is None:
+        raise RuntimeError(
+            "%s is missing." % what
+        )
+
+    try:
+        value = getattr(obj, method)()
+    except Exception:
+        raise RuntimeError(
+            "%s is unreadable." % what
+        )
+
+    try:
+        value = u(value) if isinstance(value, (bytes, type(u""))) else None
+    except Exception:
+        value = None
+
+    if not isinstance(value, type(u"")) or not value:
+        raise RuntimeError(
+            "%s is unreadable." % what
+        )
+
+    return value
+
+
+def prod_instance_strict_members(element, attr_name, what):
+    """The elements of a required array attribute, read strictly: absent,
+    unreadable or null entries refuse (unlike arr(), never reported empty)."""
+    state, items = prod_flex_strict_list(
+        element,
+        attr_name,
+    )
+
+    if state != u"present":
+        raise RuntimeError(
+            "%s is %s." % (what, u"absent" if state == u"absent" else u"unreadable")
+        )
+
+    for item in items:
+        if item is None:
+            raise RuntimeError(
+                "%s holds a null element." % what
+            )
+
+    return items
+
+
+def prod_instance_channels_clip(animset, shot):
+    """The selected animation set's own channels clip, proven from strict
+    evidence only. get_channels_clip() finds the first clip with the
+    animation-set name, which two same-named instances would share; here the
+    clip must be the unique same-named DmeChannelsClip under
+    channelTrackGroup/animSetEditorChannels holding the set's own control
+    channels.
+
+    Ownership evidence: the set's controls and their channel references, and
+    every child clip's type and name (relevance) and, for every relevant clip,
+    its channels membership. Verified absence of an optional channel
+    attribute (and an explicit null reference) is accepted; an unreadable or
+    null element, unreadable identity or membership, or anything but exactly
+    one owner refuses. A clip is unrelated only when its type or name is
+    verifiably different; an unreadable clip is never treated as unrelated.
+    r26_clip_channels() and r26_animset_controls() stay permissive and are not
+    used here."""
+    try:
+        group = shot.FindTrackGroup("channelTrackGroup")
+        track = group.FindTrack("animSetEditorChannels") if group is not None else None
+    except Exception:
+        raise RuntimeError(
+            "The selected instance's channels track is unreadable."
+        )
+
+    if group is None:
+        raise RuntimeError(
+            "The selected instance's channel track group is unavailable."
+        )
+
+    if track is None:
+        raise RuntimeError(
+            "The selected instance's animation-set channels track is unavailable."
+        )
+
+    children = prod_instance_strict_members(
+        track,
+        "children",
+        "The selected instance's channels clips",
+    )
+    referenced = set()
+
+    for control in prod_instance_strict_members(
+        animset,
+        "controls",
+        "The selected instance's controls",
+    ):
+        for attr_name in PROD_INSTANCE_CHANNEL_ATTRS:
+            state, channel = prod_flex_strict_read(
+                control,
+                attr_name,
+            )
+
+            if state == u"absent" or (state == u"present" and channel is None):
+                continue
+
+            if state != u"present":
+                raise RuntimeError(
+                    "A selected-instance control channel reference is unreadable."
+                )
+
+            referenced.add(
+                prod_strict_identity(channel, "A selected-instance control channel")
+            )
+
+    if not referenced:
+        raise RuntimeError(
+            "The selected instance has no readable control channels."
+        )
+
+    target_name = prod_instance_strict_text(
+        animset,
+        "GetName",
+        "The selected animation set's name",
+    )
+    owners = []
+
+    for clip in children:
+        kind = prod_instance_strict_text(
+            clip,
+            "GetTypeString",
+            "A channels-clip type",
+        )
+
+        if kind != u"DmeChannelsClip":
+            continue
+
+        if prod_instance_strict_text(
+            clip,
+            "GetName",
+            "A channels-clip name",
+        ) != target_name:
+            continue
+
+        members = set(
+            prod_strict_identity(channel, "A channels-clip channel")
+            for channel in prod_instance_strict_members(
+                clip,
+                "channels",
+                "A same-named channels clip's channel membership",
+            )
+        )
+
+        if referenced & members:
+            owners.append(clip)
+
+    if len(owners) != 1:
+        raise RuntimeError(
+            "The selected instance's channels clip could not be identified uniquely (found %d)."
+            % len(owners)
+        )
+
+    return owners[0]
+
+
+def prod_instance_pair_check(context, accepted=None, snapshot=None):
+    """With a pinned instance: every flex binding's control and the bone-scale
+    snapshot must belong to that same freshly resolved animation set. Without
+    one (context-free historical calls) nothing is asserted here."""
+    token = prod_instance_token(context)
+
+    if token is None:
+        return True
+
+    row = prod_resolve_instance(token)
+    target = prod_strict_identity(
+        row["animset"],
+        "The selected animation set",
+    )
+
+    if accepted is not None:
+        try:
+            controls = list(row["animset"].controls)
+        except Exception:
+            raise RuntimeError(
+                "The selected instance's controls are unreadable."
+            )
+
+        members = set(
+            prod_strict_identity(control, "A selected-instance control")
+            for control in controls
+        )
+
+        for literal in sorted(accepted):
+            control = (accepted[literal] or {}).get("control")
+
+            if prod_strict_identity(control, "A flex binding control") not in members:
+                raise RuntimeError(
+                    "Flex binding %r does not belong to the selected character instance." % literal
+                )
+
+    if snapshot is not None:
+        if (
+            snapshot.get("instance_key") != token["animset_key"]
+            or prod_strict_identity(snapshot.get("animset"), "The bone-scale snapshot animation set")
+            != target
+        ):
+            raise RuntimeError(
+                "The bone-scale snapshot does not belong to the selected character instance."
+            )
+
+    return True
 
 
 def prod_validate_context_token(token):
@@ -18079,6 +20733,7 @@ def prod_live_bindings_for_cached_scope(
     scope,
     kind,
     authority_context=None,
+    instance_context=None,
 ):
     """Fresh live FLEX bindings using pure cached semantic membership. With an
     Operation Authority Context, the check is pinned to that operation's
@@ -18110,7 +20765,8 @@ def prod_live_bindings_for_cached_scope(
         )
 
     row = prod_resolve(
-        identity
+        identity,
+        **prod_instance_kw(instance_context)
     )
     bindings = p01_all_supported_flex_bindings(
         row[
@@ -18600,9 +21256,11 @@ def prod_ensure_character(identity, authority_context=None):
 def prod_scope(
     identity,
     provider=None,
+    instance_context=None,
 ):
     row = prod_resolve(
-        identity
+        identity,
+        **prod_instance_kw(instance_context)
     )
     if provider is None:
         provider = prod_cpm_open_adapter()
@@ -18852,10 +21510,12 @@ def prod_set_override(
     scope=None,
     phase_callback=None,
     authority_context=None,
+    instance_context=None,
 ):
     if scope is None:
         scope = prod_scope(
-            identity
+            identity,
+            **prod_instance_kw(instance_context)
         )
 
     # CPM Step 3: the durable Review edit consumes a fresh operation
@@ -18995,10 +21655,12 @@ def prod_clear_override(
     scope=None,
     phase_callback=None,
     authority_context=None,
+    instance_context=None,
 ):
     if scope is None:
         scope = prod_scope(
-            identity
+            identity,
+            **prod_instance_kw(instance_context)
         )
 
     # CPM Step 3: the durable Review edit consumes a fresh operation
@@ -20792,7 +23454,33 @@ def prod_bs_trace_scaled_bone(model_row, bone_row):
         "generic_lerp_topology": topology_match,
     }
 
-def prod_bs_find_model_row(identity):
+def prod_bs_find_model_row(identity, instance_context=None):
+    """The model row for bone-scale acquisition. With an explicit selected
+    instance context: exactly that instance, then model compatibility.
+    Without one (context-free historical calls): unique model/checksum only,
+    so several same-model instances refuse."""
+    token = prod_instance_token(instance_context)
+
+    if instance_context is not None and token is None:
+        raise RuntimeError(
+            PROD_INSTANCE_RESELECT_COPY
+        )
+
+    if token is not None:
+        row = prod_resolve_instance(
+            token,
+            identity,
+        )
+        return {
+            "shot": row["shot"],
+            "animset": row["animset"],
+            "gm": row["gm"],
+            "name": row["name"],
+            "model": row["model"],
+            "checksum": row["checksum"],
+            "instance": token,
+        }
+
     matches = []
 
     for row in p03_model_animsets():
@@ -20830,8 +23518,8 @@ def prod_bs_find_bone_row(model_row, identity):
 
     return matches[0]
 
-def prod_bs_resolve_binding(identity):
-    model_row = prod_bs_find_model_row(identity)
+def prod_bs_resolve_binding(identity, instance_context=None):
+    model_row = prod_bs_find_model_row(identity, **prod_instance_kw(instance_context))
     bone_row = prod_bs_find_bone_row(
         model_row,
         identity,
@@ -21532,9 +24220,10 @@ def prod_bs_clean_candidate(model_row, bone_row):
         ],
     }
 
-def prod_bs_resolve_clean_fixture(identity):
+def prod_bs_resolve_clean_fixture(identity, instance_context=None):
     model_row = prod_bs_find_model_row(
-        identity
+        identity,
+        **prod_instance_kw(instance_context)
     )
     bone_row = prod_bs_find_bone_row(
         model_row,
@@ -22544,9 +25233,10 @@ def prod_bs_bone_record_index(record):
 
     return result
 
-def prod_bs_current_bone_index(identity):
+def prod_bs_current_bone_index(identity, instance_context=None):
     model_row = prod_bs_find_model_row(
-        identity
+        identity,
+        **prod_instance_kw(instance_context)
     )
     result = {}
 
@@ -22820,12 +25510,16 @@ def prod_bs_build_mixed_plan(identity, record):
 PROD_Q1_INDEXED_CAPTURE_PARITY = False
 
 
-def prod_bs_index_snapshot(identity):
+def prod_bs_index_snapshot(identity, instance_context=None):
 
-    model_row = prod_bs_find_model_row(identity)
+    model_row = prod_bs_find_model_row(identity, **prod_instance_kw(instance_context))
     animset = model_row["animset"]
     shot = model_row["shot"]
-    clip = get_channels_clip(animset, shot)
+    clip = (
+        prod_instance_channels_clip(animset, shot)
+        if model_row.get("instance") is not None
+        else get_channels_clip(animset, shot)
+    )
 
     all_controls = prod_bs_animset_controls(animset)
     animset_controls = r26_animset_controls(animset)
@@ -23157,6 +25851,11 @@ def prod_bs_index_snapshot(identity):
         "channel_sources_by_name": channel_sources_by_name,
         "operators_by_name": operators_by_name,
         "bone_index": bone_index_map,
+        "instance_key": (
+            model_row["instance"]["animset_key"]
+            if model_row.get("instance") is not None
+            else None
+        ),
         "counts": {
             "animset_controls": len(
                 animset_controls
@@ -24615,6 +27314,7 @@ def prod_bs_capture_trace_diagnostic(
 
 def prod_bs_index_capture_map(
     identity,
+    instance_context=None,
 ):
     """
     One fresh indexed native acquisition projected immediately to pure data.
@@ -24626,7 +27326,12 @@ def prod_bs_index_capture_map(
 
     try:
         snapshot = prod_bs_index_snapshot(
-            identity
+            identity,
+            **prod_instance_kw(instance_context)
+        )
+        prod_instance_pair_check(
+            instance_context,
+            snapshot=snapshot,
         )
         prod_resource_snapshot(
             u"Q2_INDEX_ACQUIRED"
@@ -24859,6 +27564,7 @@ def prod_bs_index_capture_map(
 def prod_q1_compare_body_capture(
     identity,
     indexed_capture,
+    instance_context=None,
 ):
     """
     Q1-only read-only oracle comparison.
@@ -24868,7 +27574,8 @@ def prod_q1_compare_body_capture(
     fallback.
     """
     old_bone_scales, old_existing_scaled = prod_capture_bone_scale_map(
-        identity
+        identity,
+        **prod_instance_kw(instance_context)
     )
 
     new_bone_scales = indexed_capture[
@@ -24940,12 +27647,29 @@ def prod_capture_body_snapshot(
             operation_context
         )
 
-    values, _ = p03_capture_values(
+    # M-06: production Body capture admits the static-play class under the
+    # explicit Body policy (fresh writer evidence); nothing is written.
+    body_bindings = prod_flex_body_policy_bindings(
         accepted
     )
+    prod_instance_pair_check(
+        operation_context,
+        accepted=body_bindings,
+    )
+
+    try:
+        values, _ = p03_capture_values(
+            body_bindings
+        )
+    except RuntimeError as exc:
+        raise prod_flex_capture_refusal(
+            body_bindings,
+            exc,
+        )
 
     indexed = prod_bs_index_capture_map(
-        identity
+        identity,
+        **prod_instance_kw(operation_context)
     )
     prod_resource_snapshot(
         u"Q2_BODY_CAPTURE_PURE_ONLY"
@@ -24960,6 +27684,7 @@ def prod_capture_body_snapshot(
         prod_q1_compare_body_capture(
             identity,
             indexed,
+            **prod_instance_kw(operation_context)
         )
 
         if operation_context is not None:
@@ -24989,9 +27714,9 @@ def prod_capture_body_snapshot(
     return result
 
 
-def prod_capture_bone_scale_map(identity):
+def prod_capture_bone_scale_map(identity, instance_context=None):
 
-    model_row = prod_bs_find_model_row(identity)
+    model_row = prod_bs_find_model_row(identity, **prod_instance_kw(instance_context))
 
     bone_map, existing_scaled = prod_bs_full_bone_scale_map(model_row)
 
@@ -25065,7 +27790,8 @@ def prod_save(
 
     if scope is None:
         scope = prod_scope(
-            identity
+            identity,
+            **prod_instance_kw(operation_context)
         )
 
     # CPM Step 3: post-prompt authorization; everything later consumes it.
@@ -25081,6 +27807,7 @@ def prod_save(
         scope,
         kind,
         authority_context=authority_context,
+        **prod_instance_kw(operation_context)
     )
     accepted = live[
         "accepted"
@@ -25386,7 +28113,8 @@ def prod_update_preset(
 
     if scope is None:
         scope = prod_scope(
-            identity
+            identity,
+            **prod_instance_kw(operation_context)
         )
 
     # CPM Step 3: post-prompt authorization before durable replacement.
@@ -25402,6 +28130,7 @@ def prod_update_preset(
         scope,
         kind,
         authority_context=authority_context,
+        **prod_instance_kw(operation_context)
     )
     accepted = live[
         "accepted"
@@ -25785,6 +28514,7 @@ def prod_verify_apply_abort_baseline(
     built,
     scale_plan,
     authority_context=None,
+    instance_context=None,
 ):
     """Freshly verify only the state owned by the failed Apply transaction,
     against the operation's pinned authorized membership (CPM Step 3)."""
@@ -25793,12 +28523,27 @@ def prod_verify_apply_abort_baseline(
         scope,
         kind,
         authority_context=authority_context,
+        **prod_instance_kw(instance_context)
+    )
+    prod_instance_pair_check(
+        instance_context,
+        accepted=live["accepted"],
     )
 
+    accepted = live[
+        "accepted"
+    ]
+
+    if kind == P03_KIND_BODY:
+        # M-06: fresh Body policy evidence, so a static-play baseline is
+        # verified field by field (source and key independently).
+        accepted = prod_flex_body_policy_bindings(
+            accepted,
+            verify=True,
+        )
+
     if not p03_verify_baselines(
-        live[
-            "accepted"
-        ],
+        accepted,
         built[
             "baselines"
         ],
@@ -25809,7 +28554,12 @@ def prod_verify_apply_abort_baseline(
         return True
 
     post_snapshot = prod_bs_index_snapshot(
-        identity
+        identity,
+        **prod_instance_kw(instance_context)
+    )
+    prod_instance_pair_check(
+        instance_context,
+        snapshot=post_snapshot,
     )
 
     for item in scale_plan[
@@ -25898,6 +28648,7 @@ def prod_abort_apply_and_verify(
     scale_plan,
     original_error,
     authority_context=None,
+    instance_context=None,
 ):
     abort_error = None
     restored = False
@@ -25920,6 +28671,7 @@ def prod_abort_apply_and_verify(
                 built,
                 scale_plan,
                 authority_context=authority_context,
+                **prod_instance_kw(instance_context)
             )
         )
 
@@ -26020,7 +28772,8 @@ def prod_apply(
 
     if scope is None:
         scope = prod_scope(
-            identity
+            identity,
+            **prod_instance_kw(operation_context)
         )
 
     # CPM Step 3: authorize once, before any mutation; postcommit and abort
@@ -26036,10 +28789,23 @@ def prod_apply(
         scope,
         kind,
         authority_context=authority_context,
+        **prod_instance_kw(operation_context)
     )
-    accepted = live[
+    prod_instance_pair_check(
+        operation_context,
+        accepted=live["accepted"],
+    )
+    raw_accepted = live[
         "accepted"
     ]
+    accepted = raw_accepted
+
+    if kind == P03_KIND_BODY:
+        # M-06: production Body Apply admits the static-play class under the
+        # explicit Body policy; Expression keeps the historical rules.
+        accepted = prod_flex_body_policy_bindings(
+            raw_accepted
+        )
 
     flex = prod_flex_record(record)
     expected = set(
@@ -26069,6 +28835,24 @@ def prod_apply(
         accepted,
         flex,
     )
+    flex_expectations = (
+        p03_flex_expectations(
+            built
+        )
+        if kind == P03_KIND_BODY
+        else None
+    )
+    static_play_sides = len([
+        item
+        for item in (
+            flex_expectations
+            or []
+        )
+        if item[
+            "origin"
+        ]
+        == PROD_FLEX_STATIC_PLAY
+    ])
 
     scale_plan = {
         "existing": [],
@@ -26079,7 +28863,12 @@ def prod_apply(
 
     if kind == P03_KIND_BODY:
         pre_snapshot = prod_bs_index_snapshot(
-            identity
+            identity,
+            **prod_instance_kw(operation_context)
+        )
+        prod_instance_pair_check(
+            operation_context,
+            snapshot=pre_snapshot,
         )
 
         scale_plan = prod_bs_index_build_plan(
@@ -26140,6 +28929,27 @@ def prod_apply(
     )
 
     if total == 0:
+        if static_play_sides:
+            # M-06: before a verified no-op, the admitted static-play state and
+            # the operation context must still hold (nothing is written).
+            if operation_context is not None:
+                prod_validate_context_token(
+                    operation_context
+                )
+
+            if not p03_verify_plan_results(
+                prod_flex_body_policy_bindings(
+                    raw_accepted,
+                    verify=bool(
+                        static_play_sides
+                    ),
+                ),
+                flex_expectations,
+            ):
+                raise RuntimeError(
+                    "The Body flex state changed before the no-op could be confirmed."
+                )
+
         if (
             undo_state(
                 "PROD_APPLY_UNDO_AFTER_NOOP"
@@ -26227,10 +29037,25 @@ def prod_apply(
                     ],
                 )
 
-        if not p03_verify_saved_values(
-            accepted,
-            flex,
-        ):
+        if kind == P03_KIND_BODY:
+            # M-06: changed sides need their authored source and key; unchanged
+            # static-play sides must keep their admitted baseline.
+            flex_precommit_ok = p03_verify_plan_results(
+                prod_flex_body_policy_bindings(
+                    raw_accepted,
+                    verify=bool(
+                        static_play_sides
+                    ),
+                ),
+                flex_expectations,
+            )
+        else:
+            flex_precommit_ok = p03_verify_saved_values(
+                accepted,
+                flex,
+            )
+
+        if not flex_precommit_ok:
             raise RuntimeError(
                 "Preset values failed precommit verification."
             )
@@ -26286,6 +29111,7 @@ def prod_apply(
                 scale_plan,
                 exc,
                 authority_context=authority_context,
+                **prod_instance_kw(operation_context)
             )
             opened = False
 
@@ -26327,6 +29153,7 @@ def prod_apply(
                 sfmApp.GetHeadTimeInSeconds()
             ),
             "play_expectations": play_expectations,
+            "flex_expectations": flex_expectations,
             "changed_sides": int(
                 built[
                     "changed_sides"
@@ -26390,15 +29217,31 @@ def prod_apply(
         scope,
         kind,
         authority_context=authority_context,
+        **prod_instance_kw(operation_context)
+    )
+    prod_instance_pair_check(
+        operation_context,
+        accepted=fresh_live["accepted"],
     )
     fresh_accepted = fresh_live[
         "accepted"
     ]
 
-    flex_ok = p03_verify_saved_values(
-        fresh_accepted,
-        flex,
-    )
+    if kind == P03_KIND_BODY:
+        flex_ok = p03_verify_plan_results(
+            prod_flex_body_policy_bindings(
+                fresh_accepted,
+                verify=bool(
+                    static_play_sides
+                ),
+            ),
+            flex_expectations,
+        )
+    else:
+        flex_ok = p03_verify_saved_values(
+            fresh_accepted,
+            flex,
+        )
 
     if not flex_ok:
         try:
@@ -26426,7 +29269,12 @@ def prod_apply(
 
     if kind == P03_KIND_BODY:
         post_snapshot = prod_bs_index_snapshot(
-            identity
+            identity,
+            **prod_instance_kw(operation_context)
+        )
+        prod_instance_pair_check(
+            operation_context,
+            snapshot=post_snapshot,
         )
 
         scales_ok = prod_bs_index_verify_saved(
@@ -26811,7 +29659,12 @@ def prod_apply_deferred_verify(pending):
 
     if reason is None:
         snapshot = prod_bs_index_snapshot(
-            identity
+            identity,
+            **prod_instance_kw(pending.get("operation_context"))
+        )
+        prod_instance_pair_check(
+            pending.get("operation_context"),
+            snapshot=snapshot,
         )
 
         try:
@@ -26833,16 +29686,44 @@ def prod_apply_deferred_verify(pending):
                     authority_context=pending[
                         "authority_context"
                     ],
+                    **prod_instance_kw(pending.get("operation_context"))
                 )
 
-                if not p03_verify_saved_values(
-                    fresh_live[
-                        "accepted"
-                    ],
-                    pending[
-                        "flex"
-                    ],
-                ):
+                if pending.get(
+                    "flex_expectations"
+                ) is not None:
+                    # M-06: the same detached flex expectations as the
+                    # synchronous path, on fresh Body policy bindings.
+                    flex_ok = p03_verify_plan_results(
+                        prod_flex_body_policy_bindings(
+                            fresh_live[
+                                "accepted"
+                            ],
+                            verify=any(
+                                item[
+                                    "origin"
+                                ]
+                                == PROD_FLEX_STATIC_PLAY
+                                for item in pending[
+                                    "flex_expectations"
+                                ]
+                            ),
+                        ),
+                        pending[
+                            "flex_expectations"
+                        ],
+                    )
+                else:
+                    flex_ok = p03_verify_saved_values(
+                        fresh_live[
+                            "accepted"
+                        ],
+                        pending[
+                            "flex"
+                        ],
+                    )
+
+                if not flex_ok:
                     reason = u"flex"
 
                 fresh_live = None
@@ -26913,10 +29794,12 @@ def prod_body_source(
     identity,
     scope=None,
     authority_context=None,
+    instance_context=None,
 ):
     if scope is None:
         scope = prod_scope(
-            identity
+            identity,
+            **prod_instance_kw(instance_context)
         )
 
     live = prod_live_bindings_for_cached_scope(
@@ -26924,6 +29807,11 @@ def prod_body_source(
         scope,
         P03_KIND_BODY,
         authority_context=authority_context,
+        **prod_instance_kw(instance_context)
+    )
+    prod_instance_pair_check(
+        instance_context,
+        accepted=live["accepted"],
     )
     accepted = live[
         "accepted"
@@ -26961,6 +29849,10 @@ def prod_body_source(
     return {
         "identity": dict(
             identity
+        ),
+        # Pure runtime selection token (tuples and text only); never persisted.
+        "instance": prod_instance_token(
+            instance_context
         ),
         "scope_identity": {
             "authority": dict(
@@ -27001,6 +29893,11 @@ def prod_body_source_live_from_baseline(
         scope,
         P03_KIND_BODY,
         authority_context=authority_context,
+        **prod_instance_kw(baseline.get("instance"))
+    )
+    prod_instance_pair_check(
+        baseline.get("instance"),
+        accepted=live["accepted"],
     )
     accepted = live[
         "accepted"
@@ -27364,6 +30261,7 @@ class ProdWindow(QtGui.QDialog):
 
         self.candidates = []
         self.identity = None
+        self.selection_token = None
         self.scope = None
         self.body_items = []
         self.expr_items = []
@@ -28202,8 +31100,18 @@ class ProdWindow(QtGui.QDialog):
             pin_context
             and self.identity is not None
         ):
+            selection_token = getattr(
+                self,
+                "selection_token",
+                None,
+            )
             context = prod_context_token(
-                self.identity
+                self.identity,
+                **(
+                    {"selection_token": selection_token}
+                    if selection_token is not None
+                    else {}
+                )
             )
 
         self.operation = {
@@ -29303,7 +32211,13 @@ class ProdWindow(QtGui.QDialog):
             ]
 
             if (
-                candidate.get(
+                (
+                    prod_instance_token(candidate.get("selection_token")) is None
+                    or prod_instance_token(row.get("instance")) is None
+                    or candidate["selection_token"]["animset_key"]
+                    == row["instance"]["animset_key"]
+                )
+                and candidate.get(
                     "model"
                 )
                 == row.get(
@@ -29371,7 +32285,14 @@ class ProdWindow(QtGui.QDialog):
             self.operation_revalidate()
 
         row = prod_resolve(
-            self.identity
+            self.identity,
+            **prod_instance_kw(
+                getattr(
+                    self,
+                    "selection_token",
+                    None,
+                )
+            )
         )
         self.refresh_animset_display_metadata(
             row
@@ -29454,6 +32375,7 @@ class ProdWindow(QtGui.QDialog):
             )
 
             self.identity = None
+            self.selection_token = None
             self.scope = None
             self.body_items = []
             self.expr_items = []
@@ -29602,6 +32524,7 @@ class ProdWindow(QtGui.QDialog):
 
         try:
             self.identity = None
+            self.selection_token = None
             self.scope = None
             self.body_items = []
             self.expr_items = []
@@ -29735,18 +32658,31 @@ class ProdWindow(QtGui.QDialog):
             ],
         }
 
+        selection_token = row.get(
+            "selection_token"
+        )
+
         def work():
             # Resolve and build all non-UI state before publishing the new
             # selected identity. A failed transition leaves the prior model
             # selection intact rather than exposing a half-built context.
-            resolved_row = prod_resolve(
-                candidate
+            # M-06 W1: the row is validated through the runtime token captured
+            # from it at Refresh; a stale row refuses (no search by name).
+            if prod_instance_token(selection_token) is None:
+                raise RuntimeError(
+                    PROD_INSTANCE_RESELECT_COPY
+                )
+
+            resolved_row = prod_resolve_instance(
+                selection_token,
+                candidate,
             )
             resolved_candidate = prod_identity_from_row(
                 resolved_row
             )
             self.render(
-                resolved_candidate
+                resolved_candidate,
+                selection_token=selection_token,
             )
 
             if (
@@ -29812,6 +32748,7 @@ class ProdWindow(QtGui.QDialog):
     def render(
         self,
         identity=None,
+        selection_token=None,
     ):
         ident = (
             dict(
@@ -29835,8 +32772,16 @@ class ProdWindow(QtGui.QDialog):
             "MODEL_RENDER_BEFORE_SCOPE"
         )
 
+        if identity is None:
+            selection_token = getattr(
+                self,
+                "selection_token",
+                None,
+            )
+
         provider, provider_health = prod_probe_semantic_provider(
-            ident
+            ident,
+            **prod_instance_kw(selection_token)
         )
         scope = None
 
@@ -29846,6 +32791,7 @@ class ProdWindow(QtGui.QDialog):
             scope = prod_scope(
                 ident,
                 provider,
+                **prod_instance_kw(selection_token)
             )
         provider = None
 
@@ -29884,6 +32830,11 @@ class ProdWindow(QtGui.QDialog):
         )
 
         old_identity = self.identity
+        old_selection_token = getattr(
+            self,
+            "selection_token",
+            None,
+        )
         old_scope = self.scope
         old_body_items = self.body_items
         old_expr_items = self.expr_items
@@ -29894,6 +32845,7 @@ class ProdWindow(QtGui.QDialog):
             self.identity = dict(
                 ident
             )
+            self.selection_token = selection_token
             self.scope = scope
             self.provider_health = dict(
                 provider_health
@@ -29935,6 +32887,7 @@ class ProdWindow(QtGui.QDialog):
 
         except Exception:
             self.identity = old_identity
+            self.selection_token = old_selection_token
             self.scope = old_scope
             self.provider_health = old_provider_health
             self.body_items = old_body_items
@@ -30894,6 +33847,9 @@ class ProdWindow(QtGui.QDialog):
                 old_scope,
                 phase_callback=self.operation_mark_phase,
                 authority_context=authority_context,
+                **prod_instance_kw(
+                    getattr(self, "selection_token", None)
+                )
             )
             authority_context = None
 
@@ -30904,7 +33860,10 @@ class ProdWindow(QtGui.QDialog):
             )
 
             new_scope = prod_scope(
-                ident
+                ident,
+                **prod_instance_kw(
+                    getattr(self, "selection_token", None)
+                )
             )
 
             prod_resource_snapshot(
@@ -31021,6 +33980,9 @@ class ProdWindow(QtGui.QDialog):
                 old_scope,
                 phase_callback=self.operation_mark_phase,
                 authority_context=authority_context,
+                **prod_instance_kw(
+                    getattr(self, "selection_token", None)
+                )
             )
             authority_context = None
 
@@ -31031,7 +33993,10 @@ class ProdWindow(QtGui.QDialog):
             )
 
             new_scope = prod_scope(
-                ident
+                ident,
+                **prod_instance_kw(
+                    getattr(self, "selection_token", None)
+                )
             )
 
             prod_resource_snapshot(
@@ -32315,7 +35280,12 @@ class ProdWindow(QtGui.QDialog):
 
     def fit_candidate_rows(self):
         ident = self.current()
-        source_row = prod_resolve(ident)
+        source_row = prod_resolve(
+            ident,
+            **prod_instance_kw(
+                getattr(self, "selection_token", None)
+            )
+        )
         source_folder = self.fit_model_folder(ident["model"])
         same_folder = []
         nearby = []
@@ -32578,6 +35548,9 @@ class ProdWindow(QtGui.QDialog):
                 ident,
                 self.scope,
                 authority_context=fit_context,
+                **prod_instance_kw(
+                    getattr(self, "selection_token", None)
+                )
             )
 
             self.fit_active = True

@@ -1,0 +1,234 @@
+{
+ "animation_set": "Krystal",
+ "candidates": [
+  {
+   "channel_id": "944ce6365a775b4dbad5749ceccf55e6",
+   "control_id": "cf72b038fe0af04eb66fa30dfb80554f",
+   "destination": "DmeGlobalFlexControllerOperator",
+   "key": 0.467980295419693,
+   "literal": "Breastsize",
+   "proposed_stored": 0.7179802656173706,
+   "stored": 0.467980295419693,
+   "stored_equals_key": true
+  },
+  {
+   "channel_id": "8ac0205021052e4d92f41e16dafdf914",
+   "control_id": "90f0cae6c2bcce4288d27beb33635933",
+   "destination": "DmeGlobalFlexControllerOperator",
+   "key": 0.35467979311943054,
+   "literal": "Muscles",
+   "proposed_stored": 0.6046798229217529,
+   "stored": 0.35467979311943054,
+   "stored_equals_key": true
+  },
+  {
+   "channel_id": "68366ae8015fcb4a8ba89932340c59be",
+   "control_id": "3c9175bd43e725499dfa07ecb49ca409",
+   "destination": "DmeGlobalFlexControllerOperator",
+   "key": 0.4729064106941223,
+   "literal": "slim",
+   "proposed_stored": 0.7229064106941223,
+   "stored": 0.4729064106941223,
+   "stored_equals_key": true
+  },
+  {
+   "channel_id": "2bba7a13bacefa47a1accf4acd779849",
+   "control_id": "7bc5f67cb8e4cc42ae8e2bbc9dc11c7e",
+   "destination": "DmeGlobalFlexControllerOperator",
+   "key": 0.0,
+   "literal": "toraxwide",
+   "proposed_stored": 0.25,
+   "stored": 0.0,
+   "stored_equals_key": true
+  }
+ ],
+ "elements": 49086,
+ "file": "m05_qual_fixture.dmx",
+ "file_identity": {
+  "sha256": "fa9a0a461b12ce2d51e4a05b2ebde6c8c3ad845ca4b4ddc9fdf63fe348b0767a",
+  "size": 4430421,
+  "unchanged_after_read": true
+ },
+ "header": "<!-- dmx encoding binary 5 format sfm_session 20 -->",
+ "rejected_flex": {
+  "A": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "AnalOpen": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "Angry": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "BreastNnipplePerk": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "BreastSmall": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "Breastflatten": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "Bulge2": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "Buttsize": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "CheekRaiser1": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "E": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "EarShape1": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "EarShape2": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "GenitalHide": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "I": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "JawDroop": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "Kiss": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "Legsize": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "LipPresser": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "MOFunnel": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "Muzzle": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "O": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "Paizury": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "Pregnant": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "Shocked": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "Sshapelips": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "U": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "VagClose": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "VagGrip": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "VagPush": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "amused": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "boxybelly": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "bulge": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "eyes_rightleft": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "eyes_updown": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "lipBite": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "lipsin": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "lipsout": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "puckerer": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "thoathbulge1": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "thoathbulge2": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "vaginalopen": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "vaginalopen2": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "voluptuous": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "waist1": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "widehips": [
+   "not exactly one finite key at time zero (0 keys)"
+  ],
+  "worried": [
+   "not exactly one finite key at time zero (0 keys)"
+  ]
+ },
+ "scale_graphs": [
+  {
+   "bone": "bone 55 (bip_head)",
+   "bone_scale": 1.1299999952316284,
+   "control": "bip_head_scale",
+   "control_id": "f4b985fd7910f14cbf2ce14a3a21953a",
+   "input_log": {
+    "layer_refs_resolved": true,
+    "layers": [
+     {
+      "times": [
+       0
+      ],
+      "type": "DmeFloatLogLayer",
+      "values": [
+       0.11299999803304672
+      ]
+     }
+    ],
+    "type": "DmeFloatLog"
+   },
+   "input_mode": 3,
+   "intact": true,
+   "operator": "DmeExpressionOperator",
+   "operator_id": "fe75768a64f3a44dba4270854f40dfac",
+   "output_mode": 3,
+   "to_attribute": "scale"
+  }
+ ],
+ "selected": {
+  "channel_id": "8ac0205021052e4d92f41e16dafdf914",
+  "control_id": "90f0cae6c2bcce4288d27beb33635933",
+  "destination": "DmeGlobalFlexControllerOperator",
+  "key": 0.35467979311943054,
+  "literal": "Muscles",
+  "proposed_stored": 0.6046798229217529,
+  "stored": 0.35467979311943054,
+  "stored_equals_key": true
+ },
+ "shot": "shot10",
+ "stop": []
+}

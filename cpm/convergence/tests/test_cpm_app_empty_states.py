@@ -15,8 +15,9 @@ button):
                                -> the existing error popup, red status and
                                   traceback logging
 Message boxes are recorded at the Qt boundary instead of being shown, so no
-modal can block the run. Cases 4 and 5 stub g09a_candidates in the private
-module (discovery itself is unchanged and not under test there).
+modal can block the run. Cases 4 and 5 stub the production model-list discovery
+function in the private module (M-06 W1: prod_selection_rows; historically
+g09a_candidates); discovery itself is not under test there.
 
 Usage: <SFM python 2.7.5> -E -B test_cpm_app_empty_states.py
 """
@@ -105,8 +106,9 @@ def main():
     check("3 no models: empty-reason logged", u"empty_reason=u'no-models'" in log3 and u"PROD_ACTION_ERROR" not in log3)
 
     # 4. Models found: the existing successful behavior.
-    real_candidates = ns["g09a_candidates"]
-    ns["g09a_candidates"] = lambda: [{"model": u"models/example/character.mdl", "checksum": 1,
+    discovery = "prod_selection_rows" if "prod_selection_rows" in ns else "g09a_candidates"
+    real_candidates = ns[discovery]
+    ns[discovery] = lambda: [{"model": u"models/example/character.mdl", "checksum": 1,
                                       "animset_name": u"character1", "binding_count": 3}]
     s4, log4 = refresh(window)
     check("4 models found: existing status and guidance, model listed, no popup",
@@ -119,7 +121,7 @@ def main():
     # 5. Genuine failures keep the existing error popup, red status and traceback.
     def failing():
         raise RuntimeError("synthetic discovery failure")
-    ns["g09a_candidates"] = failing
+    ns[discovery] = failing
     s5, log5 = refresh(window)
     check("5a discovery failure: the existing error popup",
           len(boxes) == 1 and boxes[0] == REFRESH_ERROR, boxes)
@@ -128,7 +130,7 @@ def main():
     check("5a discovery failure: action error and traceback logged",
           u"PROD_ACTION_ERROR label='Refresh Models'" in log5 and u"synthetic discovery failure" in log5
           and u"Traceback" in log5, log5[-400:])
-    ns["g09a_candidates"] = real_candidates
+    ns[discovery] = real_candidates
 
     def has_document_fails():
         raise RuntimeError("synthetic HasDocument failure")

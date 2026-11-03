@@ -361,3 +361,7 @@ updater_qualification/design/V1_RELEASE_BASELINE_AMENDMENT.md text eol=lf
 # and package README are byte-exact copies SHA-256 pinned in SHA256SUMS.txt and in the W1 evidence
 # manifest; keep exact LF bytes on every checkout and archive export.
 real_sfm_qualification/checkpoint_f01_w1_arm_transfer/** text eol=lf
+
+# M-06 W2 native qualification instruments (2026-11-02): preserve exact accepted bytes
+# (ACCEPTED_W2_SHA256SUMS 2cb3e4f9...); deferred_fixture_scan.json is CRLF.
+real_sfm_qualification/m06_w2_qualification/** -text

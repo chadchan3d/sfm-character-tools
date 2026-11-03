@@ -1,0 +1,70 @@
+{
+ "body": [
+  "AnalOpen",
+  "BreastNnipplePerk",
+  "BreastSmall",
+  "Breastflatten",
+  "Breastsize",
+  "Bulge2",
+  "Buttsize",
+  "GenitalHide",
+  "Legsize",
+  "Muscles",
+  "Paizury",
+  "Pregnant",
+  "VagClose",
+  "VagGrip",
+  "VagPush",
+  "boxybelly",
+  "bulge",
+  "slim",
+  "thoathbulge1",
+  "thoathbulge2",
+  "toraxwide",
+  "vaginalopen",
+  "vaginalopen2",
+  "voluptuous",
+  "waist1",
+  "widehips"
+ ],
+ "cpm": {
+  "path": "<SFM game>\\usermod\\scripts\\ChadChan3D_CPM\\SFM_Character_Preset_Manager.py",
+  "sha256": "fd853661fe72464d8ff867d73750e539a66d3d6266110051dbce922c75c25c3d"
+ },
+ "format": "M06W2-config-v1",
+ "injector": {
+  "target_literal": "Muscles"
+ },
+ "instrument_dir": "<SFM game>\\usermod\\scripts\\sfm\\mainmenu\\M06 Qualification",
+ "instrument_files": {},
+ "nonbody": [
+  "A",
+  "Angry",
+  "JawDroop",
+  "Kiss",
+  "Shocked",
+  "amused",
+  "worried",
+  "Blink1",
+  "EBAllRaiser",
+  "LowerLidRaiser"
+ ],
+ "observation_dir": "<QUAL_DIR>\\observations",
+ "peers": [
+  "krystal20201alt"
+ ],
+ "protected": {
+  "multi_instance_fixture_original": {
+   "path": "<QUAL_DIR>\\fixture\\m06_qual_fixture.dmx",
+   "sha256": "4d7288a721ebbfe2925930beb3776c31db65000bdaa4d04573038ca4ab705b84"
+  },
+  "original_session": {
+   "path": "<protected original session>",
+   "sha256": "<sha256>"
+  }
+ },
+ "shot": "shot12",
+ "target_animset": "krystal20202new",
+ "transform_controls": "all",
+ "watch_path": "<QUAL_DIR>\\observations\\injector_watch.json"
+}
