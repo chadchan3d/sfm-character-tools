@@ -1,0 +1,32 @@
+{
+ "format": "F01-NQ1-config-v1",
+ "description": "F-01 Stage D native checkpoint NQ-1 (left arm). Copy to <Q>\\nq1.json and replace the placeholders.",
+ "paths": {
+  "Q": "<RUN_DIR>",
+  "GAME": "<SFM game>",
+  "LIBRARY": "%USERPROFILE%\\Documents\\SFM Character Preset Manager",
+  "SESSIONS": "<SFM sessions folder>",
+  "SCRIPTS_ROOT": "{GAME}\\usermod\\scripts",
+  "CFG_ROOT": "{GAME}\\usermod\\cfg",
+  "CANDIDATE": "<REPO>\\cpm\\app\\SFM_Character_Preset_Manager.py",
+  "PROFILE": "<REPO>\\cpm\\pose_profiles\\cpm_pose_profiles_v1.json",
+  "SCANNER_DIR": "<REPO>\\real_sfm_qualification\\m06_w2_qualification\\tools",
+  "R2_FIXTURE": "<R2_FIXTURE_DIR>\\F01_R2_DISPOSABLE_<SOURCE_SESSION>.dmx"
+ },
+ "pins": {
+  "candidate_cpm_sha256": "<Stage D candidate SHA-256>",
+  "published_cpm_sha256": "ccbed9d794984643fc6f7d7d9c65ef90e5812eb27f85dc4a86855a17c2d3d8df",
+  "profile_sha256": "87efaad9045e2a562fabb18f6050d426c382654e86c6a2213a812bfdb01363cd",
+  "r2_fixture_sha256": "259ea8a614bc9e43e5bde15afdf38e1a1295dffb50b14cf75692df4221a05a2c"
+ },
+ "housekeeping": ["cfg\\config.cfg", "cfg\\ifm.txt", "cfg\\server_blacklist.txt", "demoheader.tmp", "stats.txt",
+                  "tf2_playerstats.dmx", "voice_ban.dt"],
+ "source_animation_sets": {"shot10 Krystal (Pose A)": "1a2aab02abca8e46a0381eaf7530d23f",
+                           "shot13 Krystal (Pose B)": "21cffbd736fd5e458fc9fcc6db029402"},
+ "destination": {"shot": "shot15", "animation_set_id": "992a01c0e7553546b09480382eade7b5", "head_seconds": 0.2083,
+                 "t_doc_ticks": 2083, "t_chan_ticks": 50208},
+ "pose_names": {"a": "NQ1 Pose A", "b": "NQ1 Pose B"},
+ "expected_status": {"applied_a": "Pose applied: NQ1 Pose A (Left arm).", "noop": "Already matches this pose.",
+                     "applied_b": "Pose applied: NQ1 Pose B (Left arm).",
+                     "not_applied": "The pose couldn't be applied. Nothing was changed."}
+}

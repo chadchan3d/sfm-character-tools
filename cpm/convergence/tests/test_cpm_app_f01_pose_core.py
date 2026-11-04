@@ -526,8 +526,15 @@ def section_time(ns):
     refuses("O5.two_clips_on_path", "time-mapping", variant(lambda r: r[u"path"][u"clips"].append(u"nested")))
     refuses("O5.channel_in_other_clip", "time-mapping",
             variant(lambda r: r[u"channels"][u"Hand_l_o"].update({u"clip": u"peer_channels"})))
-    refuses("O5.reported_differs_by_one_tick", "time-mapping",
-            variant(lambda r: r[u"channels"][u"Hand_l_p"].update({u"reported": 50001})))
+    # NQ-1 KP-1: GetCurrentTime ('reported') changes while the playhead stays still; it is diagnostic, never decides.
+    for label, tweak in ((u"stale_by_91_ticks", lambda r: [c.update({u"reported": 50091})
+                                                            for c in r[u"channels"].values()]),
+                         (u"absent", lambda r: [c.pop(u"reported") for c in r[u"channels"].values()])):
+        try:
+            got_r = variant(tweak)()
+        except Exception as exc:
+            got_r = exc
+        check("O5.reported_clock_is_diagnostic_" + label, isinstance(got_r, dict) and got_r == got, got_r)
     refuses("O5.channels_disagree", "time-mapping",
             variant(lambda r: r[u"channels"][u"Elbow_l_p"].update({u"converted": 50001, u"reported": 50001})))
     refuses("O5.reverse_not_exact", "time-mapping",

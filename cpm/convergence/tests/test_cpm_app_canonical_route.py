@@ -319,9 +319,52 @@ F01_STAGEB_NEW_TOP = set([
     "prod_pose_set_favorite", "prod_pose_set_foreign_favorite", "prod_pose_stem_matches_id",
     "prod_pose_strict_json_file", "prod_pose_trash", "prod_pose_update", "prod_pose_verify_written"
 ])
+# F-01 Pose Library M1 stage C (Addendum R2.1 sections 9.3 and 10): explicit pose refusals at the existing seams,
+# prod_paths "pose", the compact tab padding, and one appended integration block; ProdWindow gains the Pose dispatch.
+F01_STAGEC_CHANGED_TOP = set(["prod_apply", "prod_paths", "prod_preset_dir", "tool_apply_tab_style"])
+F01_STAGEC_NEW_TOP = set([
+    "PROD_POSE_AUTH_SCHEMA", "PROD_POSE_CHECKING_COPY", "PROD_POSE_KIND", "PROD_POSE_REGISTRY_FILENAME",
+    "PROD_POSE_REGISTRY_MODE", "PROD_POSE_REGISTRY_SHA256", "PROD_POSE_SCENE_LABELS", "ProdPoseIntegrationError",
+    "prod_pose_authorize", "prod_pose_context_gate", "prod_pose_deferred_verify", "prod_pose_load_registry",
+    "prod_pose_registry_path", "prod_pose_reread", "prod_pose_selected_library",
+])
+F01_STAGEC_CHANGED_METHODS = set(["selected_or_none", "operation_default_error_copy"])
+F01_STAGEC_NEW_METHODS = set(["apply_pose", "pose_begin_verification", "pose_finish_verification", "pose_guard",
+                              "pose_registry_mode", "save_pose"])
+# F-01 Pose Library M1 stage D (Addendum R2.1 sections 5.4-8; left arm): one appended live block after stage C;
+# ProdWindow gains the Poses page (constructor, tab_changed) and its list methods.
+F01_STAGED_NEW_TOP = set([
+    "PROD_POSE_BONE_NAME_RE", "PROD_POSE_INSERT_ALLOWED_METADATA", "PROD_POSE_LIVE_EVALUATED_OUTPUTS",
+    "PROD_POSE_LIVE_KNOWN_OPERATORS", "PROD_POSE_LIVE_MAX_ARRAY", "PROD_POSE_LIVE_MAX_NODES",
+    "PROD_POSE_LIVE_MAX_TOTAL_KEYS", "PROD_POSE_LIVE_REGIONS", "PROD_POSE_LIVE_SLAVE_ATTRS", "PROD_POSE_QUAL_FAULT",
+    "PROD_POSE_UNDO_REQUIRED", "ProdPoseUnreadable", "prod_pose_apply", "prod_pose_arm_chain",
+    "prod_pose_arm_constraints", "prod_pose_attr", "prod_pose_attribute_names", "prod_pose_binding_identity",
+    "prod_pose_bindings", "prod_pose_capture", "prod_pose_capture_authored", "prod_pose_capture_observed",
+    "prod_pose_capture_skeleton", "prod_pose_channel_authored", "prod_pose_channel_binding",
+    "prod_pose_check_writers", "prod_pose_classify", "prod_pose_compare_descriptor", "prod_pose_components",
+    "prod_pose_current_time", "prod_pose_descendants", "prod_pose_descriptor", "prod_pose_differences",
+    "prod_pose_effective_inputs", "prod_pose_expected_authored", "prod_pose_field", "prod_pose_film_clips",
+    "prod_pose_h", "prod_pose_has", "prod_pose_ident", "prod_pose_key_entries", "prod_pose_key_value",
+    "prod_pose_layer_snapshot", "prod_pose_live_arm", "prod_pose_log", "prod_pose_native_name",
+    "prod_pose_native_value", "prod_pose_num", "prod_pose_operator_relationships", "prod_pose_opt_attr",
+    "prod_pose_oracle", "prod_pose_parent_role", "prod_pose_pending", "prod_pose_plain", "prod_pose_plan_values",
+    "prod_pose_portable_value", "prod_pose_preflight", "prod_pose_qualification_fault", "prod_pose_quat",
+    "prod_pose_region_payload", "prod_pose_region_profile", "prod_pose_region_state", "prod_pose_require_readable",
+    "prod_pose_required", "prod_pose_roundtrip", "prod_pose_same_state", "prod_pose_scale_ok", "prod_pose_seq",
+    "prod_pose_slave_target", "prod_pose_structural_checks", "prod_pose_text", "prod_pose_ticks_of",
+    "prod_pose_time", "prod_pose_time_read", "prod_pose_transform_state", "prod_pose_type",
+    "prod_pose_undo_problems", "prod_pose_undo_state", "prod_pose_unique", "prod_pose_vec3",
+    "prod_pose_verify_applied", "prod_pose_walk", "prod_pose_world", "prod_pose_write", "prod_pose_writer_index",
+    # Motion Editor apply gate and post-commit same-time refresh (FA-3b)
+    "PROD_POSE_APPLY_TIMELINE_MODE", "PROD_POSE_EDITOR_MODE_COPY", "PROD_POSE_EDITOR_CLOCK_COPY", "prod_pose_timeline_mode",
+    "prod_pose_apply_gate", "prod_pose_request_refresh",
+])
+F01_STAGED_CHANGED_METHODS = set(["__init__", "tab_changed", "render", "clear_model_selection", "operation_end"])  # NQ-1: Poses refresh
+F01_STAGED_NEW_METHODS = set(["refresh_pose_view", "selected_pose", "refresh_pose_buttons", "apply_selected_pose"])
 EXPECTED_CHANGED_TOP = (STEP2B_CHANGED_TOP | STEP3_CHANGED_TOP | STEP4_CHANGED_TOP | R14_CHANGED_TOP
                         | R15_CHANGED_TOP | ITEM6_CHANGED_TOP | ITEM7_CHANGED_TOP | UIPASS_CHANGED_TOP
-                        | LOGFIX_CHANGED_TOP | M05_CHANGED_TOP | M06_CHANGED_TOP | M06W1_CHANGED_TOP)
+                        | LOGFIX_CHANGED_TOP | M05_CHANGED_TOP | M06_CHANGED_TOP | M06W1_CHANGED_TOP
+                        | F01_STAGEC_CHANGED_TOP)
 EXPECTED_NEW_TOP = set([
     "PROD_CPM_MAINMENU_RELATIVE_PARTS", "PROD_CPM_ADAPTER_MODULES", "ProdCpmAuthorityBootstrapError",
     "ProdCpmAuthorityNotMigrated", "prod_cpm_mainmenu_dir", "prod_cpm_import_adapter", "prod_cpm_is_main_thread",
@@ -409,7 +452,7 @@ def section_derivation(app):
     check("derivation.changed_top_level_is_bounded", changed == EXPECTED_CHANGED_TOP, sorted(changed))
     check("derivation.added_top_level_is_bounded",
           added == EXPECTED_NEW_TOP | R15_NEW_TOP | ITEM6_NEW_TOP | UIPASS_NEW_TOP | LOGFIX_NEW_TOP | M05_NEW_TOP
-          | M06_NEW_TOP | M06W1_NEW_TOP | F01_STAGEA_NEW_TOP | F01_STAGEB_NEW_TOP,
+          | M06_NEW_TOP | M06W1_NEW_TOP | F01_STAGEA_NEW_TOP | F01_STAGEB_NEW_TOP | F01_STAGEC_NEW_TOP | F01_STAGED_NEW_TOP,
           sorted(added))
     check("derivation.removed_is_exactly_item6_and_item7", removed == ITEM6_REMOVED_TOP | ITEM7_REMOVED_TOP
           | LOGFIX_REMOVED_TOP, sorted(removed ^ (ITEM6_REMOVED_TOP | ITEM7_REMOVED_TOP | LOGFIX_REMOVED_TOP)))
@@ -419,10 +462,12 @@ def section_derivation(app):
     shortcut_owner = [n for n in bm if "g18an_parity_shortcut = QtGui.QShortcut" in baseline.method_text("ProdWindow", n)]
     check("derivation.shortcut_owner_found", len(shortcut_owner) == 1, shortcut_owner)
     expected_methods = (EXPECTED_CHANGED_METHODS | R15_CHANGED_METHODS | set(shortcut_owner) | ITEM7_CHANGED_METHODS
-                        | UIPASS_CHANGED_METHODS | M06W1_CHANGED_METHODS)
+                        | UIPASS_CHANGED_METHODS | M06W1_CHANGED_METHODS | F01_STAGEC_CHANGED_METHODS
+                        | F01_STAGED_CHANGED_METHODS)
     check("derivation.changed_methods_are_bounded", m_changed == expected_methods, sorted(m_changed))
     check("derivation.added_methods_are_bounded",
-          set(am) - set(bm) == EXPECTED_NEW_METHODS | R15_NEW_METHODS | M05_NEW_METHODS,
+          set(am) - set(bm) == EXPECTED_NEW_METHODS | R15_NEW_METHODS | M05_NEW_METHODS | F01_STAGEC_NEW_METHODS
+          | F01_STAGED_NEW_METHODS,
           sorted(set(am) - set(bm)))
     check("derivation.removed_methods_are_exactly_item6", set(bm) - set(am) == ITEM6_REMOVED_METHODS,
           sorted(set(bm) - set(am)))

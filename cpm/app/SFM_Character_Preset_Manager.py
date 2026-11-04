@@ -12702,9 +12702,8 @@ def tool_apply_tab_style(
             background: #333333;
             border: 1px solid #4a4a4a;
             border-bottom: none;
-            padding: 6px 14px;
+            padding: 6px 8px;
             margin-right: 1px;
-            min-width: 96px;
         }
         QTabBar::tab:selected {
             background: #454545;
@@ -18876,6 +18875,11 @@ def prod_cpm_authorize_operation(identity, scope, kind, label):
     expected-generation route (same requested vocabulary as the scope), then
     returns the detached Operation Authority Context. A changed generation
     raises the existing stale-scope error before any write or mutation."""
+    if kind == u"pose":
+        # F-01 stage C (Addendum R2.1 section 10.3): poses are authorized by
+        # prod_pose_authorize, never through the flex semantic scope. kind=None
+        # (the Review flex edit) and the Body/Expression kinds are unchanged.
+        raise RuntimeError(u"Pose records are handled only by the Pose Library.")
     if not isinstance(scope, dict) or not isinstance(scope.get("authority"), dict):
         raise RuntimeError(PROD_CPM_STALE_SCOPE_MESSAGE)
     expected = u(scope["authority"].get("provider_sha256"))
@@ -20969,6 +20973,7 @@ def prod_paths(identity):
         "library_meta": os.path.join(char, PROD_LIBRARY_META_FILENAME),
         "body": os.path.join(char, P03_BODY_FOLDER),
         "expression": os.path.join(char, P03_EXPRESSION_FOLDER),
+        "pose": os.path.join(char, u"Poses"),
     }
 
 
@@ -21808,6 +21813,9 @@ def prod_clear_override(
     return loaded
 
 def prod_preset_dir(identity, kind):
+    if kind == u"pose":
+        # F-01 stage C (Addendum R2.1 section 10.3): explicit refusal; other kinds are unchanged.
+        raise RuntimeError(u"Pose records are handled only by the Pose Library.")
     return prod_paths(identity)["body" if kind == P03_KIND_BODY else "expression"]
 
 
@@ -28770,6 +28778,10 @@ def prod_apply(
 ):
     kind = u(record["kind"])
 
+    if kind == u"pose":
+        # F-01 stage C (Addendum R2.1 section 10.3): poses use prod_pose_apply.
+        raise RuntimeError(u"Pose records are handled only by the Pose Library.")
+
     if scope is None:
         scope = prod_scope(
             identity,
@@ -30529,6 +30541,34 @@ class ProdWindow(QtGui.QDialog):
         fit_layout.addLayout(fit_actions)
         self.tabs.addTab(self.fit_page, "Clothing Fit")
 
+        # Poses (F-01 stage D: the left arm; Addendum 9.1).
+        self.pose_page = QtGui.QWidget()
+        pose_layout = QtGui.QVBoxLayout(self.pose_page)
+        self.pose_summary = QtGui.QLabel("")
+        self.pose_summary.setWordWrap(True)
+        pose_layout.addWidget(self.pose_summary)
+        self.pose_search = QtGui.QLineEdit()
+        self.pose_search.setPlaceholderText("Search poses")
+        self.pose_search.textChanged.connect(lambda value: self.refresh_pose_view())
+        pose_layout.addWidget(self.pose_search)
+        self.pose_list = QtGui.QListWidget()
+        tool_apply_preset_list_style(self.pose_list)
+        self.pose_list.currentRowChanged.connect(lambda row: self.refresh_pose_buttons())
+        pose_layout.addWidget(self.pose_list, 1)
+        pose_primary = QtGui.QHBoxLayout()
+        self.apply_pose_button = QtGui.QPushButton("Apply Pose")
+        tool_apply_semantic_action_button(self.apply_pose_button, u"primary")
+        self.apply_pose_button.clicked.connect(lambda: self.apply_selected_pose())
+        pose_primary.addWidget(self.apply_pose_button)
+        self.save_pose_button = QtGui.QPushButton("Save New")
+        tool_apply_main_action_button(self.save_pose_button)
+        self.save_pose_button.clicked.connect(lambda: self.save_pose(None, (u"left_arm",)))
+        pose_primary.addWidget(self.save_pose_button)
+        pose_layout.addLayout(pose_primary)
+        self.pose_items = []
+        self.pose_items_key = None
+        self.tabs.addTab(self.pose_page, "Poses")
+
         # Review is shown only when there is actionable content.
         self.review_page = QtGui.QWidget()
         review_layout = QtGui.QVBoxLayout(
@@ -31304,6 +31344,12 @@ class ProdWindow(QtGui.QDialog):
 
         self.operation = None
         self.busy = False
+        # F-01 Stage D: the Poses buttons depend on busy; recompute them now that the operation has ended
+        # (otherwise a model selection made while Poses is open leaves Save New disabled until a tab change).
+        try:
+            self.refresh_pose_buttons()
+        except Exception:
+            pass
 
         try:
             log_line(
@@ -31527,6 +31573,21 @@ class ProdWindow(QtGui.QDialog):
             return (
                 "Can't delete preset",
                 "Preset could not be moved to Trash. Try again.",
+            )
+
+        if label in (
+            "Apply Pose",
+            "Save Pose",
+        ):
+            # F-01 stage C: pose refusals carry their own UX copy (pose_guard
+            # replaces unexpected internal errors with the generic pose copy).
+            return (
+                (
+                    "Pose Not Applied"
+                    if label == "Apply Pose"
+                    else "Pose Not Saved"
+                ),
+                raw,
             )
 
         if label == "Refresh Models":
@@ -32615,6 +32676,8 @@ class ProdWindow(QtGui.QDialog):
             self.expr_summary.setText(
                 "Choose a character model."
             )
+            # F-01 Stage D: no character, so the Poses page lists nothing and its actions are disabled.
+            self.refresh_pose_view()
 
             self.set_status(
                 "Choose a character model to begin."
@@ -32860,6 +32923,8 @@ class ProdWindow(QtGui.QDialog):
             self.refresh_preset_view(
                 P03_KIND_EXPRESSION
             )
+            # F-01 Stage D: the Poses page follows the selected character immediately (not only on a tab change).
+            self.refresh_pose_view()
 
 
             if scope is not None:
@@ -33373,6 +33438,10 @@ class ProdWindow(QtGui.QDialog):
         self,
         kind,
     ):
+        if kind == u"pose":
+            # F-01 stage C: poses are listed by the Poses page, not the preset lists.
+            raise RuntimeError(u"Pose records are handled only by the Pose Library.")
+
         widget = (
             self.body_list
             if kind == P03_KIND_BODY
@@ -33499,6 +33568,10 @@ class ProdWindow(QtGui.QDialog):
         kind,
         select_id=None,
     ):
+        if kind == u"pose":
+            # F-01 stage C: poses are listed by the Poses page, not the preset lists.
+            raise RuntimeError(u"Pose records are handled only by the Pose Library.")
+
         if self.identity is None:
             return
 
@@ -34746,6 +34819,10 @@ class ProdWindow(QtGui.QDialog):
         self,
         kind,
     ):
+        if kind == u"pose":
+            # F-01 stage C: Apply Pose has its own dispatch (apply_pose).
+            raise RuntimeError(u"Pose records are handled only by the Pose Library.")
+
         def work():
             ident = self.current()
             item = self.selected(
@@ -34890,6 +34967,10 @@ class ProdWindow(QtGui.QDialog):
         operation until that turn publishes a terminal result; guard()
         transfers ownership instead of ending it.
         """
+        if kind == u"pose":
+            # F-01 stage C: a pose continuation is begun by pose_begin_verification.
+            raise RuntimeError(u"Pose records are handled only by the Pose Library.")
+
         operation = self.operation
         label = (
             "Apply Body Preset"
@@ -35060,6 +35141,16 @@ class ProdWindow(QtGui.QDialog):
                     outcome = prod_apply_deferred_unverified(
                         access_blocked
                     )
+                elif continuation.get(
+                    "kind"
+                ) == u"pose":
+                    # F-01 stage C (Addendum R2.1 section 10.2): a pose
+                    # continuation shares this turn; its verification is its own.
+                    outcome = prod_pose_deferred_verify(
+                        continuation[
+                            "pending"
+                        ]
+                    )
                 else:
                     outcome = prod_apply_deferred_verify(
                         continuation[
@@ -35118,6 +35209,15 @@ class ProdWindow(QtGui.QDialog):
         outcome,
     ):
         """M-05 terminal result of a deferred Apply verification."""
+        if continuation.get(
+            "kind"
+        ) == u"pose":
+            # F-01 stage C: pose-specific outcome, log and messages.
+            return self.pose_finish_verification(
+                continuation,
+                outcome,
+            )
+
         verified = (
             outcome[
                 "phase"
@@ -35213,6 +35313,731 @@ class ProdWindow(QtGui.QDialog):
             ]
         )
         return True
+
+    # -----------------------------------------------------------------------
+    # F-01 Pose Library M1, stage C: Pose dispatch through CPM's operation
+    # lifecycle (Addendum R2.1 sections 8 and 10.2). Not wired to any widget
+    # by the stage D Poses page (refresh_pose_view, apply_selected_pose).
+    # -----------------------------------------------------------------------
+
+    def pose_registry_mode(
+        self,
+    ):
+        """The build's registry mode: production, except in the separately built qualification CPM."""
+        return PROD_POSE_REGISTRY_MODE
+
+    def pose_guard(
+        self,
+        label,
+        fn,
+    ):
+        """
+        One Pose scene operation through ProdWindow.guard: one operation at a
+        time, the M-06 pinned instance context, and the shared error, outcome
+        and resource handling. Refused while the recovery-unverified block
+        holds; a recovery-unverified result sets that block (section 8.5).
+        """
+        if label not in PROD_POSE_SCENE_LABELS:
+            raise ProdPoseIntegrationError(
+                u"label",
+                u"Unknown pose operation %r." % (label,),
+            )
+
+        def work():
+            if getattr(
+                self,
+                "pose_recovery_blocked",
+                False,
+            ):
+                raise ProdPoseIntegrationError(
+                    u"recovery-blocked",
+                    PROD_POSE_MESSAGES[u"blocked-after-recovery"],
+                )
+
+            if self.identity is None:
+                raise ProdPoseIntegrationError(
+                    u"no-character",
+                    PROD_POSE_MESSAGES[u"no-character"],
+                )
+
+            if (
+                self.operation is None
+                or self.operation.get(
+                    "context"
+                )
+                is None
+            ):
+                raise ProdPoseIntegrationError(
+                    u"no-instance",
+                    u"Select the character in the scene first.",
+                )
+
+            try:
+                return fn()
+            except ProdRecoveryUnverifiedError:
+                self.pose_recovery_blocked = True
+                raise
+            except (RuntimeError, ProdPoseError):
+                # CPM and pose refusals: their messages are user-facing copy.
+                raise
+            except Exception as exc:
+                # An unexpected internal error: logged in full, shown generically.
+                try:
+                    log_line(
+                        "PROD_POSE_INTERNAL_ERROR label=%r error=%r"
+                        % (
+                            label,
+                            exc,
+                        )
+                    )
+                    log_line(
+                        traceback.format_exc()
+                    )
+                except Exception:
+                    pass
+                raise ProdPoseIntegrationError(
+                    u"error",
+                    (
+                        PROD_POSE_MESSAGES[u"not-applied"]
+                        if label == u"Apply Pose"
+                        else u"The pose wasn't saved. Nothing was saved."
+                    ),
+                )
+
+        return self.guard(
+            label,
+            work,
+        )
+
+    def apply_pose(
+        self,
+        item,
+    ):
+        """Apply Pose: fresh record, pinned destination instance, pose authorization, then prod_pose_apply."""
+        def work():
+            ident = self.current()
+            reg = prod_pose_load_registry()
+            selected = prod_pose_selected_library(
+                ident
+            )
+            fresh = prod_pose_reread(
+                selected,
+                item,
+                reg,
+            )
+            self.operation_revalidate()
+            authorization = prod_pose_authorize(
+                self.operation[
+                    "context"
+                ],
+                ident,
+                reg,
+                self.pose_registry_mode(),
+                u"Apply Pose",
+                fresh,
+            )
+            result = prod_pose_apply(
+                ident,
+                authorization,
+                fresh,
+                reg,
+                phase_callback=self.operation_mark_phase,
+            )
+            phase = result[
+                "phase"
+            ]
+            name = fresh[
+                u"record"
+            ][
+                u"name"
+            ]
+
+            if phase == u"verification-pending":
+                pending = dict(
+                    result[
+                        "pending"
+                    ]
+                )
+                pending[
+                    u"authorization"
+                ] = authorization
+                pending[
+                    u"name"
+                ] = name
+                pending.setdefault(
+                    u"regions",
+                    authorization[
+                        u"record"
+                    ][
+                        u"regions"
+                    ],
+                )
+                self.pose_begin_verification(
+                    u"Apply Pose",
+                    pending,
+                )
+                return
+
+            prod_log_outcome(
+                {
+                    u"no-op": u"no-op",
+                    u"not-applied": u"recovery-verified",
+                }.get(
+                    phase,
+                    u"committed-unverified",
+                ),
+                {"apply_phase": phase, "kind": PROD_POSE_KIND},
+            )
+
+            if phase == u"no-op":
+                self.set_status(
+                    PROD_POSE_MESSAGES[u"no-op"]
+                )
+            elif phase == u"not-applied":
+                self.set_status(
+                    PROD_POSE_MESSAGES[u"not-applied"],
+                    u"error",
+                )
+            else:
+                self.set_status(
+                    PROD_POSE_MESSAGES[u"committed-unverified"] % {u"name": name},
+                    u"error",
+                )
+
+        return self.pose_guard(
+            u"Apply Pose",
+            work,
+        )
+
+    def save_pose(
+        self,
+        name,
+        regions,
+    ):
+        """Save New: pose authorization, the time pinned when the Save dialog opens, read-only capture of exactly
+        the chosen regions at that time, then the store. name=None prompts for the name."""
+        def work():
+            ident = self.current()
+            reg = prod_pose_load_registry()
+            selected = prod_pose_selected_library(
+                ident
+            )
+            chosen = sorted(
+                set(
+                    regions
+                )
+            )
+            authorization = prod_pose_authorize(
+                self.operation[
+                    "context"
+                ],
+                ident,
+                reg,
+                self.pose_registry_mode(),
+                u"Save Pose",
+            )
+            pinned = None
+            pose_name = name
+
+            if pose_name is None:
+                pinned = prod_pose_current_time(
+                    ident,
+                    authorization,
+                    reg,
+                    chosen,
+                )
+                pose_name = self.prompt(
+                    "Save Pose",
+                    u"Pose",
+                )
+
+                if pose_name is None:
+                    prod_log_outcome(
+                        u"no-op",
+                        {"reason": u"cancelled", "kind": PROD_POSE_KIND},
+                    )
+                    return None
+
+                # Modal return is an operation boundary (section 6.1 step 2).
+                self.operation_revalidate()
+                authorization = prod_pose_authorize(
+                    self.operation[
+                        "context"
+                    ],
+                    ident,
+                    reg,
+                    self.pose_registry_mode(),
+                    u"Save Pose",
+                )
+
+            pose = prod_pose_capture(
+                ident,
+                authorization,
+                chosen,
+                reg,
+                pinned_time=pinned,
+            )
+
+            if sorted(
+                pose[
+                    u"regions"
+                ]
+            ) != chosen:
+                # Section 4.3: the chosen set is never reduced silently.
+                raise ProdPoseIntegrationError(
+                    u"save-region-unreadable",
+                    u"The pose wasn't saved: the chosen parts couldn't all be read. Nothing was saved.",
+                )
+
+            self.operation_revalidate()
+            saved = prod_pose_save_new(
+                selected,
+                pose_name,
+                pose,
+                p03_now_stamp(),
+                reg,
+            )
+            detail = {
+                "kind": PROD_POSE_KIND,
+                "preset_id": saved[
+                    u"preset_id"
+                ],
+            }
+            self.operation_mark_phase(
+                u"durable-commit",
+                detail,
+            )
+            self.operation_mark_phase(
+                u"durable-verified",
+                detail,
+            )
+            prod_log_outcome(
+                u"verified",
+                detail,
+            )
+            self.set_status(
+                PROD_POSE_MESSAGES[u"saved"]
+                % {
+                    u"name": saved[
+                        u"name"
+                    ],
+                    u"parts": prod_pose_parts_phrase(
+                        chosen
+                    ),
+                },
+                u"success",
+            )
+            return saved
+
+        result = self.pose_guard(
+            u"Save Pose",
+            work,
+        )
+
+        if result is not None:
+            self.refresh_pose_view(
+                select_id=result[
+                    u"preset_id"
+                ]
+            )
+
+        return result
+
+    def pose_begin_verification(
+        self,
+        label,
+        pending,
+    ):
+        """
+        Hand a committed Apply Pose to the shared queued verification turn
+        (apply_verification_turn), as the M-05 continuation does; the pose
+        continuation record carries its own kind, label and pending data.
+        """
+        operation = self.operation
+        token = (
+            int(
+                operation[
+                    "operation_id"
+                ]
+            ),
+            int(
+                operation[
+                    "generation"
+                ]
+            ),
+        )
+        continuation = {
+            "token": token,
+            "kind": PROD_POSE_KIND,
+            "label": label,
+            "pending": pending,
+        }
+
+        self.operation_mark_phase(
+            u"verification-pending",
+            {"kind": PROD_POSE_KIND},
+        )
+        self.set_status(
+            PROD_POSE_CHECKING_COPY
+        )
+
+        self.apply_continuation = continuation
+        operation[
+            "continuation"
+        ] = token
+
+        try:
+            QtCore.QTimer.singleShot(
+                0,
+                lambda t=token: self.apply_verification_turn(
+                    t
+                ),
+            )
+        except Exception as exc:
+            # Scheduling failure is terminal: the guard ends this operation.
+            self.apply_continuation = None
+            operation[
+                "continuation"
+            ] = None
+
+            try:
+                log_line(
+                    "PROD_POSE_VERIFY_SCHEDULE_FAIL id=%d error=%r"
+                    % (
+                        token[0],
+                        exc,
+                    )
+                )
+            except Exception:
+                pass
+
+            self.apply_finish_verification(
+                continuation,
+                prod_apply_deferred_unverified(
+                    u"schedule-failed"
+                ),
+            )
+            return
+
+        try:
+            log_line(
+                "PROD_POSE_VERIFY_SCHEDULED id=%d"
+                % (
+                    token[0],
+                )
+            )
+        except Exception:
+            pass
+
+    def pose_finish_verification(
+        self,
+        continuation,
+        outcome,
+    ):
+        """Terminal result of a pose continuation (section 8.4 outcomes)."""
+        verified = (
+            outcome[
+                "phase"
+            ]
+            == u"committed-verified"
+        )
+
+        prod_log_outcome(
+            (
+                u"verified"
+                if verified
+                else u"committed-unverified"
+            ),
+            {
+                "apply_phase": outcome[
+                    "phase"
+                ],
+                "verification": u"deferred",
+                "reason": outcome.get(
+                    "reason"
+                ),
+                "kind": PROD_POSE_KIND,
+            },
+        )
+
+        if self.operation is not None:
+            self.operation[
+                "phase"
+            ] = u"UI_PUBLISH"
+
+        if self.closing_requested:
+            return
+
+        pending = continuation[
+            "pending"
+        ] or {}
+        name = pending.get(
+            u"name"
+        ) or u""
+
+        if verified:
+            self.set_status(
+                PROD_POSE_MESSAGES[u"applied"]
+                % {
+                    u"name": name,
+                    u"parts": prod_pose_parts_phrase(
+                        pending.get(
+                            u"regions"
+                        )
+                        or []
+                    ),
+                },
+                u"success",
+            )
+        else:
+            self.set_status(
+                PROD_POSE_MESSAGES[u"committed-unverified"] % {u"name": name},
+                u"error",
+            )
+
+        self.refresh_pose_buttons()
+
+    def refresh_pose_view(
+        self,
+        select_id=None,
+    ):
+        """The Poses page list: the selected character's own poses, filtered by the search text."""
+        if not hasattr(
+            self,
+            "pose_list",
+        ):
+            return
+
+        previous = self.selected_pose()
+        select_id = select_id or (
+            previous[u"preset_id"]
+            if previous is not None
+            else None
+        )
+        self.pose_list.blockSignals(
+            True
+        )
+
+        try:
+            self.pose_list.clear()
+            self.pose_items = []
+            self.pose_items_key = None
+            self.pose_unusable = 0
+            self.pose_rig_class = None
+
+            if self.identity is not None:
+                try:
+                    reg = prod_pose_load_registry()
+                    selected = prod_pose_selected_library(
+                        self.identity
+                    )
+                    found = prod_pose_discover(
+                        selected[u"char_dir"],
+                        selected[u"character_key"],
+                        reg,
+                    )
+                    self.pose_rig_class = prod_pose_rig_class(
+                        reg,
+                        self.identity["model"],
+                        int(self.identity["checksum"]),
+                    )
+                    self.pose_selection = prod_pose_registry_select(
+                        reg,
+                        self.pose_registry_mode(),
+                    )
+                except Exception as exc:
+                    try:
+                        log_line(
+                            "PROD_POSE_LIST_FAIL error=%r"
+                            % (exc,)
+                        )
+                    except Exception:
+                        pass
+                    found = {u"items": [], u"unusable": []}
+
+                self.pose_items_key = prod_key(
+                    self.identity["model"]
+                )
+                self.pose_unusable = len(
+                    found[u"unusable"]
+                )
+                text = u(
+                    self.pose_search.text()
+                ).strip().lower()
+
+                for item in sorted(
+                    found[u"items"],
+                    key=lambda i: (i[u"name"].lower(), i[u"preset_id"]),
+                ):
+                    if text and text not in item[u"name"].lower():
+                        continue
+
+                    self.pose_items.append(
+                        item
+                    )
+                    row = QtGui.QListWidgetItem(
+                        item[u"name"]
+                    )
+                    row.setData(
+                        QtCore.Qt.UserRole,
+                        len(self.pose_items) - 1,
+                    )
+                    self.pose_list.addItem(
+                        row
+                    )
+
+                    if item[u"preset_id"] == select_id:
+                        self.pose_list.setCurrentItem(
+                            row
+                        )
+        finally:
+            self.pose_list.blockSignals(
+                False
+            )
+
+        self.refresh_pose_buttons()
+
+    def selected_pose(
+        self,
+    ):
+        if not hasattr(
+            self,
+            "pose_list",
+        ):
+            return None
+
+        current = self.pose_list.currentItem()
+
+        if current is None:
+            return None
+
+        index = current.data(
+            QtCore.Qt.UserRole
+        )
+        items = getattr(
+            self,
+            "pose_items",
+            [],
+        )
+
+        if not isinstance(index, int) or not 0 <= index < len(items):
+            return None
+
+        return items[index]
+
+    def refresh_pose_buttons(
+        self,
+    ):
+        """Enablement and summary from prod_pose_ui_state (no domain logic here)."""
+        if not hasattr(
+            self,
+            "pose_list",
+        ):
+            return
+
+        item = self.selected_pose()
+        selection = getattr(
+            self,
+            "pose_selection",
+            None,
+        )
+        rig_class = getattr(
+            self,
+            "pose_rig_class",
+            None,
+        )
+        selected = None
+
+        if item is not None:
+            saved = sorted(
+                item[u"record"][u"pose"][u"regions"]
+            )
+            eligible = (
+                prod_pose_browse_eligible(
+                    selection,
+                    item[u"record"],
+                    rig_class,
+                )
+                if selection is not None
+                else []
+            )
+            selected = {
+                u"name": item[u"name"],
+                u"own": True,
+                u"origin": u(
+                    (self.identity or {}).get("animset_name") or u""
+                ),
+                u"saved": saved,
+                u"availability": dict(
+                    (
+                        r,
+                        u"available"
+                        if r in eligible and r in PROD_POSE_LIVE_REGIONS
+                        else u"not-qualified",
+                    )
+                    for r in saved
+                ),
+                u"unusable": False,
+                u"favorite": False,
+            }
+
+        state = prod_pose_ui_state(
+            {
+                u"character": (
+                    u(self.identity.get("animset_name") or u"")
+                    if self.identity is not None
+                    else None
+                ),
+                u"supported": rig_class is not None,
+                u"instance_valid": getattr(self, "selection_token", None) is not None,
+                u"mode": u"this",
+                u"visible_count": len(getattr(self, "pose_items", [])),
+                u"search_active": bool(u(self.pose_search.text()).strip()),
+                u"busy": bool(self.busy),
+                u"recovery_blocked": bool(getattr(self, "pose_recovery_blocked", False)),
+                u"selected": selected,
+            }
+        )
+        self.apply_pose_button.setEnabled(
+            state[u"buttons"][u"apply_pose"]
+            and state[u"apply_mode"] == u"direct"
+        )
+        self.save_pose_button.setEnabled(
+            state[u"buttons"][u"save_new"]
+        )
+        self.pose_summary.setText(
+            u"\n".join(
+                state[u"summary"]
+            )
+        )
+
+    def apply_selected_pose(
+        self,
+    ):
+        item = self.selected_pose()
+
+        if item is None:
+            self.set_status(
+                "Select a pose."
+            )
+            return None
+
+        if (
+            self.identity is None
+            or getattr(self, "pose_items_key", None) != prod_key(self.identity["model"])
+        ):
+            self.refresh_pose_view()
+            self.set_status(
+                PROD_POSE_MESSAGES[u"record-changed"],
+                u"warning",
+            )
+            return None
+
+        result = self.apply_pose(
+            item
+        )
+        self.refresh_pose_buttons()
+        return result
 
     def fit_model_folder(self, model_path):
         normalized = prod_norm(model_path)
@@ -36746,6 +37571,11 @@ class ProdWindow(QtGui.QDialog):
             return
         if page is self.fit_page:
             self.set_status("Select clothing or accessories to fit to this model.")
+            return
+        if page is getattr(self, "pose_page", None):
+            self.refresh_pose_view()
+            item = self.selected_pose()
+            self.set_status(u'Ready to apply "%s".' % item[u"name"] if item is not None else "Select a pose, or pose the arms in SFM and click Save New.")
             return
         if hasattr(self, "review_page") and page is self.review_page:
             self.set_status("Select an unrecognized flex to classify.")
@@ -38497,7 +39327,10 @@ def prod_pose_time_decide(rec):
     """Decide the time triple from recorded native values (addendum R2 sections 7.1-7.2). Never mixes domains,
     never widens a tolerance, never substitutes a value. Returns the pinned triple or raises time-mapping.
     rec = {t_doc, shots: [{id, start, end}] (parent domain), token_shot, sfm_current_shot (or None), t_shot,
-           path: {shot, clips: [clip ids]}, channels: {name: {clip, converted, reported, reverse}}}"""
+           path: {shot, clips: [clip ids]}, channels: {name: {clip, converted, reverse[, reported]}}}
+    'reported' (DmeChannel.GetCurrentTime) is diagnostic only and never decides: NQ-1 native evidence (KP-1) showed
+    it changing while the playhead stayed still (50299, then 50208 after an SFM edit). Whether the rig is evaluated
+    at the pinned time is checked on the evaluated state instead (prod_pose_effective_inputs, the P5 checks)."""
     t_doc = prod_pose_ticks(rec[u"t_doc"], u"t_doc")
     owners = []
     for s in rec[u"shots"]:
@@ -38526,11 +39359,7 @@ def prod_pose_time_decide(rec):
         if ch[u"clip"] != clip:
             raise ProdPoseError(u"time-mapping", u"channel %s is not in the verified clip" % name)
         converted = prod_pose_ticks(ch[u"converted"], name + u" converted")
-        reported = prod_pose_ticks(ch[u"reported"], name + u" reported")
         reverse = prod_pose_ticks(ch[u"reverse"], name + u" reverse")
-        if converted != reported:
-            raise ProdPoseError(u"time-mapping", u"channel %s: converted %d != reported %d" % (name, converted,
-                                                                                             reported))
         if reverse != t_shot:
             raise ProdPoseError(u"time-mapping", u"channel %s: reverse conversion %d != t_shot %d" % (name, reverse,
                                                                                                   t_shot))
@@ -39292,3 +40121,1741 @@ def prod_pose_set_foreign_favorite(selected, foreign, target, favorite, reg):
     return entry in prod_pose_load_foreign_favorites(selected[u"char_dir"])[u"entries"]
 
 # === end of F-01 stage B block ===
+
+
+# ===========================================================================
+# F-01 Pose Library M1, stage C: CPM integration seams (F-01 M1 Implementation Addendum R2.1 sections 1.3, 8,
+# 9.3 and 10). Pose scene operations run through CPM's own operation lifecycle (ProdWindow.guard and the M-06
+# pinned operation context) and its shared continuation turn, with pose-specific authorization, validation,
+# persistence and messages. Authorization binds the M-06 selected-instance closure, the hash-pinned profile
+# registry and the record revision, never the flex semantic scope. A saved pose is self-contained: nothing here
+# reads, resolves or requires the source animation set or shot (pose.source is provenance only), so a pose saved
+# in an earlier SFM session applies to an independently resolved destination instance. The scene paths (capture,
+# P1-P6 Apply, P7 verification items) are the stage D block's; this block contains no scene write.
+# ===========================================================================
+
+PROD_POSE_KIND = u"pose"
+PROD_POSE_REGISTRY_FILENAME = u"cpm_pose_profiles_v1.json"
+PROD_POSE_REGISTRY_SHA256 = u"87efaad9045e2a562fabb18f6050d426c382654e86c6a2213a812bfdb01363cd"
+PROD_POSE_AUTH_SCHEMA = u"cpm-pose-operation-authorization-v1"
+PROD_POSE_SCENE_LABELS = (u"Apply Pose", u"Save Pose")
+PROD_POSE_REGISTRY_MODE = u"production"
+PROD_POSE_CHECKING_COPY = u"Checking the applied pose..."
+
+
+class ProdPoseIntegrationError(RuntimeError):
+    """A pose operation was refused at the CPM integration seam. `code` is a stable reason code."""
+
+    def __init__(self, code, message):
+        RuntimeError.__init__(self, message)
+        self.code = code
+
+
+def prod_pose_registry_path():
+    """The profile registry ships beside the CPM authority modules in the MAINMENU directory."""
+    return os.path.join(prod_cpm_mainmenu_dir(), PROD_POSE_REGISTRY_FILENAME)
+
+
+def prod_pose_load_registry(path=None):
+    """The hash-pinned profile registry (Addendum 5.1); any other file refuses."""
+    path = path or prod_pose_registry_path()
+    try:
+        raw = prod_pose_read_bytes(path)
+    except (IOError, OSError):
+        raise ProdPoseIntegrationError(u"registry", u"The pose profiles are unavailable. Reinstall CPM.")
+    try:
+        return prod_pose_registry_parse(raw, PROD_POSE_REGISTRY_SHA256)
+    except ProdPoseError:
+        raise ProdPoseIntegrationError(u"registry", u"The pose profiles failed their integrity check. Reinstall CPM.")
+
+
+def prod_pose_selected_library(identity):
+    """The selected character's library context, from CPM's own library paths and character key. The trusted
+    location for the store's containment check is CPM's library root, never derived from the character folder."""
+    if not isinstance(identity, dict) or not identity.get("model"):
+        raise ProdPoseIntegrationError(u"no-character", PROD_POSE_MESSAGES[u"no-character"])
+    paths = prod_paths(identity)
+    return {u"character_key": prod_key(identity["model"]), u"char_dir": paths["char"],
+            u"library_root": paths["root"], u"model_ref": u(identity["model"]),
+            u"checksum": int(identity["checksum"])}
+
+
+def prod_pose_reread(selected, item, reg):
+    """Fresh library-context check of one listed pose. Own poses use the store's own check (containment,
+    identity, revision); a foreign pose must still be the same file, identity and revision in its library."""
+    if not isinstance(item, dict) or not item.get(u"path"):
+        raise ProdPoseLibraryError(u"record-changed", PROD_POSE_MESSAGES[u"record-changed"])
+    if item.get(u"character_key") == selected[u"character_key"]:
+        return prod_pose_require(selected, item, reg)
+    try:
+        record, revision = prod_pose_read_file(item[u"path"], reg)
+    except (ProdPoseError, IOError, OSError):
+        raise ProdPoseLibraryError(u"record-changed", PROD_POSE_MESSAGES[u"record-changed"])
+    if (record[u"character_key"] != item.get(u"character_key") or record[u"preset_id"] != item.get(u"preset_id")
+            or revision != item.get(u"revision") or not prod_pose_stem_matches_id(item[u"path"], record[u"preset_id"])):
+        raise ProdPoseLibraryError(u"record-changed", PROD_POSE_MESSAGES[u"record-changed"])
+    fresh = dict(item)
+    fresh.update({u"record": record, u"revision": revision})
+    return fresh
+
+
+def prod_pose_authorize(operation_context, identity, reg, mode, label, item=None):
+    """Bind one Pose scene operation (Addendum 10.2, C12) to: the M-06 selected-instance closure (the
+    operation's pinned context, freshly revalidated by prod_validate_context_token); the hash-pinned registry
+    and its mode; the destination's explicitly listed rig class; and, for a saved pose, its library identity
+    and revision. The flex semantic scope is not consulted, and neither is the pose's source animation set:
+    a saved pose is applied to the independently resolved destination instance only."""
+    if label not in PROD_POSE_SCENE_LABELS:
+        raise ProdPoseIntegrationError(u"label", u"Unknown pose operation %r." % (label,))
+    if prod_instance_token(operation_context) is None or not isinstance(operation_context.get("library_identity"),
+                                                                       dict):
+        raise ProdPoseIntegrationError(u"no-instance", u"Select the character in the scene first.")
+    pinned = operation_context["library_identity"]
+    if (u(pinned.get("model")).lower() != u(identity.get("model")).lower()
+            or int(pinned.get("checksum")) != int(identity.get("checksum"))):
+        raise ProdPoseIntegrationError(u"stale", PROD_POSE_MESSAGES[u"stale"])
+    try:
+        prod_validate_context_token(operation_context)
+    except Exception:
+        raise ProdPoseIntegrationError(u"stale", PROD_POSE_MESSAGES[u"stale"])
+    selection = prod_pose_registry_select(reg, mode)
+    rig_class = prod_pose_rig_class(reg, identity["model"], int(identity["checksum"]))
+    if rig_class is None:
+        raise ProdPoseIntegrationError(u"not-qualified", PROD_POSE_MESSAGES[u"unsupported-character"])
+    record = None
+    if item is not None:
+        r = item[u"record"]
+        record = {u"character_key": r[u"character_key"], u"preset_id": r[u"preset_id"],
+                  u"revision": item[u"revision"], u"payload_sha256": r[u"payload_sha256"], u"name": r[u"name"],
+                  u"regions": sorted(r[u"pose"][u"regions"])}
+    elif label == u"Apply Pose":
+        raise ProdPoseIntegrationError(u"record-changed", PROD_POSE_MESSAGES[u"record-changed"])
+    return {u"schema": PROD_POSE_AUTH_SCHEMA, u"operation": label, u"mode": selection[u"mode"],
+            u"registry_sha256": selection[u"registry_sha256"], u"mappings": selection[u"mappings"],
+            u"destination": {u"model": u(identity["model"]), u"checksum": int(identity["checksum"]),
+                             u"rig_class": rig_class},
+            u"context": operation_context, u"record": record}
+
+
+def prod_pose_context_gate(authorization):
+    """P7 context gate, instance part (Addendum 8.4): the pinned destination instance must still resolve to
+    exactly the same document, shot, animation set and game model. Stage D adds the time-triple part."""
+    context = (authorization or {}).get(u"context")
+    if not prod_context_token_matches(context):
+        return u"context-changed"
+    return None
+
+
+def prod_pose_deferred_verify(pending):
+    """The pose verification of the shared deferred turn: the context gate first, then the verification items.
+    Read-only: never retimes, forces evaluation or writes."""
+    reason = prod_pose_context_gate((pending or {}).get(u"authorization"))
+    if reason is not None:
+        return prod_apply_deferred_unverified(reason)
+    return prod_pose_verify_applied(pending)
+
+# === end of F-01 stage C block ===
+
+
+# ===========================================================================
+# F-01 Pose Library M1, stage D: the left-arm live layer (F-01 M1 Implementation Addendum R2.1 sections 5.4-5.5,
+# 6, 7 and 8; Owner authorization of stage D, 2026-11-02). Scene reads, capture, one exact-time Apply transaction
+# and the deferred verification, for the left arm only. The W1/W2 research algorithms (native-qualified) are
+# re-implemented here under production review; W1/W2 code is not imported. The destination is the M-06 pinned
+# instance (prod_resolve_instance), freshly resolved for every phase. A saved pose is self-contained: no function
+# here reads pose.source or resolves the animation set the pose was saved from.
+# Native writes, and nowhere else: CDmeVector3LogLayer / CDmeQuaternionLogLayer SetKeyValue (update) and
+# InsertKeyAtTime(time) then SetKeyValue (insert), inside one owned StartUndo / FinishUndo, with
+# AbortUndoableOperation only while the transaction is provably held.
+# ===========================================================================
+
+PROD_POSE_LIVE_REGIONS = (u"left_arm",)
+PROD_POSE_LIVE_MAX_NODES = 4096
+PROD_POSE_LIVE_MAX_ARRAY = 8192
+PROD_POSE_LIVE_MAX_TOTAL_KEYS = 400000
+PROD_POSE_LIVE_KNOWN_OPERATORS = (u"DmeExpressionOperator", u"DmePackColorOperator", u"DmeRigPointConstraintOperator",
+                                  u"DmeRigOrientConstraintOperator", u"DmeRigIKConstraintOperator")
+PROD_POSE_LIVE_SLAVE_ATTRS = (u"slave", u"startJoint", u"midJoint", u"endJoint")
+PROD_POSE_LIVE_EVALUATED_OUTPUTS = {u"DmeExpressionOperator": (u"result",)}
+PROD_POSE_BONE_NAME_RE = re.compile(r"^bone (\d+) \((.+)\)$")
+# Metadata a qualified insertion may change (Addendum 7.3): none until the native checkpoint qualifies it.
+PROD_POSE_INSERT_ALLOWED_METADATA = ()
+# Qualification build only (prod_pose_qualification_fault): one injected failure after the writes (P4) to exercise
+# the Abort path natively. Ignored unless the registry mode is "qualification".
+PROD_POSE_QUAL_FAULT = [None]
+PROD_POSE_UNDO_REQUIRED = (u"enabled", u"can_undo", u"can_redo", u"undo_desc", u"redo_desc")
+
+
+class ProdPoseUnreadable(Exception):
+    """Required native evidence could not be read; never inferred."""
+
+
+# --- strict native reads -----------------------------------------------------------------------------------------
+
+def prod_pose_native_name(name):
+    if sys.version_info[0] == 2 and isinstance(name, type(u"")):
+        return name.encode("utf-8")
+    return name
+
+
+def prod_pose_text(value):
+    if value is None:
+        return None
+    if isinstance(value, bytes) and not isinstance(value, type(u"")):
+        return value.decode("utf-8", "strict")
+    return type(u"")(value)
+
+
+def prod_pose_has(obj, name):
+    return bool(obj.HasAttribute(prod_pose_native_name(name)))
+
+
+def prod_pose_attr(obj, name):
+    if obj is None:
+        raise ProdPoseUnreadable(u"no object for %s" % name)
+    a = obj.GetAttribute(prod_pose_native_name(name))
+    if a is None:
+        raise ProdPoseUnreadable(u"missing attribute %s" % name)
+    for method in ("GetValue", "GetValueUntyped"):
+        try:
+            return getattr(a, method)()
+        except Exception:
+            pass
+    raise ProdPoseUnreadable(u"%s unreadable" % name)
+
+
+def prod_pose_opt_attr(obj, name):
+    if not prod_pose_has(obj, name):
+        return False, None
+    return True, prod_pose_attr(obj, name)
+
+
+def prod_pose_seq(value, cap=None):
+    n = len(value)
+    if n < 0 or n > (cap or PROD_POSE_LIVE_MAX_ARRAY):
+        raise ProdPoseUnreadable(u"collection exceeds its bound (%d)" % n)
+    return [value[i] for i in range(n)]
+
+
+def prod_pose_h(obj):
+    if obj is None:
+        raise ProdPoseError(u"evidence-unreadable", u"a required scene element is missing")
+    return int(obj.GetHandle())
+
+
+def prod_pose_type(obj):
+    return prod_pose_text(obj.GetTypeString())
+
+
+def prod_pose_ident(obj):
+    if obj is None:
+        return None
+    return {u"handle": prod_pose_h(obj), u"type": prod_pose_type(obj), u"name": prod_pose_text(obj.GetName())}
+
+
+def prod_pose_num(value):
+    if isinstance(value, bool):
+        raise ProdPoseUnreadable(u"boolean where a number is required")
+    value = float(value)
+    if math.isnan(value) or math.isinf(value):
+        raise ProdPoseUnreadable(u"non-finite number")
+    return value
+
+
+def prod_pose_components(value, n):
+    if u"quaternion" in type(value).__name__.lower():
+        if n != 4:
+            raise ProdPoseUnreadable(u"a quaternion has four components")
+        return [prod_pose_num(getattr(value, k)) for k in ("x", "y", "z", "w")]
+    if n == 3 and all(hasattr(value, k) for k in ("x", "y", "z")):
+        return [prod_pose_num(getattr(value, k)) for k in ("x", "y", "z")]
+    return [prod_pose_num(value[i]) for i in range(n)]
+
+
+def prod_pose_vec3(value):
+    return prod_pose_components(value, 3)
+
+
+def prod_pose_quat(value):
+    return prod_pose_components(value, 4)
+
+
+def prod_pose_ticks_of(t):
+    value = t.GetTenthsOfMS()
+    if isinstance(value, bool):
+        raise ProdPoseUnreadable(u"boolean time")
+    return int(value)
+
+
+def prod_pose_time(ticks):
+    """A native DmeTime_t of exactly `ticks` (integer tenths of a millisecond), verified."""
+    t = vs.DmeTime_t(int(ticks))
+    if prod_pose_ticks_of(t) != int(ticks):
+        raise ProdPoseError(u"time-mapping", u"a native time of %d ticks could not be constructed exactly" % ticks)
+    return t
+
+
+def prod_pose_plain(value):
+    """Lossless JSON form of an authored value; an unknown native type is unreadable."""
+    if value is None or isinstance(value, (bool, type(u""))) or isinstance(value, prod_pose_int_types()):
+        return value
+    if isinstance(value, bytes):
+        return value.decode("utf-8", "strict")
+    if isinstance(value, float):
+        return prod_pose_num(value)
+    if hasattr(value, "GetHandle") and hasattr(value, "GetTypeString"):
+        if prod_pose_type(value).endswith(u"_array"):
+            return [prod_pose_plain(x) for x in prod_pose_seq(value)]
+        return prod_pose_ident(value)
+    if hasattr(value, "GetTenthsOfMS"):
+        return {u"ticks": prod_pose_ticks_of(value)}
+    name = type(value).__name__.lower()
+    if u"quaternion" in name or u"vector4" in name:
+        return prod_pose_components(value, 4)
+    if u"vector2" in name:
+        return prod_pose_components(value, 2)
+    if name in (u"vector", u"vectoraligned", u"qangle"):
+        return prod_pose_components(value, 3)
+    if name == u"color":
+        return {u"color": [int(value.r()), int(value.g()), int(value.b()), int(value.a())]}
+    if isinstance(value, (list, tuple)) or hasattr(value, "__len__"):
+        return [prod_pose_plain(x) for x in prod_pose_seq(value)]
+    raise ProdPoseUnreadable(u"no lossless form for %s" % type(value).__name__)
+
+
+def prod_pose_field(obj, name):
+    """{status: ABSENT | READ (value) | UNREADABLE}: absence is distinguished from an unreadable read."""
+    try:
+        if not prod_pose_has(obj, name):
+            return {u"status": u"ABSENT"}
+    except Exception as exc:
+        return {u"status": u"UNREADABLE", u"error": repr(exc)}
+    try:
+        return {u"status": u"READ", u"value": prod_pose_plain(prod_pose_attr(obj, name))}
+    except Exception as exc:
+        return {u"status": u"UNREADABLE", u"error": repr(exc)}
+
+
+def prod_pose_required(record, path):
+    if record.get(u"status") != u"READ":
+        raise ProdPoseError(u"evidence-unreadable", u"required evidence unreadable: %s" % path)
+    return record[u"value"]
+
+
+def prod_pose_require_readable(value, label):
+    """Every evidence record must have been read or be verifiably absent; unreadable is never 'unchanged'."""
+    problems = []
+
+    def walk_(v, path):
+        if len(problems) >= 8:
+            return
+        if isinstance(v, dict):
+            if v.get(u"status") == u"UNREADABLE":
+                problems.append(path)
+            for k in sorted(v):
+                walk_(v[k], path + u"/" + type(u"")(k))
+        elif isinstance(v, list):
+            for i, x in enumerate(v):
+                walk_(x, path + u"/%d" % i)
+    walk_(value, u"")
+    if problems:
+        raise ProdPoseError(u"evidence-unreadable", u"%s evidence is unreadable: %s" % (label, problems))
+    return value
+
+
+def prod_pose_attribute_names(obj):
+    names = []
+    a = obj.FirstAttribute()
+    while a is not None:
+        name = prod_pose_text(a.GetName())
+        if name in names or len(names) >= 256:
+            raise ProdPoseUnreadable(u"attribute walk repeated or exceeded its bound")
+        names.append(name)
+        a = a.NextAttribute()
+    return names
+
+
+def prod_pose_roundtrip(value):
+    return json.loads(json.dumps(value, sort_keys=True, allow_nan=False))
+
+
+def prod_pose_differences(left, right, path=u"", limit=64, out=None):
+    out = [] if out is None else out
+    if len(out) >= limit:
+        return out
+    if isinstance(left, dict) and isinstance(right, dict):
+        for k in sorted(set(left) | set(right)):
+            if k not in left or k not in right:
+                out.append(path + u"/" + type(u"")(k))
+            else:
+                prod_pose_differences(left[k], right[k], path + u"/" + type(u"")(k), limit, out)
+    elif isinstance(left, list) and isinstance(right, list):
+        if len(left) != len(right):
+            out.append(path + u"/length")
+        else:
+            for i in range(len(left)):
+                prod_pose_differences(left[i], right[i], path + u"/%d" % i, limit, out)
+    elif isinstance(left, bool) or isinstance(right, bool):
+        if type(left) is not type(right) or left != right:
+            out.append(path)
+    elif left != right or (isinstance(left, float) != isinstance(right, float)):
+        out.append(path)
+    return out
+
+
+def prod_pose_unique(items, what):
+    if len(items) != 1:
+        raise ProdPoseError(u"controls-missing" if not items else u"ambiguous",
+                            u"%s %s" % (what, u"not found" if not items else u"is ambiguous (%d)" % len(items)))
+    return items[0]
+
+
+# --- the live arm (C4 resolution; W2 resolve / arm_constraints, parameterized by the region profile) ------------
+
+def prod_pose_walk(root):
+    nodes, parents, pending, edges = {}, {}, [(root, None, ())], 0
+    while pending:
+        obj, parent, ancestors = pending.pop()
+        h = prod_pose_h(obj)
+        if h in ancestors:
+            raise ProdPoseError(u"structure-unsupported", u"cycle in the scene hierarchy")
+        parents.setdefault(h, []).append(parent)
+        if h in nodes:
+            continue
+        if len(nodes) >= PROD_POSE_LIVE_MAX_NODES:
+            raise ProdPoseUnreadable(u"scene hierarchy exceeds its bound")
+        nodes[h] = obj
+        for child in reversed(prod_pose_seq(prod_pose_attr(obj, u"children"))):
+            edges += 1
+            if edges > 16384:
+                raise ProdPoseUnreadable(u"scene edge inventory exceeds its bound")
+            pending.append((child, h, ancestors + (h,)))
+    return nodes, parents
+
+
+def prod_pose_slave_target(op, slave_attr):
+    present, slave = prod_pose_opt_attr(op, slave_attr)
+    if not present or slave is None:
+        return None
+    return prod_pose_attr(slave, u"target")
+
+
+def prod_pose_live_arm(row, profile):
+    """Every native element one region depends on, resolved by identity inside the pinned instance only."""
+    shot, animset, gm = row["shot"], row["animset"], row["gm"]
+    L = {u"shot": shot, u"animset": animset, u"gm": gm, u"profile": profile}
+    nodes, parents = prod_pose_walk(prod_pose_attr(shot, u"scene"))
+    if prod_pose_h(gm) not in nodes:
+        raise ProdPoseError(u"controls-missing", u"the character model is not in the current shot's scene")
+    L[u"nodes"], L[u"parents"] = nodes, parents
+    regs = []
+    for obj in nodes.values():
+        if prod_pose_type(obj) == u"DmeRig":
+            for reg in prod_pose_seq(prod_pose_attr(obj, u"animSetList")):
+                linked = prod_pose_attr(reg, u"animationSet")
+                if linked is not None and prod_pose_h(linked) == prod_pose_h(animset):
+                    regs.append(reg)
+    L[u"reg"] = prod_pose_unique(regs, u"the character's rig")
+    L[u"owned"] = prod_pose_seq(prod_pose_attr(L[u"reg"], u"elementList"))
+    handles = {}
+    for obj in L[u"owned"]:
+        if prod_pose_type(obj) == u"DmeRigHandle":
+            name = prod_pose_text(obj.GetName())
+            if name in handles:
+                raise ProdPoseError(u"ambiguous", u"rig handle %s is duplicated" % name)
+            handles[name] = obj
+    names = (profile[u"root"], profile[u"anchor"], profile[u"hand"], profile[u"elbow"])
+    for name in names:
+        if name not in handles:
+            raise ProdPoseError(u"controls-missing", u"rig handle %s not found" % name)
+    L[u"rig_handles"] = dict((n, handles[n]) for n in names)
+    L[u"all_controls"] = prod_pose_seq(prod_pose_attr(animset, u"controls"))
+    L[u"controls"] = {}
+    for name in (profile[u"hand"], profile[u"elbow"], profile[u"anchor"]):
+        L[u"controls"][name] = prod_pose_unique(
+            [c for c in L[u"all_controls"] if prod_pose_type(c) == u"DmeTransformControl"
+             and prod_pose_text(c.GetName()) == name], u"control %s" % name)
+    # M-06: the instance's own channels clip, proven by membership (never a name lookup).
+    L[u"clip"] = prod_instance_channels_clip(animset, shot)
+    L[u"clip_channels"] = prod_pose_seq(prod_pose_attr(L[u"clip"], u"channels"), 65536)
+    members = set(prod_pose_h(c) for c in L[u"clip_channels"])
+    L[u"channels"] = {}
+    specs = dict(profile[u"written_channels"])
+    specs.update(profile[u"observed_channels"])
+    for cname in sorted(specs):
+        owner, channel_attr = specs[cname][0], specs[cname][1]
+        ch = prod_pose_attr(L[u"controls"][owner], channel_attr)
+        if ch is None or prod_pose_text(ch.GetName()) != cname:
+            raise ProdPoseError(u"controls-missing", u"%s.%s is not the channel %s" % (owner, channel_attr, cname))
+        if prod_pose_h(ch) not in members:
+            raise ProdPoseError(u"time-mapping", u"channel %s is not in the character's channels clip" % cname)
+        L[u"channels"][cname] = ch
+    bones = prod_pose_seq(prod_pose_attr(gm, u"bones"))
+    by_transform = dict((prod_pose_h(b), b) for b in bones)
+    L[u"bones"] = {}
+    for obj in nodes.values():
+        if not prod_pose_has(obj, u"transform"):
+            continue
+        t = prod_pose_attr(obj, u"transform")
+        if t is None or prod_pose_h(t) not in by_transform:
+            continue
+        m = PROD_POSE_BONE_NAME_RE.match(prod_pose_text(t.GetName()))
+        if m is None:
+            raise ProdPoseError(u"structure-unsupported", u"unrecognised bone transform %s" % prod_pose_text(t.GetName()))
+        index, name = int(m.group(1)), m.group(2)
+        if name in L[u"bones"]:
+            raise ProdPoseError(u"ambiguous", u"bone %s is duplicated" % name)
+        L[u"bones"][name] = {u"dag": obj, u"transform": t, u"index": index}
+    if len(L[u"bones"]) != len(bones):
+        raise ProdPoseError(u"structure-unsupported", u"not every model bone has exactly one scene element")
+    for name in list(profile[u"arm_bones"]) + [profile[u"collar_bone"]]:
+        if name not in L[u"bones"]:
+            raise ProdPoseError(u"controls-missing", u"bone %s not found" % name)
+    operators = prod_pose_seq(prod_pose_attr(animset, u"operators"))
+    seen = set(prod_pose_h(x) for x in operators)
+    for op in prod_pose_seq(prod_pose_attr(shot, u"operators")):
+        if prod_pose_h(op) not in seen:
+            operators.append(op)
+            seen.add(prod_pose_h(op))
+    L[u"operators"] = operators
+    L[u"arm_ops"] = prod_pose_arm_constraints(L)
+    return L
+
+
+def prod_pose_arm_constraints(L):
+    p = L[u"profile"]
+    hand = prod_pose_h(L[u"bones"][p[u"arm_bones"][2]][u"dag"])
+    collar = prod_pose_h(L[u"bones"][p[u"collar_bone"]][u"dag"])
+    found = {u"ik": [], u"hand_orient": [], u"collar_point": [], u"collar_orient": []}
+    for op in L[u"operators"]:
+        kind = prod_pose_type(op)
+        if kind == u"DmeRigIKConstraintOperator":
+            end = prod_pose_slave_target(op, u"endJoint")
+            if end is not None and prod_pose_h(end) == hand:
+                found[u"ik"].append(op)
+        elif kind in (u"DmeRigOrientConstraintOperator", u"DmeRigPointConstraintOperator"):
+            target = prod_pose_slave_target(op, u"slave")
+            if target is None:
+                continue
+            if kind == u"DmeRigOrientConstraintOperator" and prod_pose_h(target) == hand:
+                found[u"hand_orient"].append(op)
+            if prod_pose_h(target) == collar:
+                found[u"collar_point" if kind == u"DmeRigPointConstraintOperator" else u"collar_orient"].append(op)
+    return dict((k, prod_pose_unique(v, u"arm constraint %s" % k)) for k, v in found.items())
+
+
+def prod_pose_binding_identity(L):
+    """Every native identity an operation depends on; compared exactly between its phases."""
+    out = {u"shot": prod_pose_h(L[u"shot"]), u"animset": prod_pose_h(L[u"animset"]), u"gm": prod_pose_h(L[u"gm"]),
+           u"registration": prod_pose_h(L[u"reg"]), u"clip": prod_pose_h(L[u"clip"]),
+           u"rig_handles": dict((k, prod_pose_h(v)) for k, v in L[u"rig_handles"].items()),
+           u"controls": dict((k, prod_pose_h(v)) for k, v in L[u"controls"].items()), u"channels": {},
+           u"bones": dict((k, [prod_pose_h(b[u"dag"]), prod_pose_h(b[u"transform"]), b[u"index"]])
+                          for k, b in L[u"bones"].items()),
+           u"arm_ops": dict((k, prod_pose_h(v)) for k, v in L[u"arm_ops"].items())}
+    for name, ch in L[u"channels"].items():
+        log = ch.GetLog()
+        out[u"channels"][name] = {u"channel": prod_pose_h(ch), u"log": prod_pose_h(log) if log is not None else None,
+                                  u"layers": [prod_pose_h(log.GetLayer(i)) for i in range(int(log.GetNumLayers()))]
+                                  if log is not None else []}
+    return out
+
+
+# --- authored, observed and evaluated captures (PC-1..PC-8) ------------------------------------------------------
+
+def prod_pose_key_value(layer_type, value):
+    if layer_type == u"DmeVector3LogLayer":
+        return prod_pose_vec3(value)
+    if layer_type == u"DmeQuaternionLogLayer":
+        return prod_pose_quat(value)
+    if layer_type == u"DmeFloatLogLayer":
+        if isinstance(value, bool) or not isinstance(value, prod_pose_int_types() + (float,)):
+            raise ProdPoseUnreadable(u"float key of type %s" % type(value).__name__)
+        return prod_pose_num(value)
+    if layer_type == u"DmeColorLogLayer":
+        rgba = [value.r(), value.g(), value.b(), value.a()]
+        if any(isinstance(c, bool) or not isinstance(c, prod_pose_int_types()) for c in rgba):
+            raise ProdPoseUnreadable(u"color key is not four 8-bit channels")
+        return [int(c) for c in rgba]
+    if layer_type == u"DmeBoolLogLayer":
+        if not isinstance(value, bool):
+            raise ProdPoseUnreadable(u"bool key of type %s" % type(value).__name__)
+        return value
+    if layer_type == u"DmeIntLogLayer":
+        if isinstance(value, bool) or not isinstance(value, prod_pose_int_types()):
+            raise ProdPoseUnreadable(u"int key of type %s" % type(value).__name__)
+        return int(value)
+    raise ProdPoseUnreadable(u"no lossless key form for layer type %s" % layer_type)
+
+
+def prod_pose_key_entries(layer, budget):
+    layer_type = prod_pose_type(layer)
+    count = int(layer.GetKeyCount())
+    if count < 0 or count > PROD_POSE_MAX_LAYER_KEYS or budget[0] + count > PROD_POSE_LIVE_MAX_TOTAL_KEYS:
+        raise ProdPoseUnreadable(u"key inventory exceeds its bound")
+    budget[0] += count
+    return [[prod_pose_ticks_of(layer.GetKeyTime(k)), prod_pose_key_value(layer_type, layer.GetKeyValue(k))]
+            for k in range(count)]
+
+
+def prod_pose_channel_authored(ch, budget):
+    binding = dict((n, prod_pose_field(ch, n)) for n in (u"fromElement", u"fromAttribute", u"fromIndex",
+                                                           u"toElement", u"toAttribute", u"toIndex", u"mode"))
+    log = ch.GetLog()
+    row = {u"id": prod_pose_ident(ch), u"binding": binding, u"log": prod_pose_ident(log), u"layers": []}
+    if log is not None:
+        row[u"log_fields"] = dict((k, prod_pose_field(log, k)) for k in (u"usedefaultvalue", u"defaultvalue",
+                                                                          u"curveinfo"))
+        n = int(log.GetNumLayers())
+        if n < 0 or n > 16:
+            raise ProdPoseUnreadable(u"layer count exceeds its bound")
+        for i in range(n):
+            layer = log.GetLayer(i)
+            row[u"layers"].append({u"id": prod_pose_ident(layer), u"type": prod_pose_type(layer),
+                                   u"keys": prod_pose_key_entries(layer, budget)})
+    return row
+
+
+def prod_pose_operator_relationships(op):
+    row = {u"id": prod_pose_ident(op), u"slaves": {}, u"targets": [], u"solver": {}}
+    for slave_attr in PROD_POSE_LIVE_SLAVE_ATTRS:
+        present, slave = prod_pose_opt_attr(op, slave_attr)
+        if present:
+            row[u"slaves"][slave_attr] = {u"slave": prod_pose_ident(slave), u"target": prod_pose_ident(
+                prod_pose_attr(slave, u"target")) if slave is not None else None}
+    if prod_pose_has(op, u"pvTarget"):
+        row[u"pvTarget"] = prod_pose_ident(prod_pose_attr(op, u"pvTarget"))
+    if prod_pose_has(op, u"targets"):
+        for t in prod_pose_seq(prod_pose_attr(op, u"targets")):
+            row[u"targets"].append({u"id": prod_pose_ident(t), u"target": prod_pose_ident(prod_pose_attr(t, u"target")),
+                                    u"oOffset": prod_pose_field(t, u"oOffset"),
+                                    u"vecOffset": prod_pose_field(t, u"vecOffset")})
+    for name in PROD_POSE_SOLVER_FIELDS:
+        if prod_pose_has(op, name):
+            row[u"solver"][name] = prod_pose_field(op, name)
+    return row
+
+
+def prod_pose_capture_authored(L):
+    """The instance's authored state: every channel of its channels clip with complete logs, every control's
+    stored values, the rig registration and the operator relationships. Any change is an authored mutation."""
+    budget = [0]
+    out = {u"channels": [], u"controls": [], u"registration": [prod_pose_ident(x) for x in L[u"owned"]],
+           u"rig_handle_parents": {}, u"operators": []}
+    for ch in sorted(L[u"clip_channels"], key=prod_pose_h):
+        out[u"channels"].append(prod_pose_channel_authored(ch, budget))
+    for c in sorted(L[u"all_controls"], key=prod_pose_h):
+        names = ((u"valuePosition", u"valueOrientation", u"positionChannel", u"orientationChannel")
+                 if prod_pose_type(c) == u"DmeTransformControl" else
+                 (u"value", u"leftValue", u"rightValue", u"channel", u"leftvaluechannel", u"rightvaluechannel"))
+        out[u"controls"].append({u"id": prod_pose_ident(c), u"fields": dict((n, prod_pose_field(c, n))
+                                                                              for n in names)})
+    for name in sorted(L[u"rig_handles"]):
+        out[u"rig_handle_parents"][name] = sorted(x for x in L[u"parents"].get(prod_pose_h(L[u"rig_handles"][name]),
+                                                                              []) if x is not None)
+    for op in sorted(L[u"operators"], key=prod_pose_h):
+        if prod_pose_type(op) not in PROD_POSE_LIVE_KNOWN_OPERATORS:
+            raise ProdPoseError(u"structure-unsupported", u"unsupported operator type %s" % prod_pose_type(op))
+        out[u"operators"].append(prod_pose_operator_relationships(op))
+    out[u"keys"] = budget[0]
+    return prod_pose_roundtrip(prod_pose_require_readable(out, u"authored"))
+
+
+def prod_pose_capture_observed(L):
+    """Every other operator and constraint attribute (PC-1), excluding evaluated outputs and channel-driven ones."""
+    destinations = set()
+    for ch in L[u"clip_channels"]:
+        to, name = prod_pose_field(ch, u"toElement"), prod_pose_field(ch, u"toAttribute")
+        if to.get(u"status") == u"READ" and to[u"value"] is not None and name.get(u"status") == u"READ":
+            destinations.add((to[u"value"][u"handle"], name[u"value"]))
+    elements = {}
+    for op in L[u"operators"]:
+        elements[prod_pose_h(op)] = op
+        for slave_attr in PROD_POSE_LIVE_SLAVE_ATTRS:
+            present, slave = prod_pose_opt_attr(op, slave_attr)
+            if present and slave is not None:
+                elements[prod_pose_h(slave)] = slave
+        if prod_pose_has(op, u"targets"):
+            for t in prod_pose_seq(prod_pose_attr(op, u"targets")):
+                elements[prod_pose_h(t)] = t
+    out = {}
+    for h in sorted(elements):
+        obj = elements[h]
+        skip = PROD_POSE_LIVE_EVALUATED_OUTPUTS.get(prod_pose_type(obj), ())
+        row = {}
+        for name in prod_pose_attribute_names(obj):
+            if name in skip or (h, name) in destinations:
+                continue
+            row[name] = prod_pose_field(obj, name)
+        out[type(u"")(h)] = {u"id": prod_pose_ident(obj), u"attributes": row}
+    return prod_pose_roundtrip(prod_pose_require_readable(out, u"constraint and operator"))
+
+
+def prod_pose_transform_state(dag):
+    t = prod_pose_attr(dag, u"transform")
+    return {u"local_position": prod_pose_vec3(prod_pose_attr(t, u"position")),
+            u"local_orientation": prod_pose_quat(prod_pose_attr(t, u"orientation")),
+            u"scale": prod_pose_field(t, u"scale"), u"world_position": prod_pose_vec3(dag.GetAbsPosition()),
+            u"world_orientation": prod_pose_quat(dag.GetAbsOrientation())}
+
+
+def prod_pose_capture_skeleton(L, t_chan):
+    """Evaluated state: every bone, the region's rig handles, the model, the constraint weights and the region's
+    channels' log values at the channel clock and at the pinned channel time."""
+    dag_to_bone = dict((prod_pose_h(v[u"dag"]), k) for k, v in L[u"bones"].items())
+    out = {u"bones": {}, u"handles": {}, u"weights": {}, u"arm_channels": {}}
+    for name, b in L[u"bones"].items():
+        row = prod_pose_transform_state(b[u"dag"])
+        row[u"index"] = b[u"index"]
+        row[u"handle"] = prod_pose_h(b[u"dag"])
+        parents = [p for p in L[u"parents"].get(prod_pose_h(b[u"dag"]), []) if p is not None]
+        row[u"parent"] = dag_to_bone.get(parents[0]) if len(parents) == 1 else None
+        out[u"bones"][name] = row
+    for name, dag in L[u"rig_handles"].items():
+        row = prod_pose_transform_state(dag)
+        row[u"handle"] = prod_pose_h(dag)
+        row[u"parents"] = sorted(p for p in L[u"parents"].get(prod_pose_h(dag), []) if p is not None)
+        out[u"handles"][name] = row
+    out[u"model"] = prod_pose_transform_state(L[u"gm"])
+    out[u"rig_root_handle"] = prod_pose_h(L[u"rig_handles"][L[u"profile"][u"root"]])
+    for key, op in L[u"arm_ops"].items():
+        out[u"weights"][key] = [{u"target": prod_pose_ident(prod_pose_attr(t, u"target")),
+                                 u"weight": prod_pose_num(prod_pose_attr(t, u"targetWeight"))}
+                                for t in prod_pose_seq(prod_pose_attr(op, u"targets"))]
+    for name, ch in L[u"channels"].items():
+        log, current = ch.GetLog(), ch.GetCurrentTime()
+        out[u"arm_channels"][name] = {u"current_ticks": prod_pose_ticks_of(current),
+                                      u"value_current": prod_pose_plain(log.GetValue(current)),
+                                      u"value_pinned": prod_pose_plain(log.GetValue(prod_pose_time(t_chan)))}
+    out[u"arm_op_handles"] = dict((k, prod_pose_h(v)) for k, v in L[u"arm_ops"].items())
+    return prod_pose_roundtrip(prod_pose_require_readable(out, u"evaluated"))
+
+
+# --- bindings, writers and structure (C4: section 5.4 checks 2-7) ------------------------------------------------
+
+def prod_pose_channel_binding(L, cname, spec):
+    """One rig-input channel verified by identity: control -> channel -> rig-handle transform attribute, Play mode,
+    profile log and layer types, one layer, no curve info."""
+    owner, channel_attr, source_attr, dest_attr, log_type, layer_type = spec
+    ch, control = L[u"channels"][cname], L[u"controls"][owner]
+    handle_transform = prod_pose_attr(L[u"rig_handles"][owner], u"transform")
+    b = dict((k, prod_pose_required(prod_pose_field(ch, k), cname + u"." + k)) for k in
+             (u"fromElement", u"fromAttribute", u"fromIndex", u"toElement", u"toAttribute", u"toIndex", u"mode"))
+    if (b[u"fromElement"] is None or b[u"fromElement"][u"handle"] != prod_pose_h(control)
+            or b[u"fromAttribute"] != source_attr or b[u"toElement"] is None
+            or b[u"toElement"][u"handle"] != prod_pose_h(handle_transform) or b[u"toAttribute"] != dest_attr
+            or b[u"fromIndex"] != 0 or b[u"toIndex"] != 0):
+        raise ProdPoseError(u"rig-differs", u"channel %s is not the expected rig-input binding" % cname)
+    if isinstance(b[u"mode"], bool) or b[u"mode"] != 3:
+        raise ProdPoseError(u"structure-unsupported", u"channel %s is not in Play mode (3)" % cname)
+    log = ch.GetLog()
+    if log is None or prod_pose_type(log) != log_type or int(log.GetNumLayers()) != 1:
+        raise ProdPoseError(u"structure-unsupported", u"channel %s log is not one %s layer" % (cname, log_type))
+    layer = log.GetLayer(0)
+    if prod_pose_type(layer) != layer_type:
+        raise ProdPoseError(u"structure-unsupported", u"channel %s layer is not %s" % (cname, layer_type))
+    role = {u"control": owner, u"control_attribute": channel_attr, u"from_attribute": source_attr, u"from_index": 0,
+            u"to_rig_handle": owner, u"to_attribute": dest_attr, u"to_index": 0, u"mode": 3, u"log_type": log_type,
+            u"layer_type": layer_type, u"layer_count": 1, u"curve_info": u"none"}
+    return {u"name": cname, u"channel": ch, u"log": log, u"layer": layer,
+            u"kind": u"quaternion" if u"Quaternion" in layer_type else u"vector", u"role": role,
+            u"owner": owner, u"key": u"local_orientation" if channel_attr == u"orientationChannel" else
+            u"local_position"}
+
+
+def prod_pose_bindings(L):
+    p = L[u"profile"]
+    out = {}
+    for cname, spec in sorted(list(p[u"written_channels"].items()) + list(p[u"observed_channels"].items())):
+        out[cname] = prod_pose_channel_binding(L, cname, spec)
+    return out
+
+
+def prod_pose_writer_index():
+    """Document-wide channel and operator inventory over binding metadata only; strict (W2 writer_index)."""
+    movie = sfmApp.GetMovie()
+    if movie is None:
+        raise ProdPoseError(u"evidence-unreadable", u"the movie is unavailable")
+    seen, stack, channels, operators, nodes = set(), [movie], {}, {}, 0
+    while stack:
+        el = stack.pop()
+        h = prod_pose_h(el)
+        if h in seen:
+            continue
+        seen.add(h)
+        nodes += 1
+        if nodes > 200000:
+            raise ProdPoseUnreadable(u"writer discovery exceeds its bound")
+        kind = prod_pose_type(el)
+        if kind == u"DmeChannel":
+            channels[h] = el
+        elif kind == u"DmeFilmClip":
+            if prod_pose_has(el, u"subClipTrackGroup"):
+                sub = prod_pose_attr(el, u"subClipTrackGroup")
+                if sub is not None:
+                    stack.append(sub)
+            if prod_pose_has(el, u"trackGroups"):
+                stack.extend(prod_pose_seq(prod_pose_attr(el, u"trackGroups")))
+            if prod_pose_has(el, u"operators"):
+                for op in prod_pose_seq(prod_pose_attr(el, u"operators")):
+                    operators[prod_pose_h(op)] = op
+            if prod_pose_has(el, u"animationSets"):
+                for a in prod_pose_seq(prod_pose_attr(el, u"animationSets")):
+                    for op in prod_pose_seq(prod_pose_attr(a, u"operators")):
+                        operators[prod_pose_h(op)] = op
+        elif kind == u"DmeTrackGroup":
+            stack.extend(prod_pose_seq(prod_pose_attr(el, u"tracks")))
+        elif kind == u"DmeTrack":
+            stack.extend(prod_pose_seq(prod_pose_attr(el, u"children")))
+        elif kind == u"DmeChannelsClip":
+            stack.extend(prod_pose_seq(prod_pose_attr(el, u"channels"), 65536))
+    index = {u"destinations": {}, u"logs": {}, u"layers": {}, u"slave_targets": {}}
+    for h, op in operators.items():
+        kind = prod_pose_type(op)
+        if kind == u"DmeChannel":
+            channels[h] = op
+            continue
+        if kind not in PROD_POSE_LIVE_KNOWN_OPERATORS:
+            raise ProdPoseError(u"structure-unsupported", u"unsupported operator type in the document: %s" % kind)
+        for slave_attr in PROD_POSE_LIVE_SLAVE_ATTRS:
+            target = prod_pose_slave_target(op, slave_attr)
+            if target is not None:
+                index[u"slave_targets"].setdefault(prod_pose_h(target), []).append(h)
+    for h, ch in channels.items():
+        to = prod_pose_attr(ch, u"toElement")
+        if to is not None:
+            key = u"%d:%s" % (prod_pose_h(to), prod_pose_text(prod_pose_attr(ch, u"toAttribute")))
+            index[u"destinations"].setdefault(key, []).append(h)
+        log = ch.GetLog()
+        if log is None:
+            continue
+        index[u"logs"].setdefault(prod_pose_h(log), []).append(h)
+        if len(index[u"logs"][prod_pose_h(log)]) > 1:
+            continue
+        for i in range(int(log.GetNumLayers())):
+            index[u"layers"].setdefault(prod_pose_h(log.GetLayer(i)), []).append(prod_pose_h(log))
+    return index
+
+
+def prod_pose_check_writers(L, bindings, index):
+    """PC-3: each written channel is the unique writer of its destination; its log and layer are its own; no
+    constraint drives the hand or elbow handle; no channel writes their controls."""
+    p = L[u"profile"]
+    for cname in p[u"written_channels"]:
+        b = bindings[cname]
+        to = prod_pose_attr(b[u"channel"], u"toElement")
+        key = u"%d:%s" % (prod_pose_h(to), prod_pose_text(prod_pose_attr(b[u"channel"], u"toAttribute")))
+        if index[u"destinations"].get(key) != [prod_pose_h(b[u"channel"])]:
+            raise ProdPoseError(u"shared-authority", u"channel %s is not the only writer of its rig input" % cname)
+        if index[u"logs"].get(prod_pose_h(b[u"log"])) != [prod_pose_h(b[u"channel"])]:
+            raise ProdPoseError(u"shared-authority", u"channel %s shares its log" % cname)
+        if index[u"layers"].get(prod_pose_h(b[u"layer"])) != [prod_pose_h(b[u"log"])]:
+            raise ProdPoseError(u"shared-authority", u"channel %s shares its layer" % cname)
+    for owner in (p[u"hand"], p[u"elbow"]):
+        if index[u"slave_targets"].get(prod_pose_h(L[u"rig_handles"][owner])):
+            raise ProdPoseError(u"shared-authority", u"a constraint drives rig handle %s" % owner)
+        control = L[u"controls"][owner]
+        for source_attr in (u"valuePosition", u"valueOrientation"):
+            if index[u"destinations"].get(u"%d:%s" % (prod_pose_h(control), source_attr)):
+                raise ProdPoseError(u"shared-authority", u"a channel writes control %s.%s" % (owner, source_attr))
+
+
+def prod_pose_scale_ok(record):
+    return record.get(u"status") == u"ABSENT" or (record.get(u"status") == u"READ" and record[u"value"] == 1.0)
+
+
+def prod_pose_arm_chain(skel, profile):
+    children = {}
+    for name, row in skel[u"bones"].items():
+        children.setdefault(row[u"parent"], []).append(name)
+    chain, pending = [], [profile[u"collar_bone"]]
+    while pending:
+        name = pending.pop()
+        chain.append(name)
+        if name != profile[u"arm_bones"][2]:
+            pending.extend(children.get(name, []))
+    return sorted(chain)
+
+
+def prod_pose_descendants(skel, bone):
+    children = {}
+    for name, row in skel[u"bones"].items():
+        children.setdefault(row[u"parent"], []).append(name)
+    out, pending = [], list(children.get(bone, []))
+    while pending:
+        name = pending.pop()
+        out.append(name)
+        pending.extend(children.get(name, []))
+    return sorted(out)
+
+
+def prod_pose_structural_checks(skel, auth, profile):
+    """Section 5.4 checks 3-7 by native identity: arm hierarchy, unit scales, rig_root parentage of the written
+    handles, single unit-weight targets on the right handles, IK joints and pole target, constraint slaves."""
+    tol = profile[u"tolerances"]
+    hand_bone, collar, root = profile[u"arm_bones"][2], profile[u"collar_bone"], profile[u"root"]
+    chain = prod_pose_arm_chain(skel, profile)
+    if not set(profile[u"arm_bones"]) <= set(chain):
+        raise ProdPoseError(u"rig-differs", u"the arm hierarchy lacks the upper arm, lower arm or hand")
+    for name in chain:
+        if not prod_pose_scale_ok(skel[u"bones"][name][u"scale"]):
+            raise ProdPoseError(u"structure-unsupported", u"arm bone %s has an unsupported scale" % name)
+    for name in skel[u"handles"]:
+        if not prod_pose_scale_ok(skel[u"handles"][name][u"scale"]):
+            raise ProdPoseError(u"structure-unsupported", u"rig handle %s has an unsupported scale" % name)
+    if not prod_pose_scale_ok(skel[u"model"][u"scale"]):
+        raise ProdPoseError(u"structure-unsupported", u"the model has an unsupported scale")
+    r = (skel[u"handles"][root][u"world_position"], skel[u"handles"][root][u"world_orientation"])
+    for name in (profile[u"hand"], profile[u"elbow"]):
+        h = skel[u"handles"][name]
+        if h[u"parents"] != [skel[u"rig_root_handle"]]:
+            raise ProdPoseError(u"rig-differs", u"%s is not parented to %s" % (name, root))
+        p, q = prod_pose_compose(r, (h[u"local_position"], h[u"local_orientation"]))
+        if prod_pose_distance(p, h[u"world_position"]) > tol[u"position"] or \
+                prod_pose_angle_deg(q, h[u"world_orientation"]) > tol[u"angle_degrees"]:
+            raise ProdPoseError(u"rig-differs", u"%s world transform is not %s x local" % (name, root))
+    target_handle = {u"ik": profile[u"hand"], u"hand_orient": profile[u"hand"], u"collar_point": profile[u"anchor"],
+                     u"collar_orient": profile[u"anchor"]}
+    types = {u"ik": u"DmeRigIKConstraintOperator", u"hand_orient": u"DmeRigOrientConstraintOperator",
+             u"collar_point": u"DmeRigPointConstraintOperator", u"collar_orient": u"DmeRigOrientConstraintOperator"}
+    ops = dict((o[u"id"][u"handle"], o) for o in auth[u"operators"])
+    for key in (u"ik", u"hand_orient", u"collar_point", u"collar_orient"):
+        rows = skel[u"weights"].get(key) or []
+        if len(rows) != 1 or abs(rows[0][u"weight"] - 1.0) > tol[u"weight"]:
+            raise ProdPoseError(u"rig-differs", u"constraint %s must have one target of weight 1.0" % key)
+        op = ops[skel[u"arm_op_handles"][key]]
+        if op[u"id"][u"type"] != types[key] or len(op[u"targets"]) != 1:
+            raise ProdPoseError(u"rig-differs", u"constraint %s has an unexpected type or target count" % key)
+        expected = skel[u"handles"][target_handle[key]][u"handle"]
+        if op[u"targets"][0][u"target"] is None or op[u"targets"][0][u"target"][u"handle"] != expected or \
+                rows[0][u"target"] is None or rows[0][u"target"][u"handle"] != expected:
+            raise ProdPoseError(u"rig-differs", u"constraint %s does not target %s" % (key, target_handle[key]))
+    ik = ops[skel[u"arm_op_handles"][u"ik"]]
+    if ik.get(u"pvTarget") is None or ik[u"pvTarget"][u"handle"] != skel[u"handles"][profile[u"pole_target"]][
+            u"handle"]:
+        raise ProdPoseError(u"rig-differs", u"the IK pole target is not %s" % profile[u"pole_target"])
+    for slot, bone in zip((u"startJoint", u"midJoint", u"endJoint"), profile[u"arm_bones"]):
+        joint = (ik[u"slaves"].get(slot) or {}).get(u"target")
+        if joint is None or joint[u"handle"] != skel[u"bones"][bone][u"handle"]:
+            raise ProdPoseError(u"rig-differs", u"IK %s is not %s" % (slot, bone))
+    for key, bone in ((u"hand_orient", hand_bone), (u"collar_point", collar), (u"collar_orient", collar)):
+        slave = (ops[skel[u"arm_op_handles"][key]][u"slaves"].get(u"slave") or {}).get(u"target")
+        if slave is None or slave[u"handle"] != skel[u"bones"][bone][u"handle"]:
+            raise ProdPoseError(u"rig-differs", u"constraint %s does not drive %s" % (key, bone))
+    for name in (profile[u"root"], profile[u"anchor"]):
+        prod_pose_quaternion_input(skel[u"handles"][name][u"world_orientation"], name + u" orientation",
+                                   u"evidence-unreadable")
+    return chain
+
+
+def prod_pose_portable_value(record, path):
+    if record.get(u"status") == u"ABSENT":
+        return {u"present": False}
+    value = prod_pose_required(record, path)
+
+    def check(v):
+        if isinstance(v, dict):
+            raise ProdPoseError(u"structure-unsupported", u"constraint field %s holds an element reference" % path)
+        if isinstance(v, list):
+            if len(v) > 16:
+                raise ProdPoseError(u"structure-unsupported", u"constraint field %s is too long" % path)
+            for x in v:
+                if isinstance(x, (list, dict)):
+                    raise ProdPoseError(u"structure-unsupported", u"constraint field %s is nested" % path)
+                check(x)
+        elif not (v is None or isinstance(v, (bool, float, type(u""))) or isinstance(v, prod_pose_int_types())):
+            raise ProdPoseError(u"structure-unsupported", u"constraint field %s has an unsupported type" % path)
+    check(value)
+    return {u"present": True, u"value": value}
+
+
+def prod_pose_parent_role(L, element_handle):
+    parents = [p for p in L[u"parents"].get(element_handle, []) if p is not None]
+    if len(parents) != 1:
+        raise ProdPoseError(u"rig-differs", u"a rig handle does not have exactly one parent")
+    parent = L[u"nodes"][parents[0]]
+    return {u"type": prod_pose_type(parent), u"name": prod_pose_text(parent.GetName())}
+
+
+def prod_pose_descriptor(L, skel, auth, bindings):
+    """The portable compatibility descriptor of the live arm: names and typed values, never runtime handles."""
+    p = L[u"profile"]
+    chain = []
+    for name in prod_pose_structural_checks(skel, auth, p):
+        row = skel[u"bones"][name]
+        chain.append({u"name": name, u"index": row[u"index"], u"parent": row[u"parent"],
+                      u"local_position": list(row[u"local_position"])})
+    handles = dict((n, {u"parent": prod_pose_parent_role(L, skel[u"handles"][n][u"handle"])})
+                   for n in (p[u"root"], p[u"anchor"], p[u"hand"], p[u"elbow"]))
+    ops = dict((o[u"id"][u"handle"], o) for o in auth[u"operators"])
+    target_handle = {u"ik": p[u"hand"], u"hand_orient": p[u"hand"], u"collar_point": p[u"anchor"],
+                     u"collar_orient": p[u"anchor"]}
+    constraints = {}
+    for key in (u"ik", u"hand_orient", u"collar_point", u"collar_orient"):
+        op = ops[skel[u"arm_op_handles"][key]]
+        t = op[u"targets"][0]
+        row = {u"type": op[u"id"][u"type"], u"target_rig_handle": target_handle[key],
+               u"target_weight": skel[u"weights"][key][0][u"weight"],
+               u"offsets": {u"oOffset": prod_pose_portable_value(t[u"oOffset"], key + u".oOffset"),
+                            u"vecOffset": prod_pose_portable_value(t[u"vecOffset"], key + u".vecOffset")},
+               u"solver": dict((n, prod_pose_portable_value(v, key + u"." + n)) for n, v in sorted(op[u"solver"].items()))}
+        if key == u"ik":
+            row[u"joints"] = dict(zip((u"startJoint", u"midJoint", u"endJoint"), p[u"arm_bones"]))
+            row[u"pole_target_rig_handle"] = p[u"pole_target"]
+        else:
+            row[u"slave_bone"] = p[u"arm_bones"][2] if key == u"hand_orient" else p[u"collar_bone"]
+        constraints[key] = row
+    return prod_pose_roundtrip({u"arm_chain": chain, u"scale_state": u"unit", u"handles": handles,
+                                u"constraints": constraints,
+                                u"channels": dict((n, bindings[n][u"role"]) for n in sorted(bindings)),
+                                u"follow_the_arm_bones": prod_pose_descendants(skel, p[u"arm_bones"][2])})
+
+
+def prod_pose_compare_descriptor(saved, live, tol):
+    """Exact equality except arm-bone local offsets (bone_offset) and constraint weights (weight)."""
+    problems, worst = [], 0.0
+    a, b = saved.get(u"arm_chain"), live.get(u"arm_chain")
+    if not isinstance(a, list) or len(a) != len(b):
+        problems.append(u"arm chain length")
+    else:
+        for x, y in zip(a, b):
+            if (x[u"name"], x[u"index"], x[u"parent"]) != (y[u"name"], y[u"index"], y[u"parent"]):
+                problems.append(u"arm chain bone %s" % x[u"name"])
+            else:
+                worst = max(worst, prod_pose_distance(x[u"local_position"], y[u"local_position"]))
+        if worst > tol[u"bone_offset"]:
+            problems.append(u"arm bone offsets differ (%.6g)" % worst)
+    for key in (u"scale_state", u"handles", u"channels", u"follow_the_arm_bones"):
+        problems.extend(prod_pose_differences(saved.get(key), live.get(key), key))
+    sc, lc = saved.get(u"constraints") or {}, live.get(u"constraints") or {}
+    if sorted(sc) != sorted(lc):
+        problems.append(u"constraint set")
+    else:
+        for key in sorted(sc):
+            s, l = dict(sc[key]), dict(lc[key])
+            ws, wl = s.pop(u"target_weight", None), l.pop(u"target_weight", None)
+            if not prod_pose_is_number(ws) or not prod_pose_is_number(wl) or abs(ws - wl) > tol[u"weight"]:
+                problems.append(u"constraints/%s/target_weight" % key)
+            problems.extend(prod_pose_differences(s, l, u"constraints/" + key))
+    if problems:
+        raise ProdPoseError(u"rig-differs", u"the arm rig differs from the saved pose: %s" % problems[:16])
+    return worst
+
+
+def prod_pose_effective_inputs(skel, bindings, tol):
+    """The rig-handle locals equal their channels' log values at the pinned time. (The channel clock,
+    GetCurrentTime, is recorded in the skeleton as a diagnostic only; see prod_pose_time_decide.)"""
+    for cname, b in bindings.items():
+        local = skel[u"handles"][b[u"owner"]][b[u"key"]]
+        value = skel[u"arm_channels"][cname][u"value_pinned"]
+        bad = (prod_pose_angle_deg(local, value) > tol[u"effective_angle_degrees"] if len(value) == 4 else
+               prod_pose_distance(local, value) > tol[u"effective_position"])
+        if bad:
+            raise ProdPoseError(u"evidence-unreadable", u"%s is not evaluated at its log value at the pinned time" %
+                                cname)
+
+
+# --- time (C9b) and layer snapshots ---------------------------------------------------------------------------
+
+def prod_pose_film_clips(movie):
+    """The movie's shots (the film clips of its sub-clip track group), whose ranges are in the document domain."""
+    out = []
+    group = prod_pose_attr(movie, u"subClipTrackGroup") if prod_pose_has(movie, u"subClipTrackGroup") else None
+    if group is None:
+        raise ProdPoseError(u"time-mapping", u"the movie's shots cannot be read")
+    for track in prod_pose_seq(prod_pose_attr(group, u"tracks")):
+        for clip in prod_pose_seq(prod_pose_attr(track, u"children")):
+            if prod_pose_type(clip) == u"DmeFilmClip":
+                out.append(clip)
+    return out
+
+
+def prod_pose_time_read(L, names):
+    """Read t_doc, the shots, SFM's current shot, t_shot and each channel's converted, reported and reverse times,
+    then decide the triple with prod_pose_time_decide (no tolerance, no substitution)."""
+    head = prod_pose_num(sfmApp.GetHeadTimeInSeconds())
+    t_doc = prod_pose_ticks_of(vs.DmeTime_t(float(head)))
+    movie = sfmApp.GetMovie()
+    if movie is None:
+        raise ProdPoseError(u"time-mapping", u"the movie is unavailable")
+    shots = [{u"id": prod_pose_h(c), u"start": prod_pose_ticks_of(c.GetStartTime()),
+              u"end": prod_pose_ticks_of(c.GetEndTime())} for c in prod_pose_film_clips(movie)]
+    current = sfmApp.GetShotAtCurrentTime()
+    shot, clip = L[u"shot"], L[u"clip"]
+    t_shot = prod_pose_ticks_of(shot.ToChildMediaTime(prod_pose_time(t_doc), False))
+    channels = {}
+    for name in names:
+        ch = L[u"channels"][name]
+        converted = prod_pose_ticks_of(clip.ToChildMediaTime(prod_pose_time(t_shot), False))
+        channels[name] = {u"clip": prod_pose_h(clip), u"converted": converted,
+                          u"reported": prod_pose_ticks_of(ch.GetCurrentTime()),
+                          u"reverse": prod_pose_ticks_of(clip.FromChildMediaTime(prod_pose_time(converted), False))}
+    rec = {u"t_doc": t_doc, u"shots": shots, u"token_shot": prod_pose_h(shot),
+           u"sfm_current_shot": prod_pose_h(current) if current is not None else -1, u"t_shot": t_shot,
+           u"path": {u"shot": prod_pose_h(shot), u"clips": [prod_pose_h(clip)]}, u"channels": channels}
+    decided = prod_pose_time_decide(rec)
+    decided[u"seconds"] = {u"t_doc": t_doc / 10000.0, u"t_shot": t_shot / 10000.0,
+                           u"t_chan": decided[u"t_chan"] / 10000.0}
+    try:  # diagnostic only, and kept out of the returned record (it is compared for equality elsewhere)
+        log_line("PROD_POSE_CHANNEL_CLOCK t_chan=%d reported=%r" % (
+            decided[u"t_chan"], dict((n, c[u"reported"]) for n, c in sorted(channels.items()))))
+    except Exception:
+        pass
+    return decided
+
+
+def prod_pose_layer_snapshot(b, t_chan):
+    """A Stage A layer snapshot read through the native log API, with the layer's and log's complete attribute
+    metadata (PC-5) for exact comparison."""
+    unreadable = []
+
+    def read(label, fn, default=None):
+        try:
+            return fn()
+        except Exception:
+            unreadable.append(label)
+            return default
+    ch, log, layer = b[u"channel"], b[u"log"], b[u"layer"]
+    mode = read(u"mode", lambda: prod_pose_required(prod_pose_field(ch, u"mode"), u"mode"))
+    curve = prod_pose_field(log, u"curveinfo")
+    curveinfo = {u"ABSENT": u"absent"}.get(curve[u"status"]) or (
+        u"null" if curve[u"status"] == u"READ" and curve[u"value"] is None else u"present")
+    if curve[u"status"] == u"UNREADABLE":
+        unreadable.append(u"curveinfo")
+    using = read(u"curvetypes", lambda: bool(layer.IsUsingCurveTypes()))
+    compressed = read(u"compressed", lambda: bool(layer.IsCompressed()))
+    defaults = read(u"defaults", lambda: (prod_pose_components(log.GetDefaultValue(), 4 if b[u"kind"] == u"quaternion"
+                                                                else 3) if log.HasDefaultValue() else []), [])
+
+    def bookmarks():
+        out = []
+        for c in range(int(log.GetNumBookmarkComponents())):
+            n = int(log.GetNumBookmarks(c))
+            out.append(n)
+            out.extend(prod_pose_ticks_of(log.GetBookmarkTime(i, c)) for i in range(n))
+        return out
+    marks = read(u"bookmarks", bookmarks, [])
+    count = read(u"count", lambda: int(layer.GetKeyCount()), 0)
+    times = read(u"times", lambda: [prod_pose_ticks_of(layer.GetKeyTime(k)) for k in range(count)], [])
+    reader = prod_pose_quat if b[u"kind"] == u"quaternion" else prod_pose_vec3
+    values = read(u"values", lambda: [reader(layer.GetKeyValue(k)) for k in range(count)], [])
+    evaluated = read(u"evaluated", lambda: reader(log.GetValue(prod_pose_time(t_chan))))
+
+    def metadata():
+        out = {}
+        for owner, obj in ((u"log", log), (u"layer", layer)):
+            for name in prod_pose_attribute_names(obj):
+                if owner == u"layer" and name in (u"times", u"values"):
+                    continue
+                if owner == u"log" and name == u"layers":
+                    continue
+                out[owner + u"." + name] = prod_pose_field(obj, name)
+        return prod_pose_roundtrip(prod_pose_require_readable(out, u"log metadata"))
+    meta = read(u"metadata", metadata, {})
+    return {u"name": b[u"name"], u"kind": b[u"kind"], u"mode": mode, u"layer_count": int(log.GetNumLayers()),
+            u"log_type": prod_pose_type(log), u"layer_type": prod_pose_type(layer), u"curveinfo": curveinfo,
+            u"curvetypes": u"present" if using else u"absent", u"compressed": u"present" if compressed else u"empty",
+            u"defaults": defaults, u"bookmarks": marks, u"times": times, u"values": values,
+            u"evaluated_at_t": evaluated, u"metadata": meta, u"unreadable": unreadable}
+
+
+def prod_pose_undo_state(dm_obj):
+    def call(name):
+        try:
+            value = getattr(dm_obj, name)()
+            return prod_pose_text(value) if isinstance(value, (bytes, type(u""))) else value
+        except Exception as exc:
+            return {u"unreadable": repr(exc)}
+    return {u"enabled": call("IsUndoEnabled"), u"can_undo": call("CanUndo"), u"can_redo": call("CanRedo"),
+            u"undo_desc": call("GetUndoDesc"), u"redo_desc": call("GetRedoDesc")}
+
+
+def prod_pose_undo_problems(u):
+    problems = []
+    for k in PROD_POSE_UNDO_REQUIRED:
+        v = u.get(k)
+        if k in (u"enabled", u"can_undo", u"can_redo"):
+            if not isinstance(v, bool):
+                problems.append(k)
+        elif not isinstance(v, prod_pose_text_types()):
+            problems.append(k)
+    return problems
+
+
+# --- one region, fully checked (section 5.4) -----------------------------------------------------------------------
+
+def prod_pose_region_state(row, profile):
+    """Resolve and read one region of the pinned instance: identities, bindings, writers, time triple, authored,
+    observed and evaluated state, structure and descriptor. Refuses (ProdPoseError) on any failed check."""
+    try:
+        L = prod_pose_live_arm(row, profile)
+        bindings = prod_pose_bindings(L)
+        prod_pose_check_writers(L, bindings, prod_pose_writer_index())
+        time = prod_pose_time_read(L, sorted(profile[u"written_channels"]))
+        authored = prod_pose_capture_authored(L)
+        observed = prod_pose_capture_observed(L)
+        skel = prod_pose_capture_skeleton(L, time[u"t_chan"])
+        descriptor = prod_pose_descriptor(L, skel, authored, bindings)
+        prod_pose_effective_inputs(skel, bindings, profile[u"tolerances"])
+    except ProdPoseUnreadable as exc:
+        raise ProdPoseError(u"evidence-unreadable", u"%s" % exc)
+    return {u"L": L, u"bindings": bindings, u"time": time, u"authored": authored, u"observed": observed,
+            u"skel": skel, u"descriptor": descriptor, u"identity": prod_pose_binding_identity(L)}
+
+
+def prod_pose_world(skel, kind, name):
+    row = skel[kind][name]
+    return (row[u"world_position"], row[u"world_orientation"])
+
+
+# --- capture (C5): read-only, at the pinned time ------------------------------------------------------------------
+
+def prod_pose_capture(identity, authorization, regions, reg, pinned_time=None):
+    """Save New: read-only capture of exactly the chosen regions of the pinned instance at the current time
+    (Addendum 6.1). Never moves the playhead, writes or opens Undo. pinned_time, when given, is the time triple
+    read when the Save dialog opened; any change refuses (stale)."""
+    regions = sorted(set(regions))
+    for r in regions:
+        if r not in PROD_POSE_LIVE_REGIONS:
+            raise ProdPoseError(u"not-qualified", PROD_POSE_MESSAGES[u"save-region-unreadable"] %
+                                {u"part": PROD_POSE_PART_NAMES.get(r, r)})
+    row = prod_resolve_instance(prod_instance_token(authorization[u"context"]), identity)
+    out_regions, time = {}, None
+    for r in regions:
+        profile = prod_pose_region_profile(reg, authorization, r)
+        try:
+            st = prod_pose_region_state(row, profile)
+        except ProdPoseError as exc:
+            raise ProdPoseError(exc.code, (PROD_POSE_MESSAGES[u"save-region-unreadable"] %
+                                           {u"part": PROD_POSE_PART_NAMES[r]}) + u" (%s)" % exc)
+        for cname, b in st[u"bindings"].items():
+            if cname in profile[u"written_channels"]:
+                problems = prod_pose_layer_problems(prod_pose_layer_snapshot(b, st[u"time"][u"t_chan"]),
+                                                    (b[u"role"][u"log_type"], b[u"role"][u"layer_type"]))
+                if problems:
+                    raise ProdPoseError(u"structure-unsupported", (PROD_POSE_MESSAGES[u"save-region-unreadable"] %
+                                        {u"part": PROD_POSE_PART_NAMES[r]}) + u" (%s: %s)" % (cname, problems))
+        if time is not None and st[u"time"] != time:
+            raise ProdPoseError(u"time-mapping", PROD_POSE_MESSAGES[u"time-mapping"])
+        time = st[u"time"]
+        out_regions[r] = prod_pose_region_payload(st, profile)
+    if pinned_time is not None and (time[u"t_doc"], time[u"t_shot"], time[u"t_chan"]) != (
+            pinned_time[u"t_doc"], pinned_time[u"t_shot"], pinned_time[u"t_chan"]):
+        raise ProdPoseError(u"stale", PROD_POSE_MESSAGES[u"stale"])
+    try:
+        shot_name = prod_pose_text(row["shot"].GetName()) or u"shot"
+    except Exception:
+        shot_name = u"shot"
+    return prod_pose_roundtrip({
+        u"format": PROD_POSE_FORMAT, u"version": PROD_POSE_VERSION, u"conventions": dict(PROD_POSE_CONVENTIONS),
+        u"registry": {u"profile_set": PROD_POSE_REGISTRY_FORMAT, u"version": 1},
+        u"source": {u"rig_class": authorization[u"destination"][u"rig_class"], u"model_ref": u(identity["model"]),
+                    u"shot_name": shot_name[:256], u"t_doc_ticks": time[u"t_doc"], u"t_shot_ticks": time[u"t_shot"]},
+        u"regions": out_regions})
+
+
+def prod_pose_region_profile(reg, authorization, region):
+    cls = reg[u"rig_classes"].get(authorization[u"destination"][u"rig_class"]) or {}
+    found = [pid for pid in cls.get(u"profiles", []) if reg[u"profiles"][pid][u"region"] == region]
+    if len(found) != 1:
+        raise ProdPoseError(u"not-qualified", u"no %s profile for this character" % region)
+    profile = dict(reg[u"profiles"][found[0]])
+    profile[u"_id"] = found[0]
+    return profile
+
+
+def prod_pose_region_payload(st, profile):
+    """Collar-relative goals and the independently evaluated skeletal oracle (W2 build_payload)."""
+    skel = st[u"skel"]
+    identity_q = [0.0, 0.0, 0.0, 1.0]
+    anchor = prod_pose_world(skel, u"handles", profile[u"anchor"])
+    root = prod_pose_world(skel, u"handles", profile[u"root"])
+    inv_c = prod_pose_invert(anchor)
+    hand, elbow = skel[u"handles"][profile[u"hand"]], skel[u"handles"][profile[u"elbow"]]
+    hand_c = prod_pose_compose(inv_c, prod_pose_compose(root, (hand[u"local_position"], hand[u"local_orientation"])))
+    elbow_w = prod_pose_compose(root, (elbow[u"local_position"], identity_q))
+    elbow_c = prod_pose_compose(inv_c, (elbow_w[0], identity_q))[0]
+    bones = {}
+    for name in profile[u"arm_bones"]:
+        row = skel[u"bones"][name]
+        p, q = prod_pose_compose(inv_c, (row[u"world_position"], row[u"world_orientation"]))
+        bones[name] = {u"local_orientation": list(row[u"local_orientation"]), u"anchor_position": p,
+                       u"anchor_orientation": q}
+    origin = prod_pose_compose(inv_c, (skel[u"bones"][profile[u"arm_bones"][0]][u"world_position"], identity_q))[0]
+    return {u"profile_id": profile[u"_id"], u"anchor": profile[u"anchor"],
+            u"frame": u"source-anchor-world-at-capture",
+            u"goals": {u"hand": {u"position": hand_c[0], u"orientation": hand_c[1]},
+                       u"elbow": {u"position": elbow_c}},
+            u"oracle": {u"bones": bones, u"upper_arm_origin": origin}, u"descriptor": st[u"descriptor"]}
+
+
+def prod_pose_current_time(identity, authorization, reg, regions):
+    """The pinned time triple read when the Save dialog opens (Addendum 6.1 step 1)."""
+    row = prod_resolve_instance(prod_instance_token(authorization[u"context"]), identity)
+    profile = prod_pose_region_profile(reg, authorization, sorted(regions)[0])
+    try:
+        return prod_pose_time_read(prod_pose_live_arm(row, profile), sorted(profile[u"written_channels"]))
+    except ProdPoseUnreadable as exc:
+        raise ProdPoseError(u"evidence-unreadable", u"%s" % exc)
+
+
+# --- apply (C7b + C8): P1-P6 ---------------------------------------------------------------------------------------
+
+def prod_pose_plan_values(profile, plan):
+    """Map the region plan onto the profile's written channels."""
+    out = {}
+    for cname, spec in profile[u"written_channels"].items():
+        owner, attr_name = spec[0], spec[1]
+        if owner == profile[u"hand"] and attr_name == u"positionChannel":
+            out[cname] = plan[u"hand_position"]
+        elif owner == profile[u"hand"] and attr_name == u"orientationChannel":
+            out[cname] = plan[u"hand_orientation"]
+        elif owner == profile[u"elbow"] and attr_name == u"positionChannel":
+            out[cname] = plan[u"elbow_position"]
+        else:
+            raise ProdPoseError(u"rig-differs", u"profile channel %s has no planned value" % cname)
+    return out
+
+
+def prod_pose_oracle(region, skel, profile):
+    anchor = prod_pose_world(skel, u"handles", profile[u"anchor"])
+    oracle = {u"primary_local": {}, u"secondary_world": {}}
+    for name in profile[u"arm_bones"]:
+        row = region[u"oracle"][u"bones"][name]
+        p, q = prod_pose_compose(anchor, (row[u"anchor_position"], row[u"anchor_orientation"]))
+        oracle[u"primary_local"][name] = list(row[u"local_orientation"])
+        oracle[u"secondary_world"][name] = {u"position": p, u"orientation": q}
+    return oracle
+
+
+def prod_pose_classify(skel, baseline, oracle, inputs, bindings, profile):
+    """Section 8.4 items 2-5 for one observation against the expected pose: the skeletal oracles (primary local and
+    secondary anchor-mapped world), the rig inputs and the observed channel, and the preservation of every other
+    bone, the model, the root and anchor placement, the weights and the scales. Returns the list of problems."""
+    tol = profile[u"tolerances"]
+    problems = []
+    for name in profile[u"arm_bones"]:
+        now = skel[u"bones"][name]
+        if prod_pose_angle_deg(now[u"local_orientation"], oracle[u"primary_local"][name]) > tol[u"angle_degrees"]:
+            problems.append(u"oracle %s local orientation" % name)
+        w = oracle[u"secondary_world"][name]
+        if prod_pose_distance(now[u"world_position"], w[u"position"]) > tol[u"position"] or \
+                prod_pose_angle_deg(now[u"world_orientation"], w[u"orientation"]) > tol[u"angle_degrees"]:
+            problems.append(u"oracle %s anchor-mapped world" % name)
+        was = baseline[u"bones"][name]
+        if prod_pose_distance(now[u"local_position"], was[u"local_position"]) > tol[u"position"] or \
+                now[u"scale"] != was[u"scale"]:
+            problems.append(u"bone %s local position or scale" % name)
+    for name, was in baseline[u"bones"].items():
+        if name in profile[u"arm_bones"]:
+            continue
+        now = skel[u"bones"][name]
+        if prod_pose_distance(now[u"local_position"], was[u"local_position"]) > tol[u"position"] or \
+                prod_pose_angle_deg(now[u"local_orientation"], was[u"local_orientation"]) > tol[u"angle_degrees"] or \
+                now[u"scale"] != was[u"scale"]:
+            problems.append(u"bone %s changed" % name)
+    for key in (u"local", u"world"):
+        if prod_pose_distance(skel[u"model"][key + u"_position"], baseline[u"model"][key + u"_position"]) > \
+                tol[u"position"] or prod_pose_angle_deg(skel[u"model"][key + u"_orientation"],
+                                                        baseline[u"model"][key + u"_orientation"]) > tol[u"angle_degrees"]:
+            problems.append(u"model %s placement" % key)
+    for name in (profile[u"root"], profile[u"anchor"]):
+        if prod_pose_distance(skel[u"handles"][name][u"world_position"], baseline[u"handles"][name][u"world_position"]) \
+                > tol[u"position"] or prod_pose_angle_deg(skel[u"handles"][name][u"world_orientation"],
+                                                          baseline[u"handles"][name][u"world_orientation"]) > \
+                tol[u"angle_degrees"]:
+            problems.append(u"handle %s placement" % name)
+    if sorted(skel[u"weights"]) != sorted(baseline[u"weights"]):
+        problems.append(u"constraint set")
+    for key in sorted(baseline[u"weights"]):
+        now, was = skel[u"weights"].get(key) or [], baseline[u"weights"][key]
+        if len(now) != len(was) or any(n[u"target"] != w[u"target"] or abs(n[u"weight"] - w[u"weight"]) > tol[u"weight"]
+                                       for n, w in zip(now, was)):
+            problems.append(u"constraint %s weights" % key)
+    if skel[u"model"][u"scale"] != baseline[u"model"][u"scale"]:
+        problems.append(u"model scale")
+    for name in skel[u"handles"]:
+        if skel[u"handles"][name][u"scale"] != baseline[u"handles"][name][u"scale"]:
+            problems.append(u"handle %s scale" % name)
+    for cname, b in bindings.items():
+        want = inputs.get(cname, baseline[u"handles"][b[u"owner"]][b[u"key"]])
+        got = skel[u"handles"][b[u"owner"]][b[u"key"]]
+        values = [got, skel[u"arm_channels"][cname][u"value_pinned"]]
+        for v in values:
+            bad = (prod_pose_angle_deg(v, want) > tol[u"effective_angle_degrees"] if len(want) == 4 else
+                   prod_pose_distance(v, want) > tol[u"effective_position"])
+            if bad:
+                problems.append(u"rig input %s" % cname)
+                break
+    return problems
+
+
+def prod_pose_expected_authored(authored, plans, bindings):
+    result = json.loads(json.dumps(authored))
+    by_handle = dict((row[u"id"][u"handle"], row) for row in result[u"channels"])
+    for plan in plans:
+        keys = by_handle[prod_pose_h(bindings[plan[u"name"]][u"channel"])][u"layers"][0][u"keys"]
+        if plan[u"action"] == u"update":
+            keys[plan[u"index"]][1] = list(plan[u"value"])
+        elif plan[u"action"] == u"insert":
+            keys.insert(plan[u"index"], [plan[u"t"], list(plan[u"value"])])
+            result[u"keys"] += 1
+    return prod_pose_roundtrip(result)
+
+
+def prod_pose_native_value(kind, values):
+    vector = getattr(vs, "Vector", None) or getattr(getattr(vs, "mathlib", None), "Vector", None)
+    quaternion = getattr(vs, "Quaternion", None) or getattr(getattr(vs, "mathlib", None), "Quaternion", None)
+    if vector is None or quaternion is None:
+        raise ProdPoseError(u"evidence-unreadable", u"native Vector and Quaternion constructors are unavailable")
+    return quaternion(*values) if kind == u"quaternion" else vector(*values)
+
+
+def prod_pose_write(b, plan):
+    """One planned native write; returns the native index.
+
+    Insert: InsertKeyAtTime(t), the one-argument overload, creates the key at exactly t with SFM's own compiled
+    default curve type; SetKeyValue (native-proven in W2) then writes the planned value at the returned index.
+    Never the layer's or log's GetDefaultCurveType: natively it dereferences the log's curve info without a null
+    check, and every log CPM may write has none (P1 refuses curve info and curve types), so it crashed SFM (NQ-1
+    run 2, process B).
+    The post-write checks (P5) verify the index, count, time, neighbours, values, metadata and the Undo record."""
+    layer = b[u"layer"]
+    value = prod_pose_native_value(b[u"kind"], plan[u"value"])
+    if plan[u"action"] == u"update":
+        layer.SetKeyValue(int(plan[u"index"]), value)
+        return int(plan[u"index"])
+    index = int(layer.InsertKeyAtTime(prod_pose_time(plan[u"t"])))
+    if index != plan[u"index"]:
+        raise ProdPoseError(u"structure-unsupported", u"%s: the key was inserted at index %d, planned %d" %
+                            (plan[u"name"], index, plan[u"index"]))
+    layer.SetKeyValue(index, value)
+    return index
+
+
+def prod_pose_qualification_fault(mode, point):
+    """Qualification build only: one injected failure at `point` (to exercise Abort natively)."""
+    if mode == u"qualification" and PROD_POSE_QUAL_FAULT[0] == point:
+        PROD_POSE_QUAL_FAULT[0] = None
+        raise RuntimeError(u"qualification fault injected at %s" % point)
+
+
+# --- Motion Editor apply gate (FA-3b native-qualified) --------------------------------------------------------------
+# In SFM's Motion Editor the target channels evaluate at the mapped (clip-stack) tick, so a key written there is the
+# pose shown at the playhead (FA-3b: exact within 0.001 deg). The Clip Editor evaluates elsewhere (FA-1) and the Graph
+# Editor is not qualified: Apply refuses there. The mode and the three channel clocks are pinned in P1 and must be
+# unchanged at P2 (immediately before StartUndo) and at P7.
+PROD_POSE_APPLY_TIMELINE_MODE = 2
+PROD_POSE_EDITOR_MODE_COPY = u"Switch the timeline to the Motion Editor to apply a pose. Nothing was changed."
+PROD_POSE_EDITOR_CLOCK_COPY = (u"The character's animation isn't evaluated at the playhead in this editor state. "
+                               u"Move the playhead in the Motion Editor and try again. Nothing was changed.")
+
+
+def prod_pose_timeline_mode():
+    """SFM's timeline mode (2 Motion Editor, 3 Clip Editor, 4 Graph Editor); refuses when unreadable."""
+    try:
+        mode = sfmApp.GetTimelineMode()
+    except Exception:
+        raise ProdPoseError(u"editor-mode", PROD_POSE_EDITOR_MODE_COPY)
+    if isinstance(mode, bool) or not isinstance(mode, prod_pose_int_types()):
+        raise ProdPoseError(u"editor-mode", PROD_POSE_EDITOR_MODE_COPY)
+    return int(mode)
+
+
+def prod_pose_apply_gate(L, names, t_chan):
+    """The pinned Apply context: Motion Editor and every target channel's clock exactly at the mapped tick."""
+    mode = prod_pose_timeline_mode()
+    if mode != PROD_POSE_APPLY_TIMELINE_MODE:
+        raise ProdPoseError(u"editor-mode", PROD_POSE_EDITOR_MODE_COPY)
+    clocks = dict((n, prod_pose_ticks_of(L[u"channels"][n].GetCurrentTime())) for n in sorted(names))
+    if any(v != t_chan for v in clocks.values()):
+        prod_pose_log(u"gate-refused", {u"mode": mode, u"t_chan": t_chan, u"clocks": clocks})
+        raise ProdPoseError(u"time-mapping", PROD_POSE_EDITOR_CLOCK_COPY)
+    return {u"mode": mode, u"clocks": clocks}
+
+
+def prod_pose_request_refresh(t_doc):
+    """After a confirmed commit, outside the Undo transaction: one same-time head request so SFM evaluates the new
+    keys (FA-1, FA-2, FA-3b). No event processing, polling or retry; P7 runs on the next normal turn."""
+    try:
+        sfmApp.SetHeadTimeInSeconds(t_doc / 10000.0)
+        error = None
+    except Exception as exc:
+        error = repr(exc)
+    prod_pose_log(u"P6-refresh", {u"t_doc": t_doc, u"error": error})
+    return error is None
+
+
+def prod_pose_preflight(identity, authorization, item, reg):
+    """P1: the fresh record, every region's section 5.4 checks, the time triple, both plan paths and the shoulder
+    guard, the key plans and the complete required baseline; then the true no-op decision."""
+    record = item[u"record"]
+    regions = sorted(record[u"pose"][u"regions"])
+    if not regions or any(r not in PROD_POSE_LIVE_REGIONS for r in regions):
+        raise ProdPoseError(u"not-qualified", u"Only left-arm poses can be applied in this build. Nothing was changed.")
+    source_class = record[u"pose"][u"source"][u"rig_class"]
+    dest_class = authorization[u"destination"][u"rig_class"]
+    for r in regions:
+        if not any(m[u"region"] == r and m[u"from"] == source_class and m[u"to"] == dest_class
+                   for m in authorization[u"mappings"]):
+            raise ProdPoseError(u"not-qualified", u"%s: %s" % (PROD_POSE_PART_NAMES[r], PROD_POSE_REASONS[
+                u"not-qualified"] % {u"character": dest_class}))
+    row = prod_resolve_instance(prod_instance_token(authorization[u"context"]), identity)
+    dm_obj = dm()
+    undo = prod_pose_undo_state(dm_obj)
+    if prod_pose_undo_problems(undo):
+        raise ProdPoseError(u"evidence-unreadable", u"the Undo history is unreadable: %s" % prod_pose_undo_problems(undo))
+    out = {u"regions": {}, u"undo": undo, u"time": None, u"plans": [], u"noop": True}
+    for r in regions:
+        profile = prod_pose_region_profile(reg, authorization, r)
+        region = record[u"pose"][u"regions"][r]
+        st = prod_pose_region_state(row, profile)
+        prod_pose_compare_descriptor(region[u"descriptor"], st[u"descriptor"], profile[u"tolerances"])
+        if out[u"time"] is not None and st[u"time"] != out[u"time"]:
+            raise ProdPoseError(u"time-mapping", PROD_POSE_MESSAGES[u"time-mapping"])
+        out[u"time"] = st[u"time"]
+        t_chan = st[u"time"][u"t_chan"]
+        out.setdefault(u"gate", {})[r] = prod_pose_apply_gate(st[u"L"], profile[u"written_channels"], t_chan)
+        snaps = dict((n, prod_pose_layer_snapshot(st[u"bindings"][n], t_chan)) for n in profile[u"written_channels"])
+        hand_o = [n for n, s in profile[u"written_channels"].items() if s[0] == profile[u"hand"] and
+                  s[1] == u"orientationChannel"][0]
+        reference = snaps[hand_o].get(u"evaluated_at_t")
+        if reference is None:
+            raise ProdPoseError(u"evidence-unreadable", u"the hand orientation at the current time is unreadable")
+        skel = st[u"skel"]
+        plan, checks = prod_pose_plan_region(region, prod_pose_world(skel, u"handles", profile[u"anchor"]),
+                                             prod_pose_world(skel, u"handles", profile[u"root"]), reference,
+                                             skel[u"bones"][profile[u"arm_bones"][0]][u"world_position"],
+                                             profile[u"tolerances"])
+        values = prod_pose_plan_values(profile, plan)
+        plans = []
+        for cname in sorted(values):
+            b = st[u"bindings"][cname]
+            plans.append(prod_pose_key_plan(snaps[cname], t_chan, values[cname],
+                                            (b[u"role"][u"log_type"], b[u"role"][u"layer_type"])))
+        oracle = prod_pose_oracle(region, skel, profile)
+        inputs = dict((p[u"name"], p[u"value"]) for p in plans)
+        already = not prod_pose_classify(skel, skel, oracle, inputs, st[u"bindings"], profile)
+        noop = prod_pose_noop_test(plans, {u"rig_inputs_ok": already, u"skeletal_oracle_ok": already})
+        out[u"noop"] = out[u"noop"] and noop
+        out[u"plans"].extend(plans)
+        out[u"regions"][r] = {u"state": st, u"profile": profile, u"snaps": snaps, u"plans": plans,
+                              u"oracle": oracle, u"inputs": inputs, u"cross_check": checks,
+                              u"expected_authored": prod_pose_expected_authored(st[u"authored"], plans, st[u"bindings"])}
+    out[u"row"] = row
+    return out
+
+
+def prod_pose_same_state(identity, authorization, pre, label):
+    """P2 / Abort: a fresh read equals the P1 state exactly (identities, time, authored, observed, layers, Undo).
+    Returns the problems (empty: identical); unreadable evidence is a problem, never 'unchanged'."""
+    problems = []
+    try:
+        row = prod_resolve_instance(prod_instance_token(authorization[u"context"]), identity)
+    except Exception as exc:
+        return [u"instance: %s" % exc]
+    for r, info in pre[u"regions"].items():
+        try:
+            st = prod_pose_region_state(row, info[u"profile"])
+        except Exception as exc:
+            problems.append(u"%s unreadable: %s" % (r, exc))
+            continue
+        for key in (u"identity", u"time", u"authored", u"observed"):
+            if st[key] != info[u"state"][key]:
+                problems.append(u"%s %s changed %s" % (r, key, prod_pose_differences(st[key], info[u"state"][key])[:4]))
+        for cname, snap in info[u"snaps"].items():
+            now = prod_pose_layer_snapshot(st[u"bindings"][cname], st[u"time"][u"t_chan"])
+            if now[u"unreadable"]:
+                problems.append(u"%s unreadable %s" % (cname, now[u"unreadable"]))
+            for f in (u"times", u"values", u"metadata", u"defaults", u"bookmarks", u"curvetypes", u"compressed",
+                      u"curveinfo"):
+                if now[f] != snap[f]:
+                    problems.append(u"%s %s changed" % (cname, f))
+    undo = prod_pose_undo_state(dm())
+    if prod_pose_undo_problems(undo) or undo != pre[u"undo"]:
+        problems.append(u"Undo history changed or unreadable")
+    return problems
+
+
+def prod_pose_apply(identity, authorization, item, reg, phase_callback=None):
+    """P1-P6 of one exact-time Apply (Addendum 8.1). Returns no-op, verification-pending (P7 follows on the shared
+    turn) or not-applied (aborted and verified unchanged); raises a refusal before any write, or
+    ProdRecoveryUnverifiedError when the scene state cannot be confirmed."""
+    mode = authorization[u"mode"]
+    name = item[u"record"][u"name"]
+    try:
+        pre = prod_pose_preflight(identity, authorization, item, reg)
+    except ProdPoseUnreadable as exc:
+        raise ProdPoseError(u"evidence-unreadable", u"%s" % exc)
+    prod_pose_log(u"P1", {u"time": pre[u"time"], u"plans": [dict((k, p[k]) for k in (u"name", u"action", u"index",
+                                                                                   u"t", u"count"))
+                                                            for p in pre[u"plans"]], u"noop": pre[u"noop"]})
+    if pre[u"noop"]:
+        if prod_pose_undo_state(dm()) != pre[u"undo"]:
+            raise ProdPoseError(u"stale", PROD_POSE_MESSAGES[u"stale"])
+        return {u"phase": u"no-op"}
+    # P2: final revalidation; any change refuses before a write.
+    fresh = prod_pose_read_file(item[u"path"], reg)
+    if fresh[1] != item[u"revision"]:
+        raise ProdPoseLibraryError(u"record-changed", PROD_POSE_MESSAGES[u"record-changed"])
+    changed = prod_pose_same_state(identity, authorization, pre, u"P2")
+    if changed:
+        prod_pose_log(u"P2-refused", {u"problems": changed[:16]})
+        raise ProdPoseError(u"stale", PROD_POSE_MESSAGES[u"stale"])
+    row2 = prod_resolve_instance(prod_instance_token(authorization[u"context"]), identity)
+    for r, info in sorted(pre[u"regions"].items()):
+        gate = prod_pose_apply_gate(prod_pose_live_arm(row2, info[u"profile"]), info[u"profile"][u"written_channels"],
+                                    pre[u"time"][u"t_chan"])
+        if gate != pre[u"gate"][r]:
+            prod_pose_log(u"P2-refused", {u"gate": gate, u"pinned": pre[u"gate"][r]})
+            raise ProdPoseError(u"stale", PROD_POSE_MESSAGES[u"stale"])
+    dm_obj = dm()
+    label = u"Apply Pose %s" % name
+    opened = finished = False
+    written = []
+    try:
+        dm_obj.StartUndo(prod_pose_native_name(label), prod_pose_native_name(u"Redo " + label))
+        opened = True
+        if phase_callback is not None:
+            phase_callback(u"P3-owned", {u"label": label})
+        for r in sorted(pre[u"regions"]):
+            info = pre[u"regions"][r]
+            for plan in info[u"plans"]:
+                if plan[u"action"] != u"none":
+                    prod_pose_write(info[u"state"][u"bindings"][plan[u"name"]], plan)
+                    written.append(plan[u"name"])
+        prod_pose_qualification_fault(mode, u"after-writes")
+        problems = []
+        items = getattr(dm_obj, "ItemsAddedToCurrentUndo", None)
+        if written and callable(items) and items() is not True:
+            problems.append(u"the writes were not recorded in the open Undo operation")
+        for r in sorted(pre[u"regions"]):
+            info = pre[u"regions"][r]
+            L, bindings = info[u"state"][u"L"], info[u"state"][u"bindings"]
+            t_chan = pre[u"time"][u"t_chan"]
+            for plan in info[u"plans"]:
+                after = prod_pose_layer_snapshot(bindings[plan[u"name"]], t_chan)
+                problems.extend(prod_pose_check_postconditions(info[u"snaps"][plan[u"name"]], after, plan,
+                                                               PROD_POSE_INSERT_ALLOWED_METADATA))
+                if after[u"metadata"] != info[u"snaps"][plan[u"name"]][u"metadata"]:
+                    problems.append(u"%s: log or layer metadata changed" % plan[u"name"])
+                tol = info[u"profile"][u"tolerances"]
+                got = after[u"evaluated_at_t"]
+                if got is None or (prod_pose_angle_deg(got, plan[u"value"]) > tol[u"effective_angle_degrees"]
+                                   if len(plan[u"value"]) == 4 else
+                                   prod_pose_distance(got, plan[u"value"]) > tol[u"effective_position"]):
+                    problems.append(u"%s: the log does not evaluate to the written value at t" % plan[u"name"])
+            if prod_pose_capture_authored(L) != info[u"expected_authored"]:
+                problems.append(u"%s: authored state is not exactly the planned state" % r)
+            if prod_pose_capture_observed(L) != info[u"state"][u"observed"]:
+                problems.append(u"%s: a constraint or operator attribute changed" % r)
+        if problems:
+            raise ProdPoseError(u"structure-unsupported", u"P5: %s" % problems[:8])
+        finished = True                    # from here on, Abort is never attempted (section 8.2)
+        dm_obj.FinishUndo()
+    except Exception as exc:
+        prod_pose_log(u"P3-P6-failure", {u"error": repr(exc), u"opened": opened, u"finished": finished,
+                                         u"written": written})
+        if not opened:
+            # StartUndo did not return: nothing was written by this operation.
+            problems = prod_pose_same_state(identity, authorization, pre, u"no-transaction")
+            if problems:
+                raise ProdRecoveryUnverifiedError(PROD_POSE_MESSAGES[u"recovery-unverified"] % {u"name": name})
+            return {u"phase": u"not-applied", u"reason": repr(exc)}
+        if not finished:
+            try:
+                dm_obj.AbortUndoableOperation()
+            except Exception as abort_exc:
+                prod_pose_log(u"abort-failed", {u"error": repr(abort_exc)})
+                raise ProdRecoveryUnverifiedError(PROD_POSE_MESSAGES[u"recovery-unverified"] % {u"name": name})
+            problems = prod_pose_same_state(identity, authorization, pre, u"abort")
+            prod_pose_log(u"abort-verified" if not problems else u"abort-unverified", {u"problems": problems[:16]})
+            if problems:
+                raise ProdRecoveryUnverifiedError(PROD_POSE_MESSAGES[u"recovery-unverified"] % {u"name": name})
+            return {u"phase": u"not-applied", u"reason": repr(exc)}
+        # FinishUndo raised: the Undo state decides (section 8.2).
+        undo = prod_pose_undo_state(dm_obj)
+        if not prod_pose_undo_problems(undo) and undo[u"can_undo"] is True and undo[u"undo_desc"] == label:
+            if phase_callback is not None:
+                phase_callback(u"native-commit", {u"label": label, u"finish_exception": True})
+            return {u"phase": u"verification-pending",
+                    u"pending": prod_pose_pending(pre, label, finish_exception=True)}
+        raise ProdRecoveryUnverifiedError(PROD_POSE_MESSAGES[u"recovery-unverified"] % {u"name": name})
+    if phase_callback is not None:
+        phase_callback(u"native-commit", {u"label": label})
+    undo = prod_pose_undo_state(dm_obj)
+    owned = not prod_pose_undo_problems(undo) and undo[u"can_undo"] is True and undo[u"undo_desc"] == label
+    prod_pose_log(u"P6", {u"undo": undo, u"owned": owned})
+    if owned:
+        prod_pose_request_refresh(pre[u"time"][u"t_doc"])
+    return {u"phase": u"verification-pending", u"pending": prod_pose_pending(pre, label, owned_top=owned)}
+
+
+def prod_pose_pending(pre, label, finish_exception=False, owned_top=True):
+    """The P7 record: Python data only (no native object is kept for the deferred turn)."""
+    regions = {}
+    for r, info in pre[u"regions"].items():
+        regions[r] = {u"profile": info[u"profile"], u"identity": info[u"state"][u"identity"],
+                      u"expected_authored": info[u"expected_authored"], u"observed": info[u"state"][u"observed"],
+                      u"baseline": info[u"state"][u"skel"], u"oracle": info[u"oracle"], u"inputs": info[u"inputs"]}
+    return {u"label": label, u"time": pre[u"time"], u"regions": regions, u"finish_exception": finish_exception,
+            u"owned_top": owned_top, u"undo_label": label, u"gate": pre[u"gate"]}
+
+
+def prod_pose_log(phase, detail):
+    try:
+        log_line(u"PROD_POSE_%s %s" % (phase, json.dumps(detail, sort_keys=True, default=repr)[:4000]))
+    except Exception:
+        pass
+
+
+# --- deferred verification (C10): P7 -----------------------------------------------------------------------------
+
+def prod_pose_verify_applied(pending):
+    """P7 after the context gate (instance): the time triple and document unchanged, then every success condition
+    of Addendum 8.4. Read-only: never retimes, forces evaluation or writes. Any failed or unreadable item gives
+    committed-unverified with the failing item logged."""
+    if pending.get(u"finish_exception") or not pending.get(u"owned_top"):
+        return prod_apply_deferred_unverified(u"ownership-uncertain")
+    authorization = pending[u"authorization"]
+    try:
+        row = prod_resolve_instance(prod_instance_token(authorization[u"context"]))
+        undo = prod_pose_undo_state(dm())
+        if prod_pose_undo_problems(undo) or undo[u"undo_desc"] != pending[u"undo_label"] or undo[u"can_undo"] is not True:
+            prod_pose_log(u"P7-unverified", {u"reason": u"undo", u"undo": undo})
+            return prod_apply_deferred_unverified(u"undo-history-changed")
+        for r, info in sorted(pending[u"regions"].items()):
+            profile = info[u"profile"]
+            L = prod_pose_live_arm(row, profile)
+            if prod_pose_binding_identity(L) != info[u"identity"]:
+                return prod_apply_deferred_unverified(u"context-changed")
+            time = prod_pose_time_read(L, sorted(profile[u"written_channels"]))
+            if time != pending[u"time"]:
+                prod_pose_log(u"P7-unverified", {u"reason": u"context-changed", u"time": time})
+                return prod_apply_deferred_unverified(u"context-changed")
+            try:
+                gate = prod_pose_apply_gate(L, profile[u"written_channels"], time[u"t_chan"])
+            except ProdPoseError as exc:
+                gate = repr(exc)
+            if gate != pending[u"gate"][r]:
+                prod_pose_log(u"P7-unverified", {u"reason": u"context-changed", u"gate": gate})
+                return prod_apply_deferred_unverified(u"context-changed")
+            bindings = prod_pose_bindings(L)
+            problems = []
+            if prod_pose_capture_authored(L) != info[u"expected_authored"]:
+                problems.append(u"authored keys")
+            if prod_pose_capture_observed(L) != info[u"observed"]:
+                problems.append(u"constraint or operator attributes")
+            skel = prod_pose_capture_skeleton(L, time[u"t_chan"])
+            problems.extend(prod_pose_classify(skel, info[u"baseline"], info[u"oracle"], info[u"inputs"], bindings,
+                                               profile))
+            if problems:
+                prod_pose_log(u"P7-unverified", {u"region": r, u"problems": problems[:16]})
+                return prod_apply_deferred_unverified(u"verify-failed")
+    except Exception as exc:
+        prod_pose_log(u"P7-unverified", {u"reason": u"verify-error", u"error": repr(exc)})
+        return prod_apply_deferred_unverified(u"verify-error")
+    prod_pose_log(u"P7-verified", {u"time": pending[u"time"]})
+    return {u"phase": u"committed-verified"}
+
+# === end of F-01 stage D block ===
