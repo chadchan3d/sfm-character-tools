@@ -269,6 +269,14 @@ def registry(ns):
     return ns["prod_pose_registry_parse"](raw, ns["PROD_POSE_REGISTRY_SHA256"])
 
 
+def experimental_registry(ns):
+    """The shipped registry with its left-arm mapping returned to experimental (a test pin, not the product pin)."""
+    draft = json.loads(core.read(core.REGISTRY_PATH).decode("utf-8"))
+    draft["mappings"][0].update(status=u"experimental", evidence=None)
+    raw = ns["prod_pose_canonical_bytes"](draft)
+    return ns["prod_pose_registry_parse"](raw, core.sha(raw))
+
+
 def library(root):
     char_dir = os.path.join(root, u"Characters", u"krystal2020")
     return {u"character_key": u"krystal2020", u"char_dir": char_dir, u"library_root": root, u"model_ref": MODEL}
@@ -300,8 +308,8 @@ def save(ns, reg, lib, name, shot):
     return ns["prod_pose_save_new"](lib, name, pose, u"20261102-120000-000000", reg)
 
 
-def apply_and_verify(ns, reg, world, item, shot=u"shot10", run=True):
-    auth = authorize(ns, reg, shot, u"Apply Pose", item)
+def apply_and_verify(ns, reg, world, item, shot=u"shot10", run=True, mode=u"qualification"):
+    auth = authorize(ns, reg, shot, u"Apply Pose", item, mode=mode)
     phases = []
     result = ns["prod_pose_apply"](IDENTITY, auth, item, reg, phase_callback=lambda p, d=None: phases.append(p))
     verdict = None
@@ -366,13 +374,18 @@ def process_b(ns, F, reg, lib):
     check("D2.poses_listed_from_disk_in_the_new_process", sorted(items) == [u"Arms Moved", u"Arms Out"])
     base = authored(ns, reg, u"shot10")
     base_keys = dict((n, keys(world, u"shot10", n)) for n in (u"Hand_l_p", u"Hand_l_o", u"Elbow_l_p", u"Elbow_l_o"))
-    # Production build: experimental mappings are never usable.
+    # Production build: the qualified Krystal left-arm mapping is authorized; an experimental mapping never is.
     prod_auth = authorize(ns, reg, u"shot10", u"Apply Pose", items[u"Arms Out"], mode=u"production")
+    check("D3.production_authorizes_only_the_qualified_left_arm_mapping",
+          [(m[u"region"], m[u"from"], m[u"to"], m[u"status"]) for m in prod_auth[u"mappings"]] ==
+          [(u"left_arm", u"krystal-v1", u"krystal-v1", u"qualified")], prod_auth[u"mappings"])
+    draft = experimental_registry(ns)
+    draft_auth = authorize(ns, draft, u"shot10", u"Apply Pose", items[u"Arms Out"], mode=u"production")
     refused("D3.production_mode_refuses_experimental_mapping",
-            outcome(lambda: ns["prod_pose_apply"](IDENTITY, prod_auth, items[u"Arms Out"], reg)), u"not-qualified")
+            outcome(lambda: ns["prod_pose_apply"](IDENTITY, draft_auth, items[u"Arms Out"], draft)), u"not-qualified")
     check("D3.production_refusal_opened_no_undo", not world.dm.calls)
-    # Insert: no key exists at the channel time (50208 ticks).
-    result, verdict, phases = apply_and_verify(ns, reg, world, items[u"Arms Out"])
+    # Insert, in the production mode: no key exists at the channel time (50208 ticks).
+    result, verdict, phases = apply_and_verify(ns, reg, world, items[u"Arms Out"], mode=u"production")
     check("D4.insert_apply_commits_and_hands_over_to_p7", result.get("phase") == u"verification-pending"
           and "native-commit" in phases, (result.get("phase"), phases))
     check("D4.insert_verified_by_p7", verdict == {u"phase": u"committed-verified"}, verdict)
@@ -464,13 +477,18 @@ def section_channel_clock(ns, F, reg, root):
         w.evaluate(w.shots[u"shot10"])
         return w
 
-    def refused_before_write(label, w, code):
+    def refused_before_write(label, w, code, mode=u"qualification"):
         base = keys(w, u"shot10", u"Hand_l_p")
-        r = outcome(lambda: apply_and_verify(ns, reg, w, items[u"Clock Pose"], run=False))
+        r = outcome(lambda: apply_and_verify(ns, reg, w, items[u"Clock Pose"], run=False, mode=mode))
         check(label, r[0] == "ProdPoseError" and r[1] == code and keys(w, u"shot10", u"Hand_l_p") == base
               and not w.dm.stack and not w.refresh_calls, r)
     refused_before_write("D14.clip_editor_refused_before_writing", world(u"clip", mode=3), u"editor-mode")
     refused_before_write("D14.graph_editor_refused_before_writing", world(u"graph", mode=4), u"editor-mode")
+    # The same Motion Editor restriction in the production mode with the qualified mapping.
+    refused_before_write("D14.production_clip_editor_refused_before_writing", world(u"prod-clip", mode=3),
+                         u"editor-mode", mode=u"production")
+    refused_before_write("D14.production_graph_editor_refused_before_writing", world(u"prod-graph", mode=4),
+                         u"editor-mode", mode=u"production")
     refused_before_write("D14.clock_away_from_the_mapped_tick_refused_before_writing", world(u"offset", offset=91),
                          u"time-mapping")
     # The mode changes between P1 and P2: refused before StartUndo.

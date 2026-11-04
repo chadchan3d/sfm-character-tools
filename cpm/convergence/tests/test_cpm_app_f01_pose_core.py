@@ -347,11 +347,20 @@ def section_registry(ns, raw, golden):
     refuses("O2.hash_mismatch_refused", "registry", lambda: ns["prod_pose_registry_parse"](raw, "0" * 64))
     prod = ns["prod_pose_registry_select"](reg, u"production")
     qual = ns["prod_pose_registry_select"](reg, u"qualification")
-    check("O2.production_exposes_no_experimental_mapping", prod["mappings"] == [], prod["mappings"])
-    check("O2.qualification_exposes_experimental_with_status",
+    check("O2.production_exposes_only_the_qualified_krystal_left_arm",
+          [(m["region"], m["from"], m["to"], m["status"]) for m in prod["mappings"]] ==
+          [("left_arm", "krystal-v1", "krystal-v1", "qualified")], prod["mappings"])
+    check("O2.qualification_exposes_each_mapping_with_status",
           sorted((m["region"], m["status"]) for m in qual["mappings"]) ==
-          [("left_arm", "experimental"), ("right_arm", "experimental")])
-    check("O2.draft_has_no_qualified_mapping", all(m["status"] == "experimental" for m in reg["mappings"]))
+          [("left_arm", "qualified"), ("right_arm", "experimental")])
+    check("O2.every_other_mapping_stays_experimental",
+          [m for m in reg["mappings"] if m["status"] == "qualified"] == prod["mappings"]
+          and all(m["evidence"] is None for m in reg["mappings"] if m["status"] == "experimental"))
+    evidence = prod["mappings"][0]["evidence"] if prod["mappings"] else ""
+    doc = os.path.join(_REPO_ROOT, "cpm", "qualification", "F01_STAGE_D_NATIVE_QUALIFICATION_EVIDENCE.md")
+    check("O2.qualified_evidence_names_the_stage_d_record_and_candidate",
+          "cpm/qualification/F01_STAGE_D_NATIVE_QUALIFICATION_EVIDENCE.md" in evidence and "18849e5f" in evidence
+          and "CC-1" in evidence and os.path.isfile(doc) and b"18849e5f" in read(doc), evidence)
     refuses("O2.unknown_mode_refused", "registry", lambda: ns["prod_pose_registry_select"](reg, u"dev"))
     base = json.loads(raw.decode("utf-8"))
 
@@ -361,9 +370,9 @@ def section_registry(ns, raw, golden):
         data = json.dumps(r).encode("utf-8")
         return lambda: ns["prod_pose_registry_parse"](data, sha(data))
     refuses("O2.qualified_without_evidence", "registry",
-            variant(lambda r: r["mappings"][0].__setitem__("status", "qualified")))
+            variant(lambda r: r["mappings"][0].__setitem__("evidence", None)))
     refuses("O2.experimental_with_evidence", "registry",
-            variant(lambda r: r["mappings"][0].__setitem__("evidence", "NQ-1")))
+            variant(lambda r: r["mappings"][1].__setitem__("evidence", "NQ-1")))
     refuses("O2.model_in_two_classes", "registry",
             variant(lambda r: r["rig_classes"].__setitem__("other", copy.deepcopy(r["rig_classes"]["krystal-v1"]))))
     refuses("O2.class_lists_unknown_profile", "registry",
@@ -397,8 +406,14 @@ def section_compatibility(ns, reg, base, golden):
     rec = make_record(ns, golden)
     prod = ns["prod_pose_registry_select"](reg, u"production")
     qual = ns["prod_pose_registry_select"](reg, u"qualification")
+    check("O3.production_lists_only_the_qualified_left_arm",
+          ns["prod_pose_browse_eligible"](prod, rec, "krystal-v1") == ["left_arm"])
+    draft = copy.deepcopy(base)
+    draft["mappings"][0].update(status="experimental", evidence=None)
+    data = json.dumps(draft).encode("utf-8")
+    dsel = ns["prod_pose_registry_select"](ns["prod_pose_registry_parse"](data, sha(data)), u"production")
     check("O3.production_lists_nothing_while_experimental",
-          ns["prod_pose_browse_eligible"](prod, rec, "krystal-v1") == [])
+          ns["prod_pose_browse_eligible"](dsel, rec, "krystal-v1") == [])
     check("O3.qualification_both_arms", ns["prod_pose_browse_eligible"](qual, rec, "krystal-v1") ==
           ["left_arm", "right_arm"])
     one = copy.deepcopy(base)

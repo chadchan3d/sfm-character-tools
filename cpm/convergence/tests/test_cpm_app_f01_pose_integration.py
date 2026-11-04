@@ -321,12 +321,14 @@ def section_authorization(ns, Window, reg):
     check("C3.authorize_binds_pinned_instance_registry_and_class", a[0] == "ok"
           and a[1][u"context"] is ctx and a[1][u"registry_sha256"] == reg[u"_sha256"]
           and a[1][u"destination"][u"rig_class"] == u"krystal-v1" and a[1][u"record"] is None
-          and a[1][u"mode"] == u"production" and a[1][u"mappings"] == [], a)
+          and a[1][u"mode"] == u"production"
+          and [(m[u"region"], m[u"status"]) for m in a[1][u"mappings"]] == [(u"left_arm", u"qualified")], a)
     check("C3.authorize_pins_the_selected_target_instance",
           a[0] == "ok" and a[1][u"context"]["instance"]["animset_key"][1] == s.target.animset._handle)
     q = ns["prod_pose_authorize"](ctx, ident, reg, u"qualification", u"Save Pose")
     check("C3.qualification_mode_exposes_experimental_mappings_only_there",
-          sorted(m[u"status"] for m in q[u"mappings"]) == [u"experimental", u"experimental"])
+          sorted((m[u"region"], m[u"status"]) for m in q[u"mappings"]) ==
+          [(u"left_arm", u"qualified"), (u"right_arm", u"experimental")])
     check("C3.authorize_never_calls_flex_semantic_authority", w1.Authority.calls == calls)
     refused("C3.no_context_refused", outcome(lambda: ns["prod_pose_authorize"](None, ident, reg, u"production",
                                                                               u"Save Pose")), u"no-instance")
@@ -416,10 +418,30 @@ def section_apply(ns, app, Window, reg):
     item = saved_item(ns, win, reg)
     before = core.read(item[u"path"])
     restore_stubs(ns, app)
-    win.apply_pose(item)
+    # The production build with a registry whose left-arm mapping is still experimental refuses before writing.
+    path = os.path.join(ns["prod_cpm_mainmenu_dir"](), ns["PROD_POSE_REGISTRY_FILENAME"])
+    shipped, pin = core.read(path), ns["PROD_POSE_REGISTRY_SHA256"]
+    draft = json.loads(shipped.decode("utf-8"))
+    draft["mappings"][0].update(status=u"experimental", evidence=None)
+    raw = ns["prod_pose_canonical_bytes"](draft)
+    with open(path, "wb") as f:
+        f.write(raw)
+    ns["PROD_POSE_REGISTRY_SHA256"] = core.sha(raw)
+    try:
+        win.apply_pose(item)
+    finally:
+        with open(path, "wb") as f:
+            f.write(shipped)
+        ns["PROD_POSE_REGISTRY_SHA256"] = pin
     check("C5.real_apply_refuses_in_the_production_build_experimental_mappings",
           last_status(win)[1] == u"error" and u"isn't supported" in last_status(win)[0] and ended(win),
           win.statuses[-1:])
+    # The shipped registry: the qualified left-arm mapping passes authorization and the mapping check (this fake
+    # scene has no SFM Undo history, so the real Apply stops at the scene baseline, before writing).
+    win.apply_pose(item)
+    check("C5.real_apply_admits_the_qualified_left_arm_mapping_in_production",
+          last_status(win)[1] == u"error" and u"isn't supported" not in last_status(win)[0] and ended(win)
+          and core.read(item[u"path"]) == before, win.statuses[-1:])
     # Committed with a pending check: ownership passes to the shared turn.
     install_fakes(ns)
     del m05.Timer.queue[:]

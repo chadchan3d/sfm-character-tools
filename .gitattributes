@@ -371,3 +371,7 @@ real_sfm_qualification/m06_w2_qualification/** -text
 # which takes precedence inside accepted/.
 real_sfm_qualification/checkpoint_f01_w2_persisted_pose/*.md text eol=lf
 real_sfm_qualification/checkpoint_f01_w2_persisted_pose/SHA256SUMS.txt text eol=lf
+
+# F-01 production registry integration (2026-11-04): the pose profile registry is SHA-256 pinned in the CPM
+# (PROD_POSE_REGISTRY_SHA256); its bytes must never be line-ending converted on checkout or archive export.
+cpm/pose_profiles/cpm_pose_profiles_v1.json text eol=lf

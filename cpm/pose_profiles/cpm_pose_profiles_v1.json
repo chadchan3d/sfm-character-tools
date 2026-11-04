@@ -2,10 +2,10 @@
  "format": "cpm-pose-profiles",
  "mappings": [
   {
-   "evidence": null,
+   "evidence": "F-01 Stage D native qualification, candidate 18849e5f (d8e6600): FA-3b, ME-1, ME-1b, CC-1; Motion Editor only; cpm/qualification/F01_STAGE_D_NATIVE_QUALIFICATION_EVIDENCE.md",
    "from": "krystal-v1",
    "region": "left_arm",
-   "status": "experimental",
+   "status": "qualified",
    "to": "krystal-v1"
   },
   {

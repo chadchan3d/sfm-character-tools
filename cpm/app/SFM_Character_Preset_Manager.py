@@ -40136,7 +40136,7 @@ def prod_pose_set_foreign_favorite(selected, foreign, target, favorite, reg):
 
 PROD_POSE_KIND = u"pose"
 PROD_POSE_REGISTRY_FILENAME = u"cpm_pose_profiles_v1.json"
-PROD_POSE_REGISTRY_SHA256 = u"87efaad9045e2a562fabb18f6050d426c382654e86c6a2213a812bfdb01363cd"
+PROD_POSE_REGISTRY_SHA256 = u"f445d5ef7fb183e6bcae3099b3812ffd2363213911605134231c2a1f708d6d00"
 PROD_POSE_AUTH_SCHEMA = u"cpm-pose-operation-authorization-v1"
 PROD_POSE_SCENE_LABELS = (u"Apply Pose", u"Save Pose")
 PROD_POSE_REGISTRY_MODE = u"production"
