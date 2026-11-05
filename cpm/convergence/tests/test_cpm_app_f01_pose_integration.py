@@ -285,9 +285,9 @@ def section_seams(ns, app, methods):
     route._run_source(base.top_text("tool_apply_tab_style"), "baseline:tool_apply_tab_style", real_tab)
     real_tab["tool_apply_tab_style"](Tabs())
     new, old = sheets
-    check("C1.tab_padding_8px_and_no_min_width", "padding: 6px 8px;" in new and "min-width" not in new, new)
+    check("C1.tab_padding_11px_and_no_min_width", "padding: 6px 11px;" in new and "min-width" not in new, new)
     check("C1.tab_style_otherwise_unchanged",
-          new == old.replace("padding: 6px 14px;", "padding: 6px 8px;").replace(
+          new == old.replace("padding: 6px 14px;", "padding: 6px 11px;").replace(
               "            min-width: 96px;\n", ""), (old, new))
 
 

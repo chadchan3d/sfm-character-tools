@@ -8202,7 +8202,7 @@ def p03_apply_body_match(
 # -------------------------------------------------------------------------------------------------
 
 TOOL_VERSION = u"0.1.9-g02-generic-snapshot"
-TOOL_NAME = u"SFM Character Preset Manager"
+TOOL_NAME = u"Character Preset Manager"
 
 
 def tool_dialog_path(result):
@@ -12670,6 +12670,35 @@ def tool_apply_dialog_font(
         widget.setFont(font)
 
 
+def tool_help_preferred_height(
+    dialog,
+    browser,
+    width,
+):
+    """Help's preferred height: its whole text at `width` plus the dialog's other rows, at least the original 770,
+    capped at the usable height of the screen the dialog opens on (the text then scrolls)."""
+    preferred = 770
+    try:
+        doc = browser.document().clone()
+        doc.setDefaultFont(browser.font())
+        margins = dialog.layout().contentsMargins()
+        frame = 2 * browser.frameWidth()
+        doc.setTextWidth(width - margins.left() - margins.right() - frame
+                         - browser.verticalScrollBar().sizeHint().width())
+        rows = dialog.layout().sizeHint().height() - browser.sizeHint().height()
+        preferred = max(preferred, int(doc.size().height()) + frame + max(rows, 0) + 8)
+    except Exception:
+        pass
+    try:
+        screen = QtGui.QApplication.desktop().availableGeometry(dialog.parentWidget() or dialog)
+        title_bar = 40
+        if screen.height() > 0:
+            preferred = min(preferred, screen.height() - title_bar)
+    except Exception:
+        pass
+    return preferred
+
+
 def tool_apply_preset_list_style(
     widget,
 ):
@@ -12702,7 +12731,7 @@ def tool_apply_tab_style(
             background: #333333;
             border: 1px solid #4a4a4a;
             border-bottom: none;
-            padding: 6px 8px;
+            padding: 6px 11px;
             margin-right: 1px;
         }
         QTabBar::tab:selected {
@@ -15719,7 +15748,7 @@ def StartCharacterSliderPresetTool():
     log_line(
         "%s %s"
         % (
-            TOOL_NAME,
+            u"SFM Character Preset Manager",
             TOOL_VERSION,
         )
     )
@@ -30401,9 +30430,10 @@ class ProdWindow(QtGui.QDialog):
         self.body_page = QtGui.QWidget()
         body_layout = QtGui.QVBoxLayout(self.body_page)
 
+        # Internal state only: no introductory text above the preset list.
         self.body_summary = QtGui.QLabel("")
         self.body_summary.setWordWrap(True)
-        body_layout.addWidget(self.body_summary)
+        self.body_summary.hide()
 
         body_library = QtGui.QHBoxLayout()
         self.body_search = QtGui.QLineEdit()
@@ -30461,9 +30491,10 @@ class ProdWindow(QtGui.QDialog):
         self.expr_page = QtGui.QWidget()
         expr_layout = QtGui.QVBoxLayout(self.expr_page)
 
+        # Internal state only: no introductory text above the preset list.
         self.expr_summary = QtGui.QLabel("")
         self.expr_summary.setWordWrap(True)
-        expr_layout.addWidget(self.expr_summary)
+        self.expr_summary.hide()
 
         expr_library = QtGui.QHBoxLayout()
         self.expr_search = QtGui.QLineEdit()
@@ -30544,7 +30575,7 @@ class ProdWindow(QtGui.QDialog):
         # Poses (F-01 stage D: the left arm; Addendum 9.1).
         self.pose_page = QtGui.QWidget()
         pose_layout = QtGui.QVBoxLayout(self.pose_page)
-        self.pose_summary = QtGui.QLabel("")
+        self.pose_summary = QtGui.QLabel(PROD_POSE_EDITOR_NOTE_COPY)
         self.pose_summary.setWordWrap(True)
         pose_layout.addWidget(self.pose_summary)
         self.pose_search = QtGui.QLineEdit()
@@ -30553,6 +30584,7 @@ class ProdWindow(QtGui.QDialog):
         pose_layout.addWidget(self.pose_search)
         self.pose_list = QtGui.QListWidget()
         tool_apply_preset_list_style(self.pose_list)
+        self.pose_list.setWordWrap(True)
         self.pose_list.currentRowChanged.connect(lambda row: self.refresh_pose_buttons())
         pose_layout.addWidget(self.pose_list, 1)
         pose_primary = QtGui.QHBoxLayout()
@@ -30564,6 +30596,10 @@ class ProdWindow(QtGui.QDialog):
         tool_apply_main_action_button(self.save_pose_button)
         self.save_pose_button.clicked.connect(lambda: self.save_pose(None, (u"left_arm",)))
         pose_primary.addWidget(self.save_pose_button)
+        self.info_pose_button = QtGui.QPushButton("Pose Info")
+        tool_apply_secondary_action_button(self.info_pose_button)
+        self.info_pose_button.clicked.connect(lambda: self.open_pose_info())
+        pose_primary.addWidget(self.info_pose_button)
         pose_layout.addLayout(pose_primary)
         self.pose_items = []
         self.pose_items_key = None
@@ -35936,6 +35972,29 @@ class ProdWindow(QtGui.QDialog):
             return
 
         item = self.selected_pose()
+        state = self.pose_ui_state(item)
+        self.apply_pose_button.setEnabled(
+            state[u"buttons"][u"apply_pose"]
+            and state[u"apply_mode"] == u"direct"
+        )
+        self.save_pose_button.setEnabled(
+            state[u"buttons"][u"save_new"]
+        )
+        self.info_pose_button.setEnabled(
+            item is not None
+            and state[u"buttons"][u"pose_info"]
+        )
+        self.set_pose_list_message(
+            state[u"list_message"]
+            if not getattr(self, "pose_items", [])
+            else None
+        )
+
+    def pose_ui_state(
+        self,
+        item,
+    ):
+        """prod_pose_ui_state for the Poses page and one selected pose (or None)."""
         selection = getattr(
             self,
             "pose_selection",
@@ -35981,7 +36040,7 @@ class ProdWindow(QtGui.QDialog):
                 u"favorite": False,
             }
 
-        state = prod_pose_ui_state(
+        return prod_pose_ui_state(
             {
                 u"character": (
                     u(self.identity.get("animset_name") or u"")
@@ -35998,18 +36057,121 @@ class ProdWindow(QtGui.QDialog):
                 u"selected": selected,
             }
         )
-        self.apply_pose_button.setEnabled(
-            state[u"buttons"][u"apply_pose"]
-            and state[u"apply_mode"] == u"direct"
+
+    def set_pose_list_message(
+        self,
+        message,
+    ):
+        """At most one non-selectable message row, shown only while the Poses list has no poses."""
+        widget = self.pose_list
+        widget.blockSignals(
+            True
         )
-        self.save_pose_button.setEnabled(
-            state[u"buttons"][u"save_new"]
-        )
-        self.pose_summary.setText(
-            u"\n".join(
-                state[u"summary"]
+        try:
+            for index in reversed(range(widget.count())):
+                if widget.item(index).data(QtCore.Qt.UserRole) is None:
+                    widget.takeItem(index)
+            if message and widget.count() == 0:
+                row = QtGui.QListWidgetItem(
+                    u(message)
+                )
+                row.setFlags(
+                    QtCore.Qt.NoItemFlags
+                )
+                widget.addItem(
+                    row
+                )
+        finally:
+            widget.blockSignals(
+                False
             )
-        )
+
+    def open_pose_info(
+        self,
+    ):
+        """Read-only details of the selected pose: what it includes and whether it can be applied here."""
+        item = self.selected_pose()
+
+        if item is None:
+            self.set_status(
+                "Select a pose."
+            )
+            return None
+
+        def work():
+            record = item[u"record"]
+            pose = record[u"pose"]
+            state = self.pose_ui_state(item)
+            saved = [r for r in PROD_POSE_REGIONS if r in pose[u"regions"]]
+            dialog = QtGui.QDialog(self)
+            dialog.setWindowTitle("Pose Info")
+            outer = QtGui.QVBoxLayout(dialog)
+            summary = QtGui.QGroupBox("Pose")
+            form = QtGui.QFormLayout(summary)
+            name_label = QtGui.QLabel(u(record[u"name"]))
+            name_label.setTextInteractionFlags(
+                QtCore.Qt.TextSelectableByMouse
+            )
+            form.addRow("Name:", name_label)
+            form.addRow(
+                "Character:",
+                QtGui.QLabel(
+                    u((self.identity or {}).get("animset_name") or u"")
+                ),
+            )
+            model_label = QtGui.QLabel(
+                u(pose[u"source"][u"model_ref"]).replace(u"\\", u"/")
+            )
+            model_label.setWordWrap(True)
+            model_label.setTextInteractionFlags(
+                QtCore.Qt.TextSelectableByMouse
+            )
+            form.addRow("Model path:", model_label)
+            form.addRow(
+                "Saved:",
+                QtGui.QLabel(
+                    tool_format_saved_stamp(
+                        record.get(u"created_at")
+                    )
+                ),
+            )
+            form.addRow(
+                "Saved from:",
+                QtGui.QLabel(
+                    u(pose[u"source"].get(u"shot_name") or u"")
+                ),
+            )
+            form.addRow(
+                "Body parts:",
+                QtGui.QLabel(
+                    prod_pose_parts_phrase(saved)
+                ),
+            )
+            outer.addWidget(summary)
+            details = QtGui.QLabel(
+                u"\n".join(
+                    state[u"summary"]
+                )
+            )
+            details.setWordWrap(True)
+            outer.addWidget(details)
+            outer.addStretch(1)
+            buttons = QtGui.QDialogButtonBox(
+                QtGui.QDialogButtonBox.Close
+            )
+            buttons.rejected.connect(
+                dialog.reject
+            )
+            outer.addWidget(buttons)
+            tool_apply_visual_theme(dialog)
+            tool_apply_dialog_font(dialog)
+            dialog.resize(560, dialog.sizeHint().height())
+            try:
+                dialog.exec_()
+            finally:
+                dialog.deleteLater()
+
+        return self.guard("Pose Info", work)
 
     def apply_selected_pose(
         self,
@@ -38082,10 +38244,8 @@ class ProdWindow(QtGui.QDialog):
         def work():
             dialog = QtGui.QDialog(self)
             dialog.setWindowTitle(
-                "SFM Character Preset Manager - Help"
+                "Character Preset Manager - Help"
             )
-            dialog.resize(820, 770)
-
             outer = QtGui.QVBoxLayout(dialog)
 
             help_text = QtGui.QTextBrowser(dialog)
@@ -38097,7 +38257,7 @@ class ProdWindow(QtGui.QDialog):
                     p  { margin-top: 0px; margin-bottom: 9px; }
                 </style>
                 <h3>Getting started</h3>
-                <p>Choose the character you want to edit. Use <b>Body Presets</b> for body shape and <b>Expressions</b> for facial expressions. In <b>Clothing Fit</b>, choose clothing or accessories to fit to that character.</p>
+                <p>Choose the character you want to edit. Use <b>Body Presets</b> for body shape and <b>Expressions</b> for facial expressions. In <b>Clothing Fit</b>, choose clothing or accessories to fit to that character. Use <b>Poses</b> to save and reuse character poses.</p>
                 <p>The model list shows models in the shot under the playhead. To use a character from another shot, move the playhead into that shot, click <b>Refresh Model List</b>, then choose the character.</p>
 
                 <h3>Body Presets</h3>
@@ -38109,11 +38269,16 @@ class ProdWindow(QtGui.QDialog):
                 <h3>Clothing Fit</h3>
                 <p>Match selected clothing and accessories to the selected model's body shape.</p>
 
+                <h3>Poses</h3>
+                <p>Save a character's pose at the playhead with <b>Save New</b>.</p>
+                <p>You must be in the <b>Motion Editor</b> to apply poses. Select a saved pose and click <b>Apply Pose</b>. The pose is applied at the playhead without changing the character's position or facing.</p>
+                <p>Only supported characters and body parts can use saved poses. Use <b>Pose Info</b> to see what a pose includes.</p>
+
                 <h3>Preset controls</h3>
                 <p><b>Save New</b> creates a new preset from the current values. <b>Update Preset</b> overwrites the selected preset with the current values. <b>Add Favorite</b> marks presets for the <b>Favorites only</b> filter. <b>Delete Preset</b> moves the selected preset to Trash.</p>
 
                 <h3>Undo</h3>
-                <p>Use SFM's normal Undo command <b>(Ctrl+Z)</b> to reverse applied Body Presets, Expressions, and Clothing Fit changes.</p>
+                <p>Use SFM's normal Undo command <b>(Ctrl+Z)</b> to reverse applied Body Presets, Expressions, Poses, and Clothing Fit changes.</p>
 
                 <h3>Why does Review appear?</h3>
                 <p>Review appears when the Manager cannot classify a flex. For each unrecognized flex, decide whether it belongs in <b>Body Presets</b> or <b>Expressions</b>, or should be excluded from presets. Your choices are saved for this model. To change one later, select it under <b>Reviewed choices</b> and click <b>Clear Classification</b>.</p>
@@ -38178,6 +38343,7 @@ class ProdWindow(QtGui.QDialog):
 
             tool_apply_visual_theme(dialog)
             tool_apply_dialog_font(dialog)
+            dialog.resize(820, tool_help_preferred_height(dialog, help_text, 820))
 
             try:
                 dialog.exec_()
@@ -38630,7 +38796,7 @@ def StartProdTool():
     try:
         log_line("="*120)
         try:
-            log_line("%s %s"%(TOOL_NAME,PROD_VERSION))
+            log_line("%s %s"%(u"SFM Character Preset Manager",PROD_VERSION))
         except Exception:
             pass
         try:
@@ -40141,6 +40307,7 @@ PROD_POSE_AUTH_SCHEMA = u"cpm-pose-operation-authorization-v1"
 PROD_POSE_SCENE_LABELS = (u"Apply Pose", u"Save Pose")
 PROD_POSE_REGISTRY_MODE = u"production"
 PROD_POSE_CHECKING_COPY = u"Checking the applied pose..."
+PROD_POSE_EDITOR_NOTE_COPY = u"You must be in the Motion Editor to apply poses."
 
 
 class ProdPoseIntegrationError(RuntimeError):

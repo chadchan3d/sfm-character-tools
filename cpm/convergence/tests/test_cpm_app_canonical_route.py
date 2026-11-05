@@ -325,6 +325,7 @@ F01_STAGEC_CHANGED_TOP = set(["prod_apply", "prod_paths", "prod_preset_dir", "to
 F01_STAGEC_NEW_TOP = set([
     "PROD_POSE_AUTH_SCHEMA", "PROD_POSE_CHECKING_COPY", "PROD_POSE_KIND", "PROD_POSE_REGISTRY_FILENAME",
     "PROD_POSE_REGISTRY_MODE", "PROD_POSE_REGISTRY_SHA256", "PROD_POSE_SCENE_LABELS", "ProdPoseIntegrationError",
+    "PROD_POSE_EDITOR_NOTE_COPY",  # F-01 UI consistency pass: the Poses page's one line above the list
     "prod_pose_authorize", "prod_pose_context_gate", "prod_pose_deferred_verify", "prod_pose_load_registry",
     "prod_pose_registry_path", "prod_pose_reread", "prod_pose_selected_library",
 ])
@@ -361,10 +362,15 @@ F01_STAGED_NEW_TOP = set([
 ])
 F01_STAGED_CHANGED_METHODS = set(["__init__", "tab_changed", "render", "clear_model_selection", "operation_end"])  # NQ-1: Poses refresh
 F01_STAGED_NEW_METHODS = set(["refresh_pose_view", "selected_pose", "refresh_pose_buttons", "apply_selected_pose"])
+# F-01 UI consistency pass: the application name (TOOL_NAME; the diagnostic log keeps its product literal), Help's
+# preferred height, and the Poses page's state, list-message row and read-only Pose Info.
+F01_UI_CHANGED_TOP = set(["TOOL_NAME", "StartCharacterSliderPresetTool"])
+F01_UI_NEW_TOP = set(["tool_help_preferred_height"])
+F01_UI_NEW_METHODS = set(["pose_ui_state", "set_pose_list_message", "open_pose_info"])
 EXPECTED_CHANGED_TOP = (STEP2B_CHANGED_TOP | STEP3_CHANGED_TOP | STEP4_CHANGED_TOP | R14_CHANGED_TOP
                         | R15_CHANGED_TOP | ITEM6_CHANGED_TOP | ITEM7_CHANGED_TOP | UIPASS_CHANGED_TOP
                         | LOGFIX_CHANGED_TOP | M05_CHANGED_TOP | M06_CHANGED_TOP | M06W1_CHANGED_TOP
-                        | F01_STAGEC_CHANGED_TOP)
+                        | F01_STAGEC_CHANGED_TOP | F01_UI_CHANGED_TOP)
 EXPECTED_NEW_TOP = set([
     "PROD_CPM_MAINMENU_RELATIVE_PARTS", "PROD_CPM_ADAPTER_MODULES", "ProdCpmAuthorityBootstrapError",
     "ProdCpmAuthorityNotMigrated", "prod_cpm_mainmenu_dir", "prod_cpm_import_adapter", "prod_cpm_is_main_thread",
@@ -452,7 +458,8 @@ def section_derivation(app):
     check("derivation.changed_top_level_is_bounded", changed == EXPECTED_CHANGED_TOP, sorted(changed))
     check("derivation.added_top_level_is_bounded",
           added == EXPECTED_NEW_TOP | R15_NEW_TOP | ITEM6_NEW_TOP | UIPASS_NEW_TOP | LOGFIX_NEW_TOP | M05_NEW_TOP
-          | M06_NEW_TOP | M06W1_NEW_TOP | F01_STAGEA_NEW_TOP | F01_STAGEB_NEW_TOP | F01_STAGEC_NEW_TOP | F01_STAGED_NEW_TOP,
+          | M06_NEW_TOP | M06W1_NEW_TOP | F01_STAGEA_NEW_TOP | F01_STAGEB_NEW_TOP | F01_STAGEC_NEW_TOP | F01_STAGED_NEW_TOP
+          | F01_UI_NEW_TOP,
           sorted(added))
     check("derivation.removed_is_exactly_item6_and_item7", removed == ITEM6_REMOVED_TOP | ITEM7_REMOVED_TOP
           | LOGFIX_REMOVED_TOP, sorted(removed ^ (ITEM6_REMOVED_TOP | ITEM7_REMOVED_TOP | LOGFIX_REMOVED_TOP)))
@@ -467,7 +474,7 @@ def section_derivation(app):
     check("derivation.changed_methods_are_bounded", m_changed == expected_methods, sorted(m_changed))
     check("derivation.added_methods_are_bounded",
           set(am) - set(bm) == EXPECTED_NEW_METHODS | R15_NEW_METHODS | M05_NEW_METHODS | F01_STAGEC_NEW_METHODS
-          | F01_STAGED_NEW_METHODS,
+          | F01_STAGED_NEW_METHODS | F01_UI_NEW_METHODS,
           sorted(set(am) - set(bm)))
     check("derivation.removed_methods_are_exactly_item6", set(bm) - set(am) == ITEM6_REMOVED_METHODS,
           sorted(set(bm) - set(am)))
