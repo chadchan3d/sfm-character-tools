@@ -405,29 +405,37 @@ def section_rename_ui(window, tabs, env, boxes, QtGui):
         window.show_rename_menu(g["PROD_POSE_KIND"], plist.visualItemRect(plist.item(0)).center())
         check("N3 Poses: right-click on the list message row opens nothing", menus == [], menus)
         # The Rename dialog itself.
+        # Real key and click events reach the real dialog (exec_ replaced only to avoid a modal event loop).
         shown = []
         real_dialog = QtGui.QDialog.exec_
-        answer = {"code": 0}
+        answer = {"how": None}
 
         def dialog_exec(self):
             edit = self.findChildren(QtGui.QLineEdit)[0]
             shown.append((self.windowTitle(), edit.text(), edit.selectedText(),
                           sorted(b.text() for b in self.findChildren(QtGui.QPushButton)),
                           [b.text() for b in self.findChildren(QtGui.QPushButton) if b.isDefault()]))
-            if answer["code"]:
-                edit.setText(u"New Name")
-            return answer["code"]
+            edit.setText(u"New Name")
+            self.show()   # Qt presses a default button only when it is visible
+            if answer["how"] == "cancel-click":
+                [b for b in self.findChildren(QtGui.QPushButton) if b.text() == u"Cancel"][0].click()
+            else:
+                key = QtCore.Qt.Key_Return if answer["how"] == "enter" else QtCore.Qt.Key_Escape
+                QtGui.QApplication.sendEvent(self, QtGui.QKeyEvent(QtCore.QEvent.KeyPress, key,
+                                                                   QtCore.Qt.NoModifier))
+            return self.result()
         QtGui.QDialog.exec_ = dialog_exec
         try:
-            cancelled = window.prompt_rename(u"Arms Up")
-            answer["code"] = QtGui.QDialog.Accepted
-            accepted = window.prompt_rename(u"Arms Up")
+            results = {}
+            for how in ("enter", "escape", "cancel-click"):
+                answer["how"] = how
+                results[how] = window.prompt_rename(u"Arms Up")
         finally:
             QtGui.QDialog.exec_ = real_dialog
-        check("N4 Rename dialog: title Rename, current name prefilled and selected, Save and Cancel, Cancel default",
-              shown[:1] == [(u"Rename", u"Arms Up", u"Arms Up", [u"Cancel", u"Save"], [u"Cancel"])], shown)
-        check("N4 Cancel returns nothing; Save returns the entered name", cancelled is None
-              and accepted == u"New Name", (cancelled, accepted))
+        check("N4 Rename dialog: title Rename, current name prefilled and selected, Save and Cancel, Save default",
+              shown[:1] == [(u"Rename", u"Arms Up", u"Arms Up", [u"Cancel", u"Save"], [u"Save"])], shown)
+        check("N4 Enter confirms the entered name; Escape and clicking Cancel return nothing",
+              results == {"enter": u"New Name", "escape": None, "cancel-click": None}, results)
         # Missing or damaged pose profiles: their own list message; unsupported characters keep theirs.
         def broken():
             raise g["ProdPoseIntegrationError"](u"registry", u"The pose profiles are unavailable. Reinstall CPM.")

@@ -37036,8 +37036,8 @@ class ProdWindow(QtGui.QDialog):
         self,
         current,
     ):
-        """The Rename dialog: the current name prefilled and selected; Save and Cancel, Cancel the default.
-        Returns the entered text, or None when cancelled (the name rules are the store's)."""
+        """The Rename dialog: the current name prefilled and selected; Save (the default: Enter confirms) and
+        Cancel (or Escape). Returns the entered text, or None when cancelled (the name rules are the store's)."""
         dialog = QtGui.QDialog(
             self
         )
@@ -37076,8 +37076,8 @@ class ProdWindow(QtGui.QDialog):
             cancel_button.clicked.connect(
                 dialog.reject
             )
-            save_button.setAutoDefault(False)
-            cancel_button.setDefault(True)
+            cancel_button.setAutoDefault(False)
+            save_button.setDefault(True)
             layout.addWidget(buttons)
             tool_apply_visual_theme(dialog)
             tool_apply_dialog_font(dialog)
