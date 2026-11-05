@@ -367,14 +367,20 @@ F01_STAGED_CHANGED_METHODS = set(["__init__", "tab_changed", "render", "clear_mo
 F01_STAGED_NEW_METHODS = set(["refresh_pose_view", "selected_pose", "refresh_pose_buttons", "apply_selected_pose"])
 # F-01 UI consistency pass: the application name (TOOL_NAME; the diagnostic log keeps its product literal), Help's
 # preferred height, and the Poses page's state, list-message row and read-only Pose Info.
-F01_UI_CHANGED_TOP = set(["TOOL_NAME", "StartCharacterSliderPresetTool"])
-F01_UI_NEW_TOP = set(["tool_help_preferred_height", "prod_rename_preset"])
+F01_UI_CHANGED_TOP = set(["TOOL_NAME", "StartCharacterSliderPresetTool",
+                          # Final UI polish: one enabled/disabled button text colour everywhere.
+                          "tool_apply_visual_theme", "tool_apply_main_action_button"])
+F01_UI_NEW_TOP = set(["tool_help_preferred_height", "prod_rename_preset",
+                      # Final UI polish: neutral button style, short status names, the installed updater's location.
+                      "tool_apply_neutral_button_style", "tool_status_name", "prod_master_updater_paths"])
 F01_UI_NEW_METHODS = set(["pose_ui_state", "set_pose_list_message", "open_pose_info",
                           # The Poses six-button layout: Update Pose, Add/Remove Favorite and Delete Pose handlers.
                           "pose_selection_for_action", "update_selected_pose", "confirm_pose_update", "update_pose",
                           "toggle_pose_favorite", "confirm_pose_trash", "delete_selected_pose",
                           # Rename (list context menu) on Body Presets, Expressions and Poses.
-                          "show_rename_menu", "prompt_rename", "rename_kind", "rename_selected_pose"])
+                          "show_rename_menu", "prompt_rename", "rename_kind", "rename_selected_pose",
+                          # Final UI polish: Update Animation Groups Master opens the installed updater.
+                          "open_master_updater"])
 EXPECTED_CHANGED_TOP = (STEP2B_CHANGED_TOP | STEP3_CHANGED_TOP | STEP4_CHANGED_TOP | R14_CHANGED_TOP
                         | R15_CHANGED_TOP | ITEM6_CHANGED_TOP | ITEM7_CHANGED_TOP | UIPASS_CHANGED_TOP
                         | LOGFIX_CHANGED_TOP | M05_CHANGED_TOP | M06_CHANGED_TOP | M06W1_CHANGED_TOP

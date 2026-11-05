@@ -49,7 +49,7 @@ HELP_EXPECTED = [
     u"Save a character's pose at the playhead with Save New.",
     u"You must be in the Motion Editor to apply poses. Select a saved pose and click Apply Pose. The pose is applied "
     u"at the playhead without changing the character's position or facing.",
-    u"Only supported characters and body parts can use saved poses. Use Pose Info to see what a pose includes.",
+    u"Pose Info shows which body parts are included in a saved pose.",
     u"Preset controls",
     u"Save New creates a new preset from the current values. Update Preset overwrites the selected preset with the "
     u"current values. Add Favorite marks presets for the Favorites only filter. Delete Preset moves the selected "
@@ -102,8 +102,8 @@ def section_ui_pass(window, tabs, env, boxes, QtGui):
     fit_labels = [w.text() for w in window.fit_page.findChildren(QtGui.QLabel)]
     check("U2 Clothing Fit keeps its instruction",
           fit_labels == [u"Match selected clothing to this model's body shape."], fit_labels)
-    pose_labels = [w for w in window.pose_page.findChildren(QtGui.QLabel)]
-    check("U3 Poses shows exactly the Motion Editor sentence above the list",
+    pose_labels = [w for w in window.pose_page.findChildren(QtGui.QLabel) if w.text() != u"Sort:"]
+    check("U3 Poses shows exactly the Motion Editor sentence above the list (the search row's Sort label aside)",
           [w.text() for w in pose_labels] == [u"You must be in the Motion Editor to apply poses."]
           and not pose_labels[0].isHidden(), [w.text() for w in pose_labels])
     # Poses actions: the six-button layout of Body Presets and Expressions, built with the same helpers.
@@ -142,8 +142,8 @@ def section_ui_pass(window, tabs, env, boxes, QtGui):
     check("U5 Help text is exactly the original with the approved Poses changes", paras == HELP_EXPECTED,
           [(i, a, b) for i, (a, b) in enumerate(zip(paras, HELP_EXPECTED)) if a != b][:3] or (len(paras),
                                                                                              len(HELP_EXPECTED)))
-    check("U5 Help keeps the GitHub button and the license/author footer",
-          u"Download / Update Master on GitHub" in h.get("buttons", []) and
+    check("U5 Help has the Update Animation Groups Master button and keeps the license/author footer",
+          u"Update Animation Groups Master" in h.get("buttons", []) and
           u"License: CC0 1.0 Universal \u00b7 Author: ChadChan3D" in h.get("labels", []), h.get("buttons"))
     avail = QtGui.QApplication.desktop().availableGeometry(window).height()
     print("Help size %sx%s, usable screen height %d" % (h.get("width"), h.get("height"), avail))
@@ -239,11 +239,11 @@ def section_ui_pass(window, tabs, env, boxes, QtGui):
         window.refresh_pose_buttons()
         info = capture_dialog(QtGui, window.open_pose_info)
         d = info[0] if info else {"status": window.status.text()}
-        check("U8 Pose Info opens a read-only dialog with the pose's details",
-              d.get("title") == u"Pose Info" and u"Arms Up" in d.get("labels", []) and u"Left arm" in
-              d.get("labels", []) and u"shot10" in d.get("labels", []) and
-              any(u"Available: Left arm" in t for t in d.get("labels", [])) and d.get("buttons") == [u"Close"],
-              d)
+        check("U8 Pose Info opens a read-only dialog with the pose's details and no availability summary",
+              d.get("title") == u"Pose Info" and u"Arms Up" in d.get("labels", []) and u"Krystal" in
+              d.get("labels", []) and u"shot10" in d.get("labels", []) and u"Source shot:" in d.get("labels", [])
+              and not any(u"From:" in t or u"Available:" in t for t in d.get("labels", []))
+              and d.get("buttons") == [u"Close"], d)
         check("U8 Pose Info ended its operation", not window.busy and window.operation is None)
         # The Update Pose and Delete Pose confirmations (shown, then cancelled: nothing is written).
         seen = []
@@ -256,8 +256,8 @@ def section_ui_pass(window, tabs, env, boxes, QtGui):
         finally:
             QtGui.QMessageBox.exec_ = real_exec
         check("U9 Update Pose asks before overwriting, with Cancel as the default",
-              answer is False and seen == [(u"Update pose?", u'Copy the current left arm pose into "Arms Up"?',
-                                            u"The pose's saved values will be overwritten.",
+              answer is False and seen == [(u"Update Pose", u'Update "Arms Up" using the current pose?',
+                                            u"Its saved values will be replaced.",
                                             [u"Update Pose", u"Cancel"], u"Cancel")], seen)
         shown = []
         real_dialog = QtGui.QDialog.exec_
@@ -463,6 +463,265 @@ def section_rename_ui(window, tabs, env, boxes, QtGui):
         env.settle()
 
 
+def text_brightness(QtGui, button):
+    """The button's rendered text colour: the brightest pixel in its central band (text over the fill)."""
+    img = QtGui.QPixmap.grabWidget(button).toImage()
+    best = 0
+    for y in range(img.height() // 3, 2 * img.height() // 3):
+        for x in range(img.width() // 6, 5 * img.width() // 6):
+            c = QtGui.QColor(img.pixel(x, y))
+            best = max(best, min(c.red(), c.green(), c.blue()))
+    return best
+
+
+def section_polish(window, tabs, env, boxes, QtGui):
+    """The final UI polish: equal button text, the Rename menu's size, Pose Info, short statuses, Poses Sort and
+    Favorites only, and Update Animation Groups Master."""
+    g = window.render.im_func.func_globals
+    QtCore = g["QtCore"]
+    # Button text: every enabled button the same bright #d8d8d8 (216), every disabled one the muted #858585 (133).
+    rows = []
+    for b in window.findChildren(QtGui.QPushButton):
+        was = b.isEnabled()
+        b.setEnabled(True)
+        on = text_brightness(QtGui, b)
+        b.setEnabled(False)
+        off = text_brightness(QtGui, b)
+        b.setEnabled(was)
+        rows.append((b.text(), on, off))
+    check("V1 every main-window button: enabled text 216 (#d8d8d8), disabled 133 (#858585)",
+          len(rows) >= 26 and all(on == 216 and off == 133 for _, on, off in rows),
+          [r for r in rows if r[1:] != (216, 133)])
+    help_rows = []
+    real_exec = QtGui.QDialog.exec_
+
+    def help_exec(self):
+        for b in self.findChildren(QtGui.QPushButton):
+            help_rows.append((b.text(), text_brightness(QtGui, b), b.toolTip()))
+        return 0
+    QtGui.QDialog.exec_ = help_exec
+    try:
+        window.open_help()
+    finally:
+        QtGui.QDialog.exec_ = real_exec
+    check("V1 Help: Update Animation Groups Master and Close have the same text brightness",
+          sorted(t for t, _, _ in help_rows) == [u"Close", u"Update Animation Groups Master"]
+          and all(v == 216 for _, v, _ in help_rows), help_rows)
+    names = ("prod_pose_load_registry", "prod_pose_selected_library", "prod_pose_discover", "prod_pose_rig_class",
+             "prod_pose_registry_select", "prod_pose_browse_eligible", "prod_resolve_instance",
+             "prod_identity_from_row", "prod_context_token", "prod_context_token_matches", "prod_pose_reread",
+             "prod_pose_assert_contained", "prod_set_favorite", "prod_master_updater_paths")
+    saved = dict((k, g[k]) for k in names)
+    ident = {"model": u"models/test/krystal2020.mdl", "checksum": 1234, "animset_name": u"Krystal"}
+
+    def pose(pid, name, created, updated=None, regions=(u"left_arm",)):
+        return {u"name": name, u"preset_id": pid, u"revision": 1, u"path": u"C:/unused/%s.json" % pid,
+                u"character_key": u"k",
+                u"record": {u"name": name, u"preset_id": pid, u"kind": u"pose", u"created_at": created,
+                            u"updated_at": updated or created,
+                            u"pose": {u"regions": dict((r, {}) for r in regions), u"source": {
+                                u"model_ref": u"models/test/krystal2020.mdl", u"shot_name": u"shot10",
+                                u"rig_class": u"krystal-biped"}}}}
+    items = [pose(u"p1", u"Wave", u"20261101-100000-000000"),
+             pose(u"p2", u"Arms Up", u"20261102-100000-000000", u"20261105-090000-000000"),
+             pose(u"p3", u"Reach", u"20261103-100000-000000", regions=(u"left_arm", u"right_arm"))]
+    menus = []
+    real_menu = QtGui.QMenu
+
+    class RecordingMenu(real_menu):
+        def exec_(self, *args):
+            menus.append({"actions": [(a.text(), a.shortcut().isEmpty()) for a in self.actions()],
+                          "min_width": self.minimumWidth(), "width": self.sizeHint().width(),
+                          "font": self.font().pointSize(), "sheet": self.styleSheet()})
+            return None
+    QtGui.QMenu = RecordingMenu
+    g["prod_resolve_instance"] = lambda tok, identity=None: dict(ident, test_row=True)
+    g["prod_identity_from_row"] = lambda row: dict(ident)
+    g["prod_context_token"] = lambda *a, **k: {"test_context": True}
+    g["prod_context_token_matches"] = lambda token: token == {"test_context": True}
+    g["prod_pose_load_registry"] = lambda: {}
+    g["prod_pose_selected_library"] = lambda i: {u"char_dir": u"C:/unused/char", u"character_key": u"k",
+                                                 u"library_root": u"C:/unused"}
+    g["prod_pose_discover"] = lambda char_dir, key, reg: {u"items": list(items), u"unusable": []}
+    g["prod_pose_rig_class"] = lambda reg, model, checksum: u"krystal-biped"
+    g["prod_pose_registry_select"] = lambda reg, mode: {}
+    g["prod_pose_browse_eligible"] = lambda sel, rec, cls: [u"left_arm"]
+    g["prod_pose_reread"] = lambda sel, item, reg: item
+    g["prod_pose_assert_contained"] = lambda sel, path: path
+
+    def set_favorite(identity, record, enabled, phase_callback=None):
+        keys = set(window.favorite_keys())
+        key = u"pose:%s" % record[u"preset_id"]
+        (keys.add if enabled else keys.discard)(key)
+        return {"enabled": enabled, "meta": {"schema_version": 1, "record_kind": u"library-metadata",
+                                             "favorites": sorted(keys)}}
+    g["prod_set_favorite"] = set_favorite
+    meta = window.library_meta
+    try:
+        window.identity = dict(ident)
+        window.selection_token = {"kind": g["PROD_INSTANCE_TOKEN_KIND"], "test": True}
+        window.library_meta = {"schema_version": 1, "record_kind": u"library-metadata", "favorites": [u"pose:p2"]}
+        tabs.setCurrentWidget(window.pose_page)
+        window.pose_sort.setCurrentIndex(0)
+        window.pose_favorites_only.setChecked(False)
+        window.refresh_pose_view()
+        env.settle()
+        listed = lambda: [window.pose_list.item(i).text() for i in range(window.pose_list.count())]  # noqa: E731
+        # Rename menu: larger (the list's font, wider padding and width); still exactly one action.
+        plist = window.pose_list
+        window.show_rename_menu(g["PROD_POSE_KIND"], plist.visualItemRect(plist.item(0)).center())
+        m = menus[0] if menus else {}
+        check("V2 Rename menu: one action Rename, no shortcut, the list's font, at least 180 px, padded items",
+              m.get("actions") == [(u"Rename", True)] and m.get("font") == plist.font().pointSize()
+              and m.get("min_width") >= 180 and m.get("width") >= 180 and u"padding: 7px 36px 7px 22px" in
+              m.get("sheet", u""), m)
+        # Sort and Favorites only, as on Body Presets and Expressions.
+        check("V3 Poses has Search, Sort (Name, Recent) and Favorites only, like Body Presets",
+              [window.pose_sort.itemText(i) for i in range(window.pose_sort.count())] == [u"Name", u"Recent"]
+              and window.pose_favorites_only.text() == u"Favorites only"
+              and window.pose_search.placeholderText() == u"Search poses")
+        check("V3 Name order", listed() == [u"Arms Up", u"Reach", u"Wave"], listed())
+        plist.setCurrentRow(1)
+        window.pose_sort.setCurrentIndex(1)
+        env.settle()
+        check("V3 Recent order (updated or saved, newest first) keeps the selected pose",
+              listed() == [u"Arms Up", u"Reach", u"Wave"] and window.selected_pose()[u"preset_id"] == u"p3",
+              (listed(), window.selected_pose()))
+        items[0][u"record"][u"updated_at"] = u"20261106-080000-000000"
+        window.refresh_pose_view()
+        check("V3 Recent order follows a later update", listed() == [u"Wave", u"Arms Up", u"Reach"]
+              and window.selected_pose()[u"preset_id"] == u"p3", listed())
+        window.pose_sort.setCurrentIndex(0)
+        window.pose_favorites_only.setChecked(True)
+        env.settle()
+        check("V3 Favorites only shows the favorite pose; the hidden selection leaves the per-pose buttons off",
+              listed() == [u"Arms Up"] and window.selected_pose() is None
+              and not window.update_pose_button.isEnabled() and not window.delete_pose_button.isEnabled(),
+              listed())
+        plist.setCurrentRow(0)
+        window.toggle_pose_favorite()
+        env.settle()
+        check("V3 Remove Favorite under Favorites only: the list updates at once, without a message row",
+              window.pose_list.count() == 0 and u"pose:p2" not in window.favorite_keys(), listed())
+        window.pose_favorites_only.setChecked(False)
+        env.settle()
+        plist.setCurrentRow(listed().index(u"Reach"))
+        window.toggle_pose_favorite()
+        window.pose_favorites_only.setChecked(True)
+        env.settle()
+        check("V3 Add Favorite: the pose is in the Favorites only list, still selected, buttons enabled",
+              listed() == [u"Reach"] and window.selected_pose()[u"preset_id"] == u"p3"
+              and window.update_pose_button.isEnabled() and window.favorite_pose_button.text() == u"Remove Favorite",
+              listed())
+        window.pose_favorites_only.setChecked(False)
+        env.settle()
+        # Pose Info: metadata; body parts one per row; a limitation note only when a part can't be applied.
+        def info(pid):
+            plist.setCurrentRow([i for i in range(plist.count())
+                                 if window.selected_pose() is None or True][0])
+            for i in range(plist.count()):
+                plist.setCurrentRow(i)
+                if window.selected_pose()[u"preset_id"] == pid:
+                    break
+            seen = []
+
+            def info_exec(self):
+                parts = self.findChildren(QtGui.QListWidget, "pose_info_parts")
+                note = self.findChildren(QtGui.QLabel, "pose_info_limitation")
+                seen.append({"labels": [w.text() for w in self.findChildren(QtGui.QLabel)],
+                             "parts": [parts[0].item(i).text() for i in range(parts[0].count())] if parts else None,
+                             "parts_height": parts[0].height() if parts else 0,
+                             "note": note[0].text() if note else None,
+                             "groups": [w.title() for w in self.findChildren(QtGui.QGroupBox)]})
+                return 0
+            QtGui.QDialog.exec_ = info_exec
+            try:
+                window.open_pose_info()
+            finally:
+                QtGui.QDialog.exec_ = real_exec
+            return seen[0] if seen else {}
+        one = info(u"p1")
+        check("V4 Pose Info, one part: Name, Character, Saved, Source shot; Body parts list; model path under "
+              "Technical details; no summary or note",
+              all(t in one.get("labels", []) for t in (u"Name:", u"Wave", u"Character:", u"Krystal", u"Saved:",
+                                                         u"Source shot:", u"shot10", u"Body parts:", u"Model path:"))
+              and one.get("parts") == [u"Left arm"] and one.get("note") is None
+              and one.get("groups") == [u"Pose", u"Technical details"]
+              and not any(u"From:" in t or u"Available" in t for t in one.get("labels", [])), one)
+        check("V4 Pose Info: Updated is shown when the pose was updated", u"Updated:" in one.get("labels", []), one)
+        updated = info(u"p2")
+        check("V4 Pose Info: Updated is shown for a second updated pose",
+              u"Updated:" in updated.get("labels", []), updated)
+        items[0][u"record"][u"updated_at"] = items[0][u"record"][u"created_at"]
+        window.refresh_pose_view()
+        check("V4 Pose Info: no Updated row when the pose was never updated",
+              u"Updated:" not in info(u"p1").get("labels", []))
+        many = info(u"p3")
+        check("V4 Pose Info, several parts: one row each, and a note only for the part Krystal can't use",
+              many.get("parts") == [u"Left arm", u"Right arm"]
+              and many.get("note") == u"Can't be applied to Krystal: Right arm."
+              and many.get("parts_height") > one.get("parts_height"), many)
+        # Statuses: routine success messages name the item only; a long name is shortened in the middle.
+        short = g["tool_status_name"](u"Standing")
+        long_name = u"A" * 60 + u"B" * 40
+        shortened = g["tool_status_name"](long_name)
+        check("V5 status names: short names unchanged; a 100-character name is 40 characters with an ellipsis",
+              short == u"Standing" and len(shortened) == 40 and u"\u2026" in shortened
+              and shortened.startswith(u"A" * 20) and shortened.endswith(u"B" * 19), shortened)
+        messages = g["PROD_POSE_MESSAGES"]
+        check("V5 pose statuses name the pose only",
+              messages[u"saved"] % {u"name": u"Standing", u"parts": u"Left arm"} == u"Pose saved: Standing."
+              and messages[u"applied"] % {u"name": u"Standing", u"parts": u"Left arm"} == u"Pose applied: Standing.")
+        font = QtGui.QFont(window.status.font())
+        if font.pointSize() > 0:
+            font.setPixelSize(int(round(font.pointSize() * 96.0 / 72.0)))
+        widest = QtGui.QFontMetrics(font).width(u"Pose applied: %s." % shortened)
+        check("V5 the longest routine status fits one line at the minimum width (96-DPI estimate)",
+              widest <= window.minimumWidth() - 2 * 11 - 2 * 7, (widest, window.minimumWidth()))
+        # Update Animation Groups Master: the installed updater, started exactly as its menu launcher does.
+        import os as _os
+        import subprocess as _subprocess
+        # A file that exists in the fixture installation stands in for the updater executable (never started).
+        exe = g["__file__"]
+        tools = _os.path.dirname(exe)
+        paths = {"exe": exe}
+        g["prod_master_updater_paths"] = lambda: (paths["exe"], tools, u"C:/SFM")
+        started = []
+        real_popen = _subprocess.Popen
+        _subprocess.Popen = lambda args, **kw: started.append((list(args), kw))
+        try:
+            ok = window.open_master_updater()
+            paths["exe"] = exe + u".missing"
+            n = len(boxes)
+            missing = window.open_master_updater()
+        finally:
+            _subprocess.Popen = real_popen
+        check("V6 Update Animation Groups Master starts the installed updater (independent process, --sfm-folder)",
+              ok is True and len(started) == 1 and started[0][0] == [exe, u"--sfm-folder", u"C:/SFM"]
+              and started[0][1].get("cwd") == tools and started[0][1].get("creationflags") == 0x00000208,
+              started)
+        check("V6 without the updater: a warning names the expected location; nothing is started",
+              missing is False and len(started) == 1 and len(boxes) == n + 1 and paths["exe"] in boxes[-1][1],
+              boxes[-1:])
+        del boxes[n:]
+        real_paths = saved["prod_master_updater_paths"]()
+        check("V6 the updater location is the one its Scripts-menu launcher uses",
+              real_paths[0].replace(u"\\", u"/").endswith(
+                  u"usermod/tools/SFM Control Group Updater/SFM Control Group Updater.exe"), real_paths)
+    finally:
+        QtGui.QMenu = real_menu
+        QtGui.QDialog.exec_ = real_exec
+        g.update(saved)
+        window.library_meta = meta
+        window.pose_favorites_only.setChecked(False)
+        window.pose_sort.setCurrentIndex(0)
+        window.identity = None
+        window.selection_token = None
+        window.refresh_pose_view()
+        tabs.setCurrentWidget(window.body_page)
+        env.settle()
+
+
 def section_selection_refresh(window, tabs, env, boxes):
     """NQ-1 process A defect: selecting a character while Poses is open left Save New disabled until a tab change.
     The real window's model-selection publish (render) and clear paths run; only their scene-facing helpers are
@@ -500,7 +759,7 @@ def section_selection_refresh(window, tabs, env, boxes):
               window.save_pose_button.isEnabled())
         rows = [window.pose_list.item(i).text() for i in range(window.pose_list.count())]
         check("P6 the empty-list message names the character, in the list, without a tab change",
-              len(rows) == 1 and u"No poses saved for Krystal yet." in rows[0] and not calls, (rows, calls))
+              rows == [u"No saved poses for Krystal."] and not calls, (rows, calls))
         check("P6 the message row is not selectable and selects no pose",
               window.pose_list.item(0).flags() == g["QtCore"].Qt.NoItemFlags and window.selected_pose() is None)
         check("P6 the text above the list stays the Motion Editor note",
@@ -607,6 +866,7 @@ def main():
           or bar.elideMode() == 0, bar.elideMode())
     section_ui_pass(window, tabs, env, boxes, QtGui)
     section_rename_ui(window, tabs, env, boxes, QtGui)
+    section_polish(window, tabs, env, boxes, QtGui)
     section_selection_refresh(window, tabs, env, boxes)
     try:
         window.close()

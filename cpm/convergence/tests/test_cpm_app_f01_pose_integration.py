@@ -113,7 +113,7 @@ def build(app):
                  "prod_outcome", "PROD_LIBRARY_META_SCHEMA", "PROD_LIBRARY_META_FILENAME", "P03_TRASH_DIRNAME",
                  "prod_favorite_key", "prod_load_library_meta", "prod_save_library_meta", "prod_is_favorite",
                  "prod_set_favorite", "prod_rename_preset", "prod_move_current_preset_to_trash",
-                 "prod_item_display_name", "prod_json_digest", "prod_apply_deferred_verify"):
+                 "prod_item_display_name", "prod_json_digest", "prod_apply_deferred_verify", "tool_status_name"):
         if name not in ns:
             route._run_source(app.top_text(name), "app:%s" % name, ns)
     for name in POSE_METHODS + PAGE_METHODS + SHARED_METHODS:
@@ -403,7 +403,7 @@ def section_save(ns, app, Window, reg):
     items = own_items(ns, win, reg)
     check("C4.save_through_cpm_lifecycle_writes_one_own_pose", len(items) == 1 and items[0][u"name"] == u"Arms Up"
           and items[0][u"character_key"] == ns["prod_key"](w1.MODEL) and ended(win), (items, win.statuses))
-    check("C4.save_status", last_status(win) == (u"Pose saved: Arms Up (Left arm).", u"success"), win.statuses)
+    check("C4.save_status", last_status(win) == (u"Pose saved: Arms Up.", u"success"), win.statuses)
     check("C4.capture_received_the_pinned_target_authorization", len(Fakes.captures) == 1
           and Fakes.captures[0][1][u"context"]["instance"]["animset_key"][1] == s.target.animset._handle
           and Fakes.captures[0][2] == [u"left_arm"])
@@ -511,7 +511,7 @@ def section_apply(ns, app, Window, reg):
     install_fakes(ns, verify_phase=u"committed-verified")
     win.apply_pose(item)
     m05.Timer.run_all()
-    check("C5.verified_result_published", last_status(win) == (u"Pose applied: Arms Up (Left arm).", u"success")
+    check("C5.verified_result_published", last_status(win) == (u"Pose applied: Arms Up.", u"success")
           and ended(win), win.statuses[-1:])
     install_fakes(ns, phase=u"no-op")
     win.apply_pose(item)
@@ -623,7 +623,7 @@ def section_independent_persistence(ns, Window, reg):
               == s2.target.animset._handle and auth[u"context"]["instance"]["session"] == u"restarted-session",
               auth.get(u"context"))
         check("C7.applied_and_verified_without_source", last_status(win2) == (
-            u"Pose applied: Arms Up (Both arms).", u"success") and ended(win2), win2.statuses[-1:])
+            u"Pose applied: Arms Up.", u"success") and ended(win2), win2.statuses[-1:])
         refused("C7.earlier_session_selection_refused",
                 outcome(lambda: ns["prod_context_token"](dict(win2.identity), old_token)))
         check("C7.record_unchanged_by_restart_apply", core.read(item[u"path"]) == raw)
@@ -688,7 +688,7 @@ def section_library_buttons(ns, app, Window, reg):
         check("C9.update_captures_exactly_the_saved_parts_at_the_pinned_time",
               captures == [(u"Update Pose", [u"left_arm"], time)], captures)
         check("C9.update_status_and_operation_ended",
-              last_status(win) == (u'"Arms Up" updated (Left arm).', u"success") and ended(win), win.statuses[-1:])
+              last_status(win) == (u"Pose updated: Arms Up.", u"success") and ended(win), win.statuses[-1:])
         current = fresh[0]
         for name, setting, expected in (
                 ("capture_unreadable", ("capture", ns["ProdPoseError"](u"structure-unsupported", u"x")),
@@ -1054,7 +1054,7 @@ def section_rename_poses(ns, app, Window, reg):
     check("R2[pose].apply_uses_the_renamed_record_and_its_saved_values",
           len(Fakes.applies) == 1 and applied[2][u"record"][u"pose"] == pose[u"record"][u"pose"]
           and applied[1][u"record"][u"preset_id"] == pose[u"preset_id"] and applied[1][u"record"][u"name"] == u"Reach"
-          and last_status(win) == (u"Pose applied: Reach (Left arm).", u"success") and ended(win), win.statuses[-1:])
+          and last_status(win) == (u"Pose applied: Reach.", u"success") and ended(win), win.statuses[-1:])
     # Update: the renamed pose, same file and identity, name kept.
     real_time = ns["prod_pose_current_time"]
     ns["prod_pose_current_time"] = lambda identity, authorization, reg_, regions: {u"t_doc": 1, u"t_shot": 1,
@@ -1068,7 +1068,7 @@ def section_rename_poses(ns, app, Window, reg):
     fresh = [i for i in own_items(ns, win, reg) if i[u"preset_id"] == pose[u"preset_id"]]
     check("R2[pose].update_writes_the_renamed_pose",
           len(fresh) == 1 and fresh[0][u"path"] == pose[u"path"] and fresh[0][u"name"] == u"Reach"
-          and last_status(win) == (u'"Reach" updated (Left arm).', u"success") and ended(win), win.statuses[-1:])
+          and last_status(win) == (u"Pose updated: Reach.", u"success") and ended(win), win.statuses[-1:])
     item = fresh[0]
     # Favorite removed and added on the renamed pose.
     win.pose_selection_for_action = lambda: item

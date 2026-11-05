@@ -12629,6 +12629,12 @@ def tool_apply_visual_theme(
         QLabel {
             background: transparent;
         }
+        QPushButton {
+            color: #d8d8d8;
+        }
+        QPushButton:disabled {
+            color: #858585;
+        }
         """
     )
 
@@ -12700,6 +12706,22 @@ def tool_help_preferred_height(
     return preferred
 
 
+def tool_status_name(
+    name,
+    limit=40,
+):
+    """A saved item's name inside a one-line status: a long name is shortened in the middle, so the status bar
+    keeps its height and stays readable. The full name stays in the list, the item's Info and the logs."""
+    text = u(
+        name
+        or u""
+    )
+    if len(text) <= limit:
+        return text
+    keep = limit - 1
+    return text[: (keep + 1) // 2] + u"\u2026" + text[len(text) - keep // 2:]
+
+
 def tool_apply_preset_list_style(
     widget,
 ):
@@ -12744,17 +12766,16 @@ def tool_apply_tab_style(
     )
 
 
-def tool_apply_main_action_button(
+def tool_apply_neutral_button_style(
     button,
 ):
-    # Main-window actions share one restrained neutral treatment.
-    button.setAutoDefault(False)
-    button.setDefault(False)
-    button.setMinimumHeight(30)
+    # The neutral action-button look (text, fill, border, disabled state) only: size, focus and default-button
+    # behaviour are left as they are. Every enabled button text is #d8d8d8, every disabled one #858585.
     button.setStyleSheet(
         """
         QPushButton {
             background-color: #494949;
+            color: #d8d8d8;
             border: 1px solid #5b5b5b;
             padding: 5px 10px;
         }
@@ -12771,6 +12792,18 @@ def tool_apply_main_action_button(
             border: 1px solid #484848;
         }
         """
+    )
+
+
+def tool_apply_main_action_button(
+    button,
+):
+    # Main-window actions share one restrained neutral treatment.
+    button.setAutoDefault(False)
+    button.setDefault(False)
+    button.setMinimumHeight(30)
+    tool_apply_neutral_button_style(
+        button
     )
 
 
@@ -18686,6 +18719,14 @@ PROD_RUN_ID = u"%s-pid%d" % (
 )
 PROD_PID = int(os.getpid())
 PROD_MASTER_GITHUB_URL = u"https://github.com/chadchan3d/sfm-animation-groups-master"
+
+
+def prod_master_updater_paths():
+    """(updater executable, its folder, the SourceFilmmaker folder) for this SFM, as the updater's own Scripts-menu
+    launcher derives them: <game>/usermod/tools/SFM Control Group Updater/SFM Control Group Updater.exe."""
+    game = os.path.dirname(os.path.abspath(sys.executable))
+    tools = os.path.join(game, "usermod", "tools", "SFM Control Group Updater")
+    return os.path.join(tools, "SFM Control Group Updater.exe"), tools, os.path.dirname(game)
 
 PROD_MASTER_REVIEW_WARNING_THRESHOLD = 20
 PROD_MASTER_PROVIDER_WARNING_COPY = (
@@ -30531,6 +30572,9 @@ class ProdWindow(QtGui.QDialog):
         self.refresh.setDefault(
             False
         )
+        tool_apply_neutral_button_style(
+            self.refresh
+        )
         self.refresh.clicked.connect(
             self.populate
         )
@@ -30547,6 +30591,9 @@ class ProdWindow(QtGui.QDialog):
         self.details.setDefault(
             False
         )
+        tool_apply_neutral_button_style(
+            self.details
+        )
         self.details.clicked.connect(
             self.open_details
         )
@@ -30562,6 +30609,9 @@ class ProdWindow(QtGui.QDialog):
         )
         self.help_button.setDefault(
             False
+        )
+        tool_apply_neutral_button_style(
+            self.help_button
         )
         self.help_button.clicked.connect(
             self.open_help
@@ -30749,10 +30799,20 @@ class ProdWindow(QtGui.QDialog):
         self.pose_summary = QtGui.QLabel(PROD_POSE_EDITOR_NOTE_COPY)
         self.pose_summary.setWordWrap(True)
         pose_layout.addWidget(self.pose_summary)
+        pose_library = QtGui.QHBoxLayout()
         self.pose_search = QtGui.QLineEdit()
         self.pose_search.setPlaceholderText("Search poses")
         self.pose_search.textChanged.connect(lambda value: self.refresh_pose_view())
-        pose_layout.addWidget(self.pose_search)
+        pose_library.addWidget(self.pose_search, 1)
+        pose_library.addWidget(QtGui.QLabel("Sort:"))
+        self.pose_sort = QtGui.QComboBox()
+        self.pose_sort.addItems(["Name", "Recent"])
+        self.pose_sort.currentIndexChanged.connect(lambda index: self.refresh_pose_view())
+        pose_library.addWidget(self.pose_sort)
+        self.pose_favorites_only = QtGui.QCheckBox("Favorites only")
+        self.pose_favorites_only.toggled.connect(lambda checked: self.refresh_pose_view())
+        pose_library.addWidget(self.pose_favorites_only)
+        pose_layout.addLayout(pose_library)
         self.pose_list = QtGui.QListWidget()
         tool_apply_preset_list_style(self.pose_list)
         self.pose_list.setWordWrap(True)
@@ -30861,6 +30921,9 @@ class ProdWindow(QtGui.QDialog):
         self.mark_expr.setAutoDefault(
             False
         )
+        tool_apply_neutral_button_style(
+            self.mark_expr
+        )
         self.mark_expr.clicked.connect(
             lambda: self.review_decision(
                 u"expression"
@@ -30876,6 +30939,9 @@ class ProdWindow(QtGui.QDialog):
         )
         self.mark_body.setAutoDefault(
             False
+        )
+        tool_apply_neutral_button_style(
+            self.mark_body
         )
         self.mark_body.clicked.connect(
             lambda: self.review_decision(
@@ -30893,6 +30959,9 @@ class ProdWindow(QtGui.QDialog):
         self.mark_out.setAutoDefault(
             False
         )
+        tool_apply_neutral_button_style(
+            self.mark_out
+        )
         self.mark_out.clicked.connect(
             lambda: self.review_decision(
                 u"exclude"
@@ -30908,6 +30977,9 @@ class ProdWindow(QtGui.QDialog):
         )
         self.reclassify_flex.setAutoDefault(
             False
+        )
+        tool_apply_neutral_button_style(
+            self.reclassify_flex
         )
         self.reclassify_flex.setEnabled(
             False
@@ -31951,6 +32023,53 @@ class ProdWindow(QtGui.QDialog):
             )
         return bool(opened)
 
+
+    def open_master_updater(
+        self,
+    ):
+        """Update Animation Groups Master: start the installed SFM Control Group Updater exactly as its Scripts-menu
+        launcher does (an independent process, --sfm-folder, nothing loaded into SFM). The updater shows the
+        available data and installs only after the user confirms there, with SFM closed; clicking this installs
+        nothing."""
+        exe, tools, sfm_folder = prod_master_updater_paths()
+
+        if not os.path.isfile(exe):
+            try:
+                log_line("PROD_MASTER_UPDATER outcome=not-found path=%r" % (exe,))
+            except Exception:
+                pass
+            tool_warning_message(
+                self,
+                "Updater not installed",
+                u"SFM Control Group Updater isn't installed in this SFM.\n\nExpected:\n%s" % exe,
+            )
+            return False
+
+        try:
+            import subprocess
+            subprocess.Popen(
+                [exe, "--sfm-folder", sfm_folder],
+                cwd=tools,
+                close_fds=True,
+                creationflags=0x00000008 | 0x00000200,   # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+            )
+        except Exception as exc:
+            try:
+                log_line("PROD_MASTER_UPDATER outcome=start-failed error=%r path=%r" % (exc, exe))
+            except Exception:
+                pass
+            tool_warning_message(
+                self,
+                "Can't open the updater",
+                u"SFM Control Group Updater couldn't be started.\n\n%s" % exe,
+            )
+            return False
+
+        try:
+            log_line("PROD_MASTER_UPDATER outcome=started sfm_folder=%r" % (sfm_folder,))
+        except Exception:
+            pass
+        return True
 
     def prod_cpm_request_stale_rebuild_if_needed(
         self,
@@ -34815,7 +34934,9 @@ class ProdWindow(QtGui.QDialog):
 
             self.set_status(
                 u'"%s" updated.'
-                % display_name,
+                % tool_status_name(
+                    display_name
+                ),
                 u"success",
             )
 
@@ -35899,9 +36020,11 @@ class ProdWindow(QtGui.QDialog):
             self.set_status(
                 PROD_POSE_MESSAGES[u"saved"]
                 % {
-                    u"name": saved[
-                        u"name"
-                    ],
+                    u"name": tool_status_name(
+                        saved[
+                            u"name"
+                        ]
+                    ),
                     u"parts": prod_pose_parts_phrase(
                         chosen
                     ),
@@ -36060,7 +36183,7 @@ class ProdWindow(QtGui.QDialog):
             self.set_status(
                 PROD_POSE_MESSAGES[u"applied"]
                 % {
-                    u"name": name,
+                    u"name": tool_status_name(name),
                     u"parts": prod_pose_parts_phrase(
                         pending.get(
                             u"regions"
@@ -36106,6 +36229,7 @@ class ProdWindow(QtGui.QDialog):
             self.pose_unusable = 0
             self.pose_rig_class = None
             self.pose_registry_unavailable = False
+            self.pose_library_count = 0
 
             if self.identity is not None:
                 try:
@@ -36152,12 +36276,35 @@ class ProdWindow(QtGui.QDialog):
                 text = u(
                     self.pose_search.text()
                 ).strip().lower()
-
-                for item in sorted(
+                favorites_only = bool(
+                    self.pose_favorites_only.isChecked()
+                )
+                self.pose_library_count = len(
+                    found[u"items"]
+                )
+                ordered = sorted(
                     found[u"items"],
                     key=lambda i: (i[u"name"].lower(), i[u"preset_id"]),
-                ):
+                )
+
+                if u(self.pose_sort.currentText()) == u"Recent":
+                    # Most recently saved or updated first (stable: name order within one time).
+                    ordered.sort(
+                        key=lambda i: u(
+                            i[u"record"].get(u"updated_at")
+                            or i[u"record"].get(u"created_at")
+                            or u""
+                        ),
+                        reverse=True,
+                    )
+
+                for item in ordered:
                     if text and text not in item[u"name"].lower():
+                        continue
+
+                    if favorites_only and not self.is_favorite_cached(
+                        item[u"record"]
+                    ):
                         continue
 
                     self.pose_items.append(
@@ -36259,6 +36406,14 @@ class ProdWindow(QtGui.QDialog):
             and state[u"buttons"][u"delete_pose"]
         )
         message = state[u"list_message"]
+
+        if (
+            self.pose_favorites_only.isChecked()
+            and not u(self.pose_search.text()).strip()
+            and getattr(self, "pose_library_count", 0)
+        ):
+            # As on Body Presets and Expressions: an empty Favorites only list shows no message row.
+            message = None
 
         if self.identity is not None and getattr(self, "pose_registry_unavailable", False):
             message = PROD_POSE_REGISTRY_UNAVAILABLE_COPY
@@ -36382,32 +36537,20 @@ class ProdWindow(QtGui.QDialog):
         def work():
             record = item[u"record"]
             pose = record[u"pose"]
-            state = self.pose_ui_state(item)
             saved = [r for r in PROD_POSE_REGIONS if r in pose[u"regions"]]
+            character = u((self.identity or {}).get("animset_name") or u"")
             dialog = QtGui.QDialog(self)
             dialog.setWindowTitle("Pose Info")
             outer = QtGui.QVBoxLayout(dialog)
             summary = QtGui.QGroupBox("Pose")
             form = QtGui.QFormLayout(summary)
             name_label = QtGui.QLabel(u(record[u"name"]))
+            name_label.setWordWrap(True)
             name_label.setTextInteractionFlags(
                 QtCore.Qt.TextSelectableByMouse
             )
             form.addRow("Name:", name_label)
-            form.addRow(
-                "Character:",
-                QtGui.QLabel(
-                    u((self.identity or {}).get("animset_name") or u"")
-                ),
-            )
-            model_label = QtGui.QLabel(
-                u(pose[u"source"][u"model_ref"]).replace(u"\\", u"/")
-            )
-            model_label.setWordWrap(True)
-            model_label.setTextInteractionFlags(
-                QtCore.Qt.TextSelectableByMouse
-            )
-            form.addRow("Model path:", model_label)
+            form.addRow("Character:", QtGui.QLabel(character))
             form.addRow(
                 "Saved:",
                 QtGui.QLabel(
@@ -36416,25 +36559,65 @@ class ProdWindow(QtGui.QDialog):
                     )
                 ),
             )
+
+            if record.get(u"updated_at") and record.get(u"updated_at") != record.get(u"created_at"):
+                form.addRow(
+                    "Updated:",
+                    QtGui.QLabel(
+                        tool_format_saved_stamp(
+                            record.get(u"updated_at")
+                        )
+                    ),
+                )
+
             form.addRow(
-                "Saved from:",
+                "Source shot:",
                 QtGui.QLabel(
                     u(pose[u"source"].get(u"shot_name") or u"")
                 ),
             )
-            form.addRow(
-                "Body parts:",
-                QtGui.QLabel(
-                    prod_pose_parts_phrase(saved)
-                ),
-            )
+            # One body part per row; a pose with many parts scrolls inside a short list.
+            parts = QtGui.QListWidget()
+            parts.setObjectName("pose_info_parts")
+            parts.setSelectionMode(QtGui.QAbstractItemView.NoSelection)
+            parts.setFocusPolicy(QtCore.Qt.NoFocus)
+            for r in saved:
+                parts.addItem(PROD_POSE_PART_NAMES[r])
+            form.addRow("Body parts:", parts)
             outer.addWidget(summary)
-            details = QtGui.QLabel(
-                u"\n".join(
-                    state[u"summary"]
+            # A compatibility note only when a saved part really can't be applied to the selected character.
+            selection = getattr(self, "pose_selection", None)
+            eligible = (
+                prod_pose_browse_eligible(
+                    selection,
+                    record,
+                    getattr(self, "pose_rig_class", None),
                 )
+                if selection is not None
+                else []
             )
-            details.setWordWrap(True)
+            unavailable = [r for r in saved if not (r in eligible and r in PROD_POSE_LIVE_REGIONS)]
+            if self.identity is not None and unavailable:
+                note = QtGui.QLabel(
+                    u"Can't be applied to %s: %s."
+                    % (
+                        character,
+                        u", ".join(PROD_POSE_PART_NAMES[r] for r in unavailable),
+                    )
+                )
+                note.setObjectName("pose_info_limitation")
+                note.setWordWrap(True)
+                outer.addWidget(note)
+            details = QtGui.QGroupBox("Technical details")
+            details_form = QtGui.QFormLayout(details)
+            model_label = QtGui.QLabel(
+                u(pose[u"source"][u"model_ref"]).replace(u"\\", u"/")
+            )
+            model_label.setWordWrap(True)
+            model_label.setTextInteractionFlags(
+                QtCore.Qt.TextSelectableByMouse
+            )
+            details_form.addRow("Model path:", model_label)
             outer.addWidget(details)
             outer.addStretch(1)
             buttons = QtGui.QDialogButtonBox(
@@ -36446,6 +36629,12 @@ class ProdWindow(QtGui.QDialog):
             outer.addWidget(buttons)
             tool_apply_visual_theme(dialog)
             tool_apply_dialog_font(dialog)
+            rows = min(max(len(saved), 1), 6)
+            parts.setFixedHeight(
+                rows * max(parts.sizeHintForRow(0), parts.fontMetrics().height() + 4)
+                + 2 * parts.frameWidth()
+                + 2
+            )
             dialog.resize(560, dialog.sizeHint().height())
             try:
                 dialog.exec_()
@@ -36509,17 +36698,14 @@ class ProdWindow(QtGui.QDialog):
 
         try:
             box.setWindowTitle(
-                "Update pose?"
+                "Update Pose"
             )
             box.setText(
-                u'Copy the current %s pose into "%s"?'
-                % (
-                    u(parts).lower(),
-                    u(name),
-                )
+                u'Update "%s" using the current pose?'
+                % u(name)
             )
             box.setInformativeText(
-                "The pose's saved values will be overwritten."
+                "Its saved values will be replaced."
             )
             update_button = box.addButton(
                 "Update Pose",
@@ -36680,10 +36866,9 @@ class ProdWindow(QtGui.QDialog):
                 detail,
             )
             self.set_status(
-                u'"%s" updated (%s).'
-                % (
-                    updated[u"record"][u"name"],
-                    parts,
+                u"Pose updated: %s."
+                % tool_status_name(
+                    updated[u"record"][u"name"]
                 ),
                 u"success",
             )
@@ -37018,6 +37203,30 @@ class ProdWindow(QtGui.QDialog):
         )
 
         try:
+            menu.setFont(
+                widget.font()
+            )
+            menu.setStyleSheet(
+                """
+                QMenu {
+                    background-color: #3a3a3a;
+                    color: #d8d8d8;
+                    border: 1px solid #5b5b5b;
+                    padding: 4px;
+                }
+                QMenu::item {
+                    padding: 7px 36px 7px 22px;
+                }
+                QMenu::item:selected {
+                    background-color: #2f76b5;
+                    color: #ffffff;
+                }
+                QMenu::item:disabled {
+                    color: #858585;
+                }
+                """
+            )
+            menu.setMinimumWidth(180)
             action = menu.addAction(
                 "Rename"
             )
@@ -37197,7 +37406,7 @@ class ProdWindow(QtGui.QDialog):
             )
             self.set_status(
                 u'Renamed to "%s".'
-                % u(
+                % tool_status_name(
                     renamed.get(
                         "name"
                     )
@@ -37288,7 +37497,9 @@ class ProdWindow(QtGui.QDialog):
             )
             self.set_status(
                 u'Renamed to "%s".'
-                % renamed[u"name"],
+                % tool_status_name(
+                    renamed[u"name"]
+                ),
                 u"success",
             )
             return renamed
@@ -39071,6 +39282,10 @@ class ProdWindow(QtGui.QDialog):
             buttons.rejected.connect(
                 dialog.reject
             )
+            for model_info_button in (open_model, open_library, buttons.button(QtGui.QDialogButtonBox.Close)):
+                tool_apply_neutral_button_style(
+                    model_info_button
+                )
             outer.addWidget(buttons)
 
             tool_apply_visual_theme(dialog)
@@ -39399,7 +39614,7 @@ class ProdWindow(QtGui.QDialog):
                 <h3>Poses</h3>
                 <p>Save a character's pose at the playhead with <b>Save New</b>.</p>
                 <p>You must be in the <b>Motion Editor</b> to apply poses. Select a saved pose and click <b>Apply Pose</b>. The pose is applied at the playhead without changing the character's position or facing.</p>
-                <p>Only supported characters and body parts can use saved poses. Use <b>Pose Info</b> to see what a pose includes.</p>
+                <p><b>Pose Info</b> shows which body parts are included in a saved pose.</p>
 
                 <h3>Preset controls</h3>
                 <p><b>Save New</b> creates a new preset from the current values. <b>Update Preset</b> overwrites the selected preset with the current values. <b>Add Favorite</b> marks presets for the <b>Favorites only</b> filter. <b>Delete Preset</b> moves the selected preset to Trash. Right-click a saved preset or pose and choose <b>Rename</b> to change its name.</p>
@@ -39421,16 +39636,19 @@ class ProdWindow(QtGui.QDialog):
 
             master_row = QtGui.QHBoxLayout()
             master_button = QtGui.QPushButton(
-                "Download / Update Master on GitHub"
+                "Update Animation Groups Master"
             )
             master_button.setAutoDefault(False)
             master_button.setDefault(False)
             master_button.setToolTip(
-                "Opens GitHub"
+                "Opens SFM Control Group Updater"
             )
 
+            tool_apply_neutral_button_style(
+                master_button
+            )
             master_button.clicked.connect(
-                self.open_master_page
+                self.open_master_updater
             )
             master_row.addWidget(
                 master_button
@@ -39460,6 +39678,9 @@ class ProdWindow(QtGui.QDialog):
             )
             buttons.rejected.connect(
                 dialog.reject
+            )
+            tool_apply_neutral_button_style(
+                buttons.button(QtGui.QDialogButtonBox.Close)
             )
             footer_row.addWidget(
                 buttons
@@ -40874,7 +41095,7 @@ PROD_POSE_MESSAGES = {
     u"no-character": u"Choose a character model.",
     u"unsupported-character": u"Poses aren't available for this character yet. Pose support is added for each "
                               u"character after testing.",
-    u"no-poses": u"No poses saved for %(character)s yet. Pose the arms in SFM, then click Save New.",
+    u"no-poses": u"No saved poses for %(character)s.",
     u"no-compatible": u"No poses from other characters can be used with %(character)s yet.",
     u"no-match": u"No poses match your search.",
     u"time-mapping": u"The current time can't be matched exactly to the character's animation. Nothing was changed.",
@@ -40894,8 +41115,8 @@ PROD_POSE_MESSAGES = {
     u"no-op": u"Already matches this pose.",
     u"save-region-unreadable": u"The pose wasn't saved: %(part)s can't be read now. Nothing was saved.",
     u"update-refused": u"The pose wasn't updated: %(part)s can't be read. Nothing was changed.",
-    u"applied": u"Pose applied: %(name)s (%(parts)s).",
-    u"saved": u"Pose saved: %(name)s (%(parts)s).",
+    u"applied": u"Pose applied: %(name)s.",
+    u"saved": u"Pose saved: %(name)s.",
     u"foreign-locked": u"Poses from another character's library can't be changed here.",
 }
 

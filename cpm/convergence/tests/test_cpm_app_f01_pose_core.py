@@ -828,7 +828,7 @@ def section_ui(ns):
     s = ui(base)
     check("O8.supported_with_instance_save_enabled", s["buttons"]["save_new"] and s["summary"] == [u"Select a pose."])
     check("O8.no_poses_message", ui(dict(base, visible_count=0))["list_message"] ==
-          u"No poses saved for Krystal yet. Pose the arms in SFM, then click Save New.")
+          u"No saved poses for Krystal.")
     check("O8.no_compatible_message", ui(dict(base, visible_count=0, mode=u"compatible"))["list_message"] ==
           u"No poses from other characters can be used with Krystal yet.")
     check("O8.no_match_message", ui(dict(base, visible_count=0, search_active=True))["list_message"] ==
