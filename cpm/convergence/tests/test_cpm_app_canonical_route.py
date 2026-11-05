@@ -372,7 +372,9 @@ F01_UI_CHANGED_TOP = set(["TOOL_NAME", "StartCharacterSliderPresetTool",
                           "tool_apply_visual_theme", "tool_apply_main_action_button"])
 F01_UI_NEW_TOP = set(["tool_help_preferred_height", "prod_rename_preset",
                       # Final UI polish: neutral button style, short status names, the installed updater's location.
-                      "tool_apply_neutral_button_style", "tool_status_name", "prod_master_updater_paths"])
+                      "tool_apply_neutral_button_style", "tool_status_name", "prod_master_updater_paths",
+                      # Version footer: the installed release record for this exact CPM build.
+                      "prod_release_version"])
 F01_UI_NEW_METHODS = set(["pose_ui_state", "set_pose_list_message", "open_pose_info",
                           # The Poses six-button layout: Update Pose, Add/Remove Favorite and Delete Pose handlers.
                           "pose_selection_for_action", "update_selected_pose", "confirm_pose_update", "update_pose",

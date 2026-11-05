@@ -18721,6 +18721,36 @@ PROD_PID = int(os.getpid())
 PROD_MASTER_GITHUB_URL = u"https://github.com/chadchan3d/sfm-animation-groups-master"
 
 
+def prod_release_version(
+    inventory_path=None,
+    build_sha256=None,
+):
+    """The release version of the running CPM, from the installed software inventory (the release's own record,
+    written by packaging): its software_version, only when its one cpm_app entry is this exact CPM build. Anything
+    else (a development or test build installed over a release, a missing or unreadable record) returns None, so
+    an installation is never reported as a version it is not."""
+    try:
+        if build_sha256 is None:
+            build_sha256 = globals().get("__chadchan3d_cpm_build_sha256__")
+        if not build_sha256:
+            with open(os.path.abspath(__file__), "rb") as f:
+                build_sha256 = hashlib.sha256(f.read()).hexdigest()
+        if inventory_path is None:
+            scripts = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            inventory_path = os.path.join(scripts, "sfm", "mainmenu", "SFM Character Tools",
+                                          "sfm_character_tools_inventory.json")
+        with open(inventory_path, "rb") as f:
+            record = json.loads(f.read().decode("utf-8"))
+        version = record.get("software_version")
+        apps = [e for e in record.get("files") or [] if isinstance(e, dict) and e.get("role") == "cpm_app"]
+        if (len(apps) == 1 and apps[0].get("sha256") == build_sha256
+                and isinstance(version, type(u"")) and re.match(r"^\d+\.\d+\.\d+$", version)):
+            return version
+    except Exception:
+        pass
+    return None
+
+
 def prod_master_updater_paths():
     """(updater executable, its folder, the SourceFilmmaker folder) for this SFM, as the updater's own Scripts-menu
     launcher derives them: <game>/usermod/tools/SFM Control Group Updater/SFM Control Group Updater.exe."""
@@ -37215,7 +37245,7 @@ class ProdWindow(QtGui.QDialog):
                     padding: 4px;
                 }
                 QMenu::item {
-                    padding: 7px 36px 7px 22px;
+                    padding: 7px 20px 7px 14px;
                 }
                 QMenu::item:selected {
                     background-color: #2f76b5;
@@ -37226,7 +37256,7 @@ class ProdWindow(QtGui.QDialog):
                 }
                 """
             )
-            menu.setMinimumWidth(180)
+            menu.setMinimumWidth(145)
             action = menu.addAction(
                 "Rename"
             )
@@ -37270,6 +37300,7 @@ class ProdWindow(QtGui.QDialog):
             )
             dialog.setMinimumWidth(380)
             layout = QtGui.QVBoxLayout(dialog)
+            layout.setContentsMargins(8, 10, 8, 10)
             layout.addWidget(
                 QtGui.QLabel(
                     "Name:"
@@ -39595,7 +39626,7 @@ class ProdWindow(QtGui.QDialog):
             help_text.setHtml(
                 u"""
                 <style>
-                    h3 { color: #7c8f9c; margin-top: 12px; margin-bottom: 3px; }
+                    h3 { color: #a7b9c7; margin-top: 12px; margin-bottom: 3px; }
                     p  { margin-top: 0px; margin-bottom: 9px; }
                 </style>
                 <h3>Getting started</h3>
@@ -39661,7 +39692,8 @@ class ProdWindow(QtGui.QDialog):
             footer_row = QtGui.QHBoxLayout()
 
             footer = QtGui.QLabel(
-                u"License: CC0 1.0 Universal \u00b7 Author: ChadChan3D"
+                u"License: CC0 1.0 Universal \u00b7 Author: ChadChan3D \u00b7 Version: %s"
+                % (prod_release_version() or u"development build")
             )
             footer.setStyleSheet(
                 "color: #a8a8a8;"

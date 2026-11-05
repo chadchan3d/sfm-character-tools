@@ -144,7 +144,8 @@ def section_ui_pass(window, tabs, env, boxes, QtGui):
                                                                                              len(HELP_EXPECTED)))
     check("U5 Help has the Update Animation Groups Master button and keeps the license/author footer",
           u"Update Animation Groups Master" in h.get("buttons", []) and
-          u"License: CC0 1.0 Universal \u00b7 Author: ChadChan3D" in h.get("labels", []), h.get("buttons"))
+          u"License: CC0 1.0 Universal \u00b7 Author: ChadChan3D \u00b7 Version: development build"
+          in h.get("labels", []), (h.get("buttons"), h.get("labels")))
     avail = QtGui.QApplication.desktop().availableGeometry(window).height()
     print("Help size %sx%s, usable screen height %d" % (h.get("width"), h.get("height"), avail))
     check("U6 Help keeps its 820 px width; its height is at least 770 and within the usable screen height",
@@ -504,6 +505,13 @@ def section_polish(window, tabs, env, boxes, QtGui):
         window.open_help()
     finally:
         QtGui.QDialog.exec_ = real_exec
+    luminance = lambda hexrgb: (0.2126 * int(hexrgb[1:3], 16) + 0.7152 * int(hexrgb[3:5], 16)  # noqa: E731
+                                + 0.0722 * int(hexrgb[5:7], 16))
+    consts = [c for c in window.open_help.im_func.func_code.co_consts if hasattr(c, "co_consts")]
+    sheet = [c for code in consts for c in code.co_consts if isinstance(c, type(u"")) and u"h3 {" in c]
+    check("V7 Help headings: the same blue-grey, more contrast than before, never brighter than the body text",
+          sheet and u"color: #a7b9c7;" in sheet[0]
+          and luminance(u"#7c8f9c") < luminance(u"#a7b9c7") < luminance(u"#d8d8d8"), sheet[:1])
     check("V1 Help: Update Animation Groups Master and Close have the same text brightness",
           sorted(t for t, _, _ in help_rows) == [u"Close", u"Update Animation Groups Master"]
           and all(v == 216 for _, v, _ in help_rows), help_rows)
@@ -532,7 +540,9 @@ def section_polish(window, tabs, env, boxes, QtGui):
         def exec_(self, *args):
             menus.append({"actions": [(a.text(), a.shortcut().isEmpty()) for a in self.actions()],
                           "min_width": self.minimumWidth(), "width": self.sizeHint().width(),
-                          "font": self.font().pointSize(), "sheet": self.styleSheet()})
+                          "font": self.font().pointSize(), "sheet": self.styleSheet(),
+                          "item_height": self.actionGeometry(self.actions()[0]).height() if self.actions() else 0,
+                          "text_height": QtGui.QFontMetrics(self.font()).height()})
             return None
     QtGui.QMenu = RecordingMenu
     g["prod_resolve_instance"] = lambda tok, identity=None: dict(ident, test_row=True)
@@ -571,10 +581,13 @@ def section_polish(window, tabs, env, boxes, QtGui):
         plist = window.pose_list
         window.show_rename_menu(g["PROD_POSE_KIND"], plist.visualItemRect(plist.item(0)).center())
         m = menus[0] if menus else {}
-        check("V2 Rename menu: one action Rename, no shortcut, the list's font, at least 180 px, padded items",
+        check("V2 Rename menu: one action Rename, no shortcut, the list's font, a 145 px minimum, narrower "
+              "horizontal padding",
               m.get("actions") == [(u"Rename", True)] and m.get("font") == plist.font().pointSize()
-              and m.get("min_width") >= 180 and m.get("width") >= 180 and u"padding: 7px 36px 7px 22px" in
+              and m.get("min_width") == 145 and m.get("width") >= 145 and u"padding: 7px 20px 7px 14px" in
               m.get("sheet", u""), m)
+        check("V2 Rename menu keeps a comfortable click target (text height plus the 7 px top and bottom padding)",
+              m.get("item_height", 0) >= m.get("text_height", 99) + 14, m)
         # Sort and Favorites only, as on Body Presets and Expressions.
         check("V3 Poses has Search, Sort (Name, Recent) and Favorites only, like Body Presets",
               [window.pose_sort.itemText(i) for i in range(window.pose_sort.count())] == [u"Name", u"Recent"]
@@ -678,6 +691,51 @@ def section_polish(window, tabs, env, boxes, QtGui):
         widest = QtGui.QFontMetrics(font).width(u"Pose applied: %s." % shortened)
         check("V5 the longest routine status fits one line at the minimum width (96-DPI estimate)",
               widest <= window.minimumWidth() - 2 * 11 - 2 * 7, (widest, window.minimumWidth()))
+        # The Rename dialog: slightly tighter horizontal margins; the input keeps the dialog's width.
+        geometry = []
+
+        def rename_exec(self):
+            margins = self.layout().contentsMargins()
+            edit = self.findChildren(QtGui.QLineEdit)[0]
+            self.show()
+            geometry.append((margins.left(), margins.right(), self.minimumWidth(), edit.width(), self.width()))
+            return 0
+        QtGui.QDialog.exec_ = rename_exec
+        try:
+            window.prompt_rename(u"Arms Up")
+        finally:
+            QtGui.QDialog.exec_ = real_exec
+        check("V8 Rename dialog: 8 px horizontal margins; the input spans the dialog minus those margins",
+              geometry and geometry[0][:3] == (8, 8, 380) and geometry[0][3] == geometry[0][4] - 16, geometry)
+        # Version: the installed release record, only when it lists this exact CPM build.
+        import json as _json
+        import os as _os
+        probe = _os.path.join(_os.path.dirname(g["__file__"]), u"ps_version_probe.json")
+        build = u"a" * 64
+
+        def version_with(record):
+            with open(probe, "wb") as f:
+                f.write(_json.dumps(record).encode("utf-8"))
+            return g["prod_release_version"](probe, build)
+
+        def app(sha):
+            return {"role": "cpm_app", "path": "scripts/ChadChan3D_CPM/SFM_Character_Preset_Manager.py",
+                    "sha256": sha}
+        try:
+            matching = version_with({"software_version": u"1.1.0", "files": [app(build)]})
+            other_build = version_with({"software_version": u"1.0.0", "files": [app(u"b" * 64)]})
+            malformed = version_with({"software_version": u"1.1.0-dev", "files": [app(build)]})
+            duplicated = version_with({"software_version": u"1.1.0", "files": [app(build), app(build)]})
+            _os.remove(probe)
+            missing = g["prod_release_version"](probe, build)
+        finally:
+            if _os.path.exists(probe):
+                _os.remove(probe)
+        check("V9 version: the release record's version only when it lists this exact CPM build",
+              (matching, other_build, malformed, duplicated, missing) == (u"1.1.0", None, None, None, None),
+              (matching, other_build, malformed, duplicated, missing))
+        check("V9 version: the default record is the installed software inventory beside the CPM launcher",
+              u"sfm_character_tools_inventory.json" in g["prod_release_version"].__code__.co_consts)
         # Update Animation Groups Master: the installed updater, started exactly as its menu launcher does.
         import os as _os
         import subprocess as _subprocess
