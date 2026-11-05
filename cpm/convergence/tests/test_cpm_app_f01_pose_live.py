@@ -452,18 +452,88 @@ def section_abort(ns, F, reg, world, items, base):
 def section_channel_clock(ns, F, reg, root):
     """Motion Editor Apply contract (FA-3b): Apply only in timeline mode 2 with every target channel clock at the
     mapped tick, the mode and clocks pinned through P2 and P7; after a confirmed commit one same-time head request
-    outside the transaction, then the guarded deferred verification. Save is unchanged."""
+    outside the transaction, then the guarded deferred verification. Save New and Update Pose (Argon B.2): capture
+    refuses unless every region channel's clock is the mapped tick, independent of the timeline mode."""
     os.makedirs(os.path.join(root, u"clock"))
     lib = library(os.path.join(root, u"clock"))
     Pin.session = u"session-clock-a"
     src = F.World(u"clock.dmx", handle_base=900000)
     use_world(ns, F, src, u"shot15")
     real_ticks = src.channel_ticks
-    src.channel_ticks = lambda S: real_ticks(S) + 91           # the Clip Editor's clock (FA-1)
-    src.evaluate(src.shots[u"shot15"])
+    found = lambda: ns["prod_pose_discover"](lib[u"char_dir"], lib[u"character_key"], reg)[u"items"]  # noqa: E731
+
+    def clock(offset):
+        src.channel_ticks = (lambda S: real_ticks(S) + offset) if offset else real_ticks
+        src.evaluate(src.shots[u"shot15"])
+    # (2) Mismatched clocks (the Clip Editor's clock, FA-1): Save refuses, before the name dialog and in capture,
+    # and creates no record.
+    clock(91)
+    pinned = outcome(lambda: ns["prod_pose_current_time"](IDENTITY, authorize(ns, reg, u"shot15", u"Save Pose"), reg,
+                                                           [u"left_arm"]))
+    check("D13.save_refused_before_the_name_dialog_when_the_channel_clock_differs",
+          pinned[0] == "ProdPoseError" and pinned[1] == u"capture-clock"
+          and pinned[2] == ns["PROD_POSE_SAVE_CLOCK_COPY"], pinned)
     saved = outcome(lambda: save(ns, reg, lib, u"Clock Pose", u"shot15"))
-    check("D13.save_is_unchanged_when_the_channel_clock_differs", saved[0] == "ok", saved)
-    items = dict((i[u"name"], i) for i in ns["prod_pose_discover"](lib[u"char_dir"], lib[u"character_key"], reg)[u"items"])
+    check("D13.save_refused_in_capture_when_the_channel_clock_differs_no_record",
+          saved[0] == "ProdPoseError" and saved[1] == u"capture-clock" and not found()
+          and not os.path.exists(os.path.join(lib[u"char_dir"], u"Poses")), saved)
+    # (1) Matching clocks: capture succeeds.
+    clock(0)
+    saved = outcome(lambda: save(ns, reg, lib, u"Clock Pose", u"shot15"))
+    check("D13.save_succeeds_when_every_channel_clock_is_the_mapped_tick",
+          saved[0] == "ok" and [i[u"name"] for i in found()] == [u"Clock Pose"], saved)
+    items = dict((i[u"name"], i) for i in found())
+    # (3) Mismatched clocks: Update refuses before replacing the record (its capture refuses; the store is never
+    # reached). The window's Update Pose copy for this refusal is checked in the integration suite.
+    raw = core.read(items[u"Clock Pose"][u"path"])
+    clock(91)
+    auth = authorize(ns, reg, u"shot15", u"Save Pose")
+    for label, fn in (("pinned_time", lambda: ns["prod_pose_current_time"](IDENTITY, auth, reg, [u"left_arm"])),
+                      ("capture", lambda: ns["prod_pose_capture"](IDENTITY, auth, [u"left_arm"], reg))):
+        r = outcome(fn)
+        check("D13.update_%s_refused_when_the_channel_clock_differs" % label,
+              r[0] == "ProdPoseError" and r[1] == u"capture-clock", r)
+    check("D13.update_refusal_leaves_the_record_unchanged", core.read(items[u"Clock Pose"][u"path"]) == raw
+          and [i[u"revision"] for i in found()] == [items[u"Clock Pose"][u"revision"]])
+    # (4) Flat arm controllers with a moving collar: the arm channels hold one value, so their inputs match at any
+    # time, but the collar (a parent of the captured arm) moves between the two clocks. Still refused.
+    shot = src.shots[u"shot15"]
+    for n in (u"Hand_l_p", u"Hand_l_o", u"Elbow_l_p", u"Elbow_l_o"):   # hold each arm control at its current value
+        layer = src.channel(u"shot15", n).log.layers[0]
+        held = [k for k in layer.keys if k[0] <= real_ticks(shot)][-1][1]
+        layer.keys[:] = [[k[0], list(held)] for k in layer.keys]
+    flat = all(len(set(json.dumps(k[1]) for k in src.channel(u"shot15", n).log.layers[0].keys)) == 1
+               for n in (u"Hand_l_p", u"Hand_l_o", u"Elbow_l_p", u"Elbow_l_o"))
+    collar = src.channel(u"shot15", u"CollarL_p").log.layers[0].keys
+    collar.append([real_ticks(shot) + 91, [collar[0][1][0] + 3.0, collar[0][1][1], collar[0][1][2]]])
+    collar.sort(key=lambda k: k[0])
+    clock(0)
+    at_tick = list(shot.handles[u"CollarL"].world_xf[0])
+    clock(91)
+    at_clock = list(shot.handles[u"CollarL"].world_xf[0])
+    check("D13.fixture_flat_arm_controllers_and_a_moving_collar", flat and at_tick != at_clock, (at_tick, at_clock))
+    saved = outcome(lambda: save(ns, reg, lib, u"Collar Pose", u"shot15"))
+    check("D13.flat_arm_with_moving_collar_still_refused_when_the_clock_differs",
+          saved[0] == "ProdPoseError" and saved[1] == u"capture-clock"
+          and [i[u"name"] for i in found()] == [u"Clock Pose"], saved)
+    # Control: with only the clock check disabled, the same capture passes every other check (the arm inputs match),
+    # so the clock check is what refuses it.
+    os.makedirs(os.path.join(root, u"clock-control"))
+    real_check = ns["prod_pose_capture_clock_check"]
+    ns["prod_pose_capture_clock_check"] = lambda L, t_chan: {}
+    try:
+        control = outcome(lambda: save(ns, reg, library(os.path.join(root, u"clock-control")), u"Collar Pose",
+                                       u"shot15"))
+    finally:
+        ns["prod_pose_capture_clock_check"] = real_check
+    check("D13.control_without_the_clock_check_the_flat_arm_capture_would_be_saved", control[0] == "ok", control)
+    # (5) The Graph Editor with aligned clocks: capture remains permitted (no Motion Editor requirement on Save).
+    clock(0)
+    src.timeline_mode = 4
+    saved = outcome(lambda: save(ns, reg, lib, u"Graph Pose", u"shot15"))
+    check("D13.graph_editor_with_aligned_clocks_save_permitted",
+          saved[0] == "ok" and sorted(i[u"name"] for i in found()) == [u"Clock Pose", u"Graph Pose"], saved)
+    src.timeline_mode = 2
 
     def world(name, mode=2, offset=0):
         Pin.session = u"session-" + name

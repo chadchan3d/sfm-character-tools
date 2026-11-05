@@ -409,6 +409,19 @@ def section_save(ns, app, Window, reg):
           and Fakes.captures[0][2] == [u"left_arm"])
     check("C4.save_used_the_cpm_library_folder",
           os.path.dirname(items[0][u"path"]) == ns["prod_paths"](win.identity)["pose"] if items else False)
+    # Argon B.2: the capture refuses on a channel clock away from the mapped tick; Save New shows its copy and
+    # creates no record.
+    install_fakes(ns)
+    real_capture = ns["prod_pose_capture"]
+
+    def clock_refused(*a, **k):
+        raise ns["ProdPoseError"](u"capture-clock", ns["PROD_POSE_SAVE_CLOCK_COPY"])
+    ns["prod_pose_capture"] = clock_refused
+    win.save_pose(u"Clock Refused", [u"left_arm"])
+    ns["prod_pose_capture"] = real_capture
+    check("C4.channel_clock_refusal_saves_nothing_and_says_so",
+          len(own_items(ns, win, reg)) == 1 and last_status(win) == (ns["PROD_POSE_SAVE_CLOCK_COPY"], u"error")
+          and ended(win), win.statuses[-1:])
     install_fakes(ns, capture_regions=(u"left_arm",))
     win.save_pose(u"Both", [u"left_arm", u"right_arm"])
     check("C4.capture_of_fewer_regions_refused_nothing_saved",
@@ -678,7 +691,14 @@ def section_library_buttons(ns, app, Window, reg):
                 ("time_unreadable", ("time", ns["ProdPoseError"](u"evidence-unreadable", u"x")),
                  ns["PROD_POSE_MESSAGES"][u"update-refused"] % {u"part": u"Left arm"}),
                 ("stale_time", ("capture", ns["ProdPoseError"](u"stale", ns["PROD_POSE_MESSAGES"][u"stale"])),
-                 ns["PROD_POSE_MESSAGES"][u"stale"])):
+                 ns["PROD_POSE_MESSAGES"][u"stale"]),
+                # Argon B.2: a channel clock away from the mapped tick, at the pinned time or in capture.
+                ("channel_clock_at_pinned_time", ("time", ns["ProdPoseError"](u"capture-clock",
+                                                                               ns["PROD_POSE_SAVE_CLOCK_COPY"])),
+                 ns["PROD_POSE_UPDATE_CLOCK_COPY"]),
+                ("channel_clock_in_capture", ("capture", ns["ProdPoseError"](u"capture-clock",
+                                                                              ns["PROD_POSE_SAVE_CLOCK_COPY"])),
+                 ns["PROD_POSE_UPDATE_CLOCK_COPY"])):
             behaviour[setting[0]] = setting[1]
             raw = core.read(current[u"path"])
             win.update_pose(current)

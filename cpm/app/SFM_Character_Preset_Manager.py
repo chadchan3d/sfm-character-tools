@@ -36592,7 +36592,12 @@ class ProdWindow(QtGui.QDialog):
                     reg,
                     saved,
                 )
-            except ProdPoseError:
+            except ProdPoseError as exc:
+                if exc.code == u"capture-clock":
+                    raise ProdPoseIntegrationError(
+                        u"capture-clock",
+                        PROD_POSE_UPDATE_CLOCK_COPY,
+                    )
                 raise refused
 
             if not self.confirm_pose_update(
@@ -36631,6 +36636,11 @@ class ProdWindow(QtGui.QDialog):
                     pinned_time=pinned,
                 )
             except ProdPoseError as exc:
+                if exc.code == u"capture-clock":
+                    raise ProdPoseIntegrationError(
+                        u"capture-clock",
+                        PROD_POSE_UPDATE_CLOCK_COPY,
+                    )
                 if exc.code in (u"stale", u"time-mapping"):
                     raise
                 raise refused
@@ -42613,6 +42623,7 @@ def prod_pose_capture(identity, authorization, regions, reg, pinned_time=None):
         except ProdPoseError as exc:
             raise ProdPoseError(exc.code, (PROD_POSE_MESSAGES[u"save-region-unreadable"] %
                                            {u"part": PROD_POSE_PART_NAMES[r]}) + u" (%s)" % exc)
+        prod_pose_capture_clock_check(st[u"L"], st[u"time"][u"t_chan"])
         for cname, b in st[u"bindings"].items():
             if cname in profile[u"written_channels"]:
                 problems = prod_pose_layer_problems(prod_pose_layer_snapshot(b, st[u"time"][u"t_chan"]),
@@ -42679,9 +42690,12 @@ def prod_pose_current_time(identity, authorization, reg, regions):
     row = prod_resolve_instance(prod_instance_token(authorization[u"context"]), identity)
     profile = prod_pose_region_profile(reg, authorization, sorted(regions)[0])
     try:
-        return prod_pose_time_read(prod_pose_live_arm(row, profile), sorted(profile[u"written_channels"]))
+        L = prod_pose_live_arm(row, profile)
+        time = prod_pose_time_read(L, sorted(profile[u"written_channels"]))
     except ProdPoseUnreadable as exc:
         raise ProdPoseError(u"evidence-unreadable", u"%s" % exc)
+    prod_pose_capture_clock_check(L, time[u"t_chan"])
+    return time
 
 
 # --- apply (C7b + C8): P1-P6 ---------------------------------------------------------------------------------------
@@ -42857,6 +42871,30 @@ def prod_pose_apply_gate(L, names, t_chan):
         prod_pose_log(u"gate-refused", {u"mode": mode, u"t_chan": t_chan, u"clocks": clocks})
         raise ProdPoseError(u"time-mapping", PROD_POSE_EDITOR_CLOCK_COPY)
     return {u"mode": mode, u"clocks": clocks}
+
+
+# Save New and Update Pose (Argon B.2): the capture reads the evaluated arm and its parents, which SFM evaluates at the
+# channels' own clock. When that clock is not the mapped tick (the Clip Editor, FA-1) the evaluated collar and parents
+# can be another time's pose even when the arm controllers are flat, so the capture refuses. Independent of the
+# timeline mode: Save and Update stay available wherever the clocks agree (Motion Editor, Graph Editor).
+PROD_POSE_SAVE_CLOCK_COPY = (u"The pose wasn't saved because the character isn't shown at the playhead in this editor. "
+                             u"Switch to the Motion Editor and try again. Nothing was saved.")
+PROD_POSE_UPDATE_CLOCK_COPY = (u"The pose wasn't updated because the character isn't shown at the playhead in this "
+                               u"editor. Switch to the Motion Editor and try again. Nothing was changed.")
+
+
+def prod_pose_capture_clock_check(L, t_chan):
+    """Every channel of the region (written and observed) reports exactly the mapped tick; an unreadable clock
+    refuses. Read-only."""
+    try:
+        clocks = dict((n, prod_pose_ticks_of(L[u"channels"][n].GetCurrentTime())) for n in sorted(L[u"channels"]))
+    except Exception as exc:
+        prod_pose_log(u"capture-clock-refused", {u"t_chan": t_chan, u"error": repr(exc)})
+        raise ProdPoseError(u"capture-clock", PROD_POSE_SAVE_CLOCK_COPY)
+    if not clocks or any(v != t_chan for v in clocks.values()):
+        prod_pose_log(u"capture-clock-refused", {u"t_chan": t_chan, u"clocks": clocks})
+        raise ProdPoseError(u"capture-clock", PROD_POSE_SAVE_CLOCK_COPY)
+    return clocks
 
 
 def prod_pose_request_refresh(t_doc):

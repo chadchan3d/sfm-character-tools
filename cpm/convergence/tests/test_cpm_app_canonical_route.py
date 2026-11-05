@@ -360,6 +360,8 @@ F01_STAGED_NEW_TOP = set([
     # Motion Editor apply gate and post-commit same-time refresh (FA-3b)
     "PROD_POSE_APPLY_TIMELINE_MODE", "PROD_POSE_EDITOR_MODE_COPY", "PROD_POSE_EDITOR_CLOCK_COPY", "prod_pose_timeline_mode",
     "prod_pose_apply_gate", "prod_pose_request_refresh",
+    # Argon B.2: Save New / Update Pose refuse capture when a region channel's clock is not the mapped tick.
+    "PROD_POSE_SAVE_CLOCK_COPY", "PROD_POSE_UPDATE_CLOCK_COPY", "prod_pose_capture_clock_check",
 ])
 F01_STAGED_CHANGED_METHODS = set(["__init__", "tab_changed", "render", "clear_model_selection", "operation_end"])  # NQ-1: Poses refresh
 F01_STAGED_NEW_METHODS = set(["refresh_pose_view", "selected_pose", "refresh_pose_buttons", "apply_selected_pose"])
