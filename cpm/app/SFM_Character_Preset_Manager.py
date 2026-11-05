@@ -42877,10 +42877,9 @@ def prod_pose_apply_gate(L, names, t_chan):
 # channels' own clock. When that clock is not the mapped tick (the Clip Editor, FA-1) the evaluated collar and parents
 # can be another time's pose even when the arm controllers are flat, so the capture refuses. Independent of the
 # timeline mode: Save and Update stay available wherever the clocks agree (Motion Editor, Graph Editor).
-PROD_POSE_SAVE_CLOCK_COPY = (u"The pose wasn't saved because the character isn't shown at the playhead in this editor. "
-                             u"Switch to the Motion Editor and try again. Nothing was saved.")
-PROD_POSE_UPDATE_CLOCK_COPY = (u"The pose wasn't updated because the character isn't shown at the playhead in this "
-                               u"editor. Switch to the Motion Editor and try again. Nothing was changed.")
+# Shown under the titles "Pose Not Saved" and "Pose Not Updated" (operation_default_error_copy).
+PROD_POSE_SAVE_CLOCK_COPY = u"Switch to the Motion Editor and try again."
+PROD_POSE_UPDATE_CLOCK_COPY = u"Switch to the Motion Editor and try again."
 
 
 def prod_pose_capture_clock_check(L, t_chan):

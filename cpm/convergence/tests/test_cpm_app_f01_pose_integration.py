@@ -422,6 +422,11 @@ def section_save(ns, app, Window, reg):
     check("C4.channel_clock_refusal_saves_nothing_and_says_so",
           len(own_items(ns, win, reg)) == 1 and last_status(win) == (ns["PROD_POSE_SAVE_CLOCK_COPY"], u"error")
           and ended(win), win.statuses[-1:])
+    copy = u"Switch to the Motion Editor and try again."
+    check("C4.channel_clock_refusal_wording_and_titles",
+          ns["PROD_POSE_SAVE_CLOCK_COPY"] == copy and ns["PROD_POSE_UPDATE_CLOCK_COPY"] == copy
+          and win.operation_default_error_copy("Save Pose", copy) == ("Pose Not Saved", copy)
+          and win.operation_default_error_copy("Update Pose", copy) == ("Pose Not Updated", copy))
     install_fakes(ns, capture_regions=(u"left_arm",))
     win.save_pose(u"Both", [u"left_arm", u"right_arm"])
     check("C4.capture_of_fewer_regions_refused_nothing_saved",
