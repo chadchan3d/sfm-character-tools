@@ -53,7 +53,7 @@ HELP_EXPECTED = [
     u"Preset controls",
     u"Save New creates a new preset from the current values. Update Preset overwrites the selected preset with the "
     u"current values. Add Favorite marks presets for the Favorites only filter. Delete Preset moves the selected "
-    u"preset to Trash.",
+    u"preset to Trash. Right-click a saved preset or pose and choose Rename to change its name.",
     u"Undo",
     u"Use SFM's normal Undo command (Ctrl+Z) to reverse applied Body Presets, Expressions, Poses, and Clothing Fit "
     u"changes.",
@@ -106,18 +106,29 @@ def section_ui_pass(window, tabs, env, boxes, QtGui):
     check("U3 Poses shows exactly the Motion Editor sentence above the list",
           [w.text() for w in pose_labels] == [u"You must be in the Motion Editor to apply poses."]
           and not pose_labels[0].isHidden(), [w.text() for w in pose_labels])
-    # Poses actions: one row of three, built with the preset pages' own button helpers.
-    lay = window.pose_page.layout()
-    rows = [lay.itemAt(i).layout() for i in range(lay.count()) if lay.itemAt(i).layout() is not None]
-    row = [rows[-1].itemAt(i).widget() for i in range(rows[-1].count())] if rows else []
-    check("U4 Poses actions are one row: Apply Pose, Save New, Pose Info",
-          [b.text() for b in row] == [u"Apply Pose", u"Save New", u"Pose Info"], [b.text() for b in row])
+    # Poses actions: the six-button layout of Body Presets and Expressions, built with the same helpers.
+    def button_rows(page):
+        lay = page.layout()
+        rows = [lay.itemAt(i).layout() for i in range(lay.count()) if lay.itemAt(i).layout() is not None]
+        return [[(r.itemAt(i).widget().text(), r.stretch(i)) for i in range(r.count())] for r in rows
+                if r.count() and all(isinstance(r.itemAt(i).widget(), QtGui.QPushButton) for i in range(r.count()))]
+    pose_rows, body_rows = button_rows(window.pose_page), button_rows(window.body_page)
+    check("U4 Poses actions are two rows: Apply Pose | Save New | Update Pose, Add Favorite | Pose Info | "
+          "Delete Pose", [[t for t, _ in r] for r in pose_rows] ==
+          [[u"Apply Pose", u"Save New", u"Update Pose"], [u"Add Favorite", u"Pose Info", u"Delete Pose"]], pose_rows)
+    check("U4 the same row structure and stretch as Body Presets",
+          [[f for _, f in r] for r in pose_rows] == [[f for _, f in r] for r in body_rows], (pose_rows, body_rows))
     pairs = ((window.apply_pose_button, window.apply_body), (window.save_pose_button, window.save_body),
-             (window.info_pose_button, window.info_body))
+             (window.update_pose_button, window.update_body), (window.favorite_pose_button, window.favorite_body),
+             (window.info_pose_button, window.info_body), (window.delete_pose_button, window.delete_body))
     check("U4 the same button styles, heights and focus policy as Body Presets",
           all(a.styleSheet() == b.styleSheet() and a.minimumHeight() == b.minimumHeight()
               and a.focusPolicy() == b.focusPolicy() and a.font() == b.font() and not a.autoDefault()
+              and a.sizePolicy().horizontalPolicy() == b.sizePolicy().horizontalPolicy()
               for a, b in pairs), [(a.text(), a.minimumHeight(), b.minimumHeight()) for a, b in pairs])
+    check("U4 Poses has no other buttons (no Rename, Choose Parts or placeholder)",
+          sorted(b.text() for b in window.pose_page.findChildren(QtGui.QPushButton)) ==
+          sorted([u"Apply Pose", u"Save New", u"Update Pose", u"Add Favorite", u"Pose Info", u"Delete Pose"]))
     check("U4 Body Presets and Expressions rows are unchanged",
           [b.text() for b in (window.apply_body, window.save_body, window.update_body, window.favorite_body,
                               window.info_body, window.delete_body)] ==
@@ -184,17 +195,46 @@ def section_ui_pass(window, tabs, env, boxes, QtGui):
         window.refresh_pose_view()
         check("U7 a pose is listed with no message row", window.pose_list.count() == 1 and
               window.pose_list.item(0).text() == u"Arms Up")
-        check("U7 no pose selected: Pose Info and Apply Pose disabled",
-              not window.info_pose_button.isEnabled() and not window.apply_pose_button.isEnabled())
+        per_pose = (window.apply_pose_button, window.update_pose_button, window.favorite_pose_button,
+                    window.info_pose_button, window.delete_pose_button)
+        check("U7 no pose selected: every per-pose button disabled, Save New enabled",
+              not [b.text() for b in per_pose if b.isEnabled()] and window.save_pose_button.isEnabled(),
+              [b.text() for b in per_pose if b.isEnabled()])
+        check("U7 no favorite: no star on the row", window.pose_list.item(0).icon().isNull())
         window.pose_list.setCurrentRow(0)
-        check("U7 pose selected: Pose Info and Apply Pose enabled",
-              window.info_pose_button.isEnabled() and window.apply_pose_button.isEnabled())
+        check("U7 pose selected: Apply Pose, Update Pose, Add Favorite, Pose Info and Delete Pose enabled",
+              all(b.isEnabled() for b in per_pose) and window.favorite_pose_button.text() == u"Add Favorite",
+              [(b.text(), b.isEnabled()) for b in per_pose])
+        window.selection_token = None
+        window.refresh_pose_buttons()
+        check("U7 no scene instance: scene buttons (Apply, Update, Save New) disabled; library buttons enabled",
+              not window.apply_pose_button.isEnabled() and not window.update_pose_button.isEnabled()
+              and not window.save_pose_button.isEnabled() and window.favorite_pose_button.isEnabled()
+              and window.info_pose_button.isEnabled() and window.delete_pose_button.isEnabled())
+        window.selection_token = {"kind": g["PROD_INSTANCE_TOKEN_KIND"], "test": True}
+        window.pose_recovery_blocked = True
+        window.refresh_pose_buttons()
+        check("U7 pose changes paused: Apply and Update disabled, Delete and Favorite still available",
+              not window.apply_pose_button.isEnabled() and not window.update_pose_button.isEnabled()
+              and window.delete_pose_button.isEnabled() and window.favorite_pose_button.isEnabled())
+        window.pose_recovery_blocked = False
+        meta = window.library_meta
+        window.library_meta = {"schema_version": 1, "record_kind": u"library-metadata", "favorites": [u"pose:p1"]}
+        item[u"record"][u"kind"] = u"pose"
+        window.refresh_pose_view()
+        window.pose_list.setCurrentRow(0)
+        check("U7 a favorite pose shows the star and Remove Favorite",
+              not window.pose_list.item(0).icon().isNull()
+              and window.favorite_pose_button.text() == u"Remove Favorite")
+        window.library_meta = meta
+        window.refresh_pose_view()
+        window.pose_list.setCurrentRow(0)
         check("U7 the text above the list stays the Motion Editor note (no pose details)",
               window.pose_summary.text() == u"You must be in the Motion Editor to apply poses.")
         window.busy = True
         window.refresh_pose_buttons()
-        check("U7 busy: Pose Info and Apply Pose disabled",
-              not window.info_pose_button.isEnabled() and not window.apply_pose_button.isEnabled())
+        check("U7 busy: every Poses button disabled",
+              not [b.text() for b in per_pose + (window.save_pose_button,) if b.isEnabled()])
         window.busy = False
         window.refresh_pose_buttons()
         info = capture_dialog(QtGui, window.open_pose_info)
@@ -205,12 +245,214 @@ def section_ui_pass(window, tabs, env, boxes, QtGui):
               any(u"Available: Left arm" in t for t in d.get("labels", [])) and d.get("buttons") == [u"Close"],
               d)
         check("U8 Pose Info ended its operation", not window.busy and window.operation is None)
+        # The Update Pose and Delete Pose confirmations (shown, then cancelled: nothing is written).
+        seen = []
+        real_exec = QtGui.QMessageBox.exec_
+        QtGui.QMessageBox.exec_ = lambda self: seen.append(
+            (self.windowTitle(), self.text(), self.informativeText(), [b.text() for b in self.buttons()],
+             self.defaultButton().text() if self.defaultButton() is not None else None)) or 0
+        try:
+            answer = window.confirm_pose_update(u"Arms Up", u"Left arm")
+        finally:
+            QtGui.QMessageBox.exec_ = real_exec
+        check("U9 Update Pose asks before overwriting, with Cancel as the default",
+              answer is False and seen == [(u"Update pose?", u'Copy the current left arm pose into "Arms Up"?',
+                                            u"The pose's saved values will be overwritten.",
+                                            [u"Update Pose", u"Cancel"], u"Cancel")], seen)
+        shown = []
+        real_dialog = QtGui.QDialog.exec_
+        QtGui.QDialog.exec_ = lambda self: shown.append(
+            (self.windowTitle(), [w.text() for w in self.findChildren(QtGui.QLabel)],
+             sorted(w.text() for w in self.findChildren(QtGui.QPushButton)),
+             [w.text() for w in self.findChildren(QtGui.QPushButton) if w.isDefault()])) or 0
+        try:
+            answer = window.confirm_pose_trash(u"<i>Arms</i> Up", u"C:/Library/Trash")
+        finally:
+            QtGui.QDialog.exec_ = real_dialog
+        check("U9 Delete Pose asks to move the pose to Trash, shows where to recover it, Cancel is the default",
+              answer is False and shown == [(u"Move pose to Trash?",
+                                             [u'<b>Move "&lt;i&gt;Arms&lt;/i&gt; Up" to Trash?</b>',
+                                              u"You can recover it from:", u"C:/Library/Trash"],
+                                             [u"Cancel", u"Move to Trash"], [u"Cancel"])], shown)
         window.pose_list.setCurrentRow(-1)
         window.identity = None
         window.selection_token = None
         window.refresh_pose_view()
     finally:
         g.update(saved)
+
+
+def section_rename_ui(window, tabs, env, boxes, QtGui):
+    """Rename's UI in the real window: the right-click menu (selects the item, only Rename, nothing on empty space
+    or message rows, disabled for read-only items and while busy), the Rename dialog, the list and Info after a
+    rename, and the Poses list message for missing or damaged pose profiles. Storage and the operations after a
+    rename are verified on real libraries in test_cpm_app_f01_pose_integration (R1, R2)."""
+    g = window.render.im_func.func_globals
+    QtCore = g["QtCore"]
+    names = ("prod_pose_load_registry", "prod_pose_selected_library", "prod_pose_discover", "prod_pose_rig_class",
+             "prod_pose_registry_select", "prod_pose_browse_eligible", "prod_resolve_instance",
+             "prod_identity_from_row", "prod_context_token", "prod_context_token_matches", "prod_rename_preset")
+    saved = dict((k, g[k]) for k in names)
+    ident = {"model": u"models/test/krystal2020.mdl", "checksum": 1234, "animset_name": u"Krystal"}
+
+    def preset(name, pid, source=u"v3"):
+        return {"path": u"C:/unused/%s.json" % pid, "source": source, "revision": u"r-" + pid,
+                "record": {"name": name, "preset_id": pid, "kind": u"body", "created_at": u"20261104-120000-000000"}}
+    pose = {u"name": u"Arms Up", u"preset_id": u"p1", u"revision": 1, u"path": u"C:/unused/p1.json",
+            u"character_key": u"k",
+            u"record": {u"name": u"Arms Up", u"preset_id": u"p1", u"kind": u"pose",
+                        u"created_at": u"20261104-120000-000000",
+                        u"pose": {u"regions": {u"left_arm": {}}, u"source": {
+                            u"model_ref": u"models/test/krystal2020.mdl", u"shot_name": u"shot10",
+                            u"rig_class": u"krystal-biped"}}}}
+    menus = []
+    reply = {"choose": False}
+
+    real_menu = QtGui.QMenu
+
+    class RecordingMenu(real_menu):
+        """The real QMenu, with exec_ recording its actions instead of running a popup event loop (PySide 1.2's
+        overloaded QMenu.exec_ cannot be patched on the class)."""
+        def exec_(self, *args):
+            actions = self.actions()
+            menus.append([(a.text(), a.shortcut().isEmpty(), a.isEnabled()) for a in actions])
+            return actions[0] if reply["choose"] and actions else None
+    QtGui.QMenu = RecordingMenu
+    g["prod_resolve_instance"] = lambda tok, identity=None: dict(ident, test_row=True)   # carries the model (current() checks it)
+    g["prod_identity_from_row"] = lambda row: dict(ident)
+    g["prod_context_token"] = lambda *a, **k: {"test_context": True}
+    # The pinned operation context still matches (M-06 revalidation runs for real in the integration suite).
+    g["prod_context_token_matches"] = lambda token: token == {"test_context": True}
+    g["prod_pose_load_registry"] = lambda: {}
+    g["prod_pose_selected_library"] = lambda i: {u"char_dir": u"unused", u"character_key": u"k"}
+    g["prod_pose_discover"] = lambda char_dir, key, reg: {u"items": [pose], u"unusable": []}
+    g["prod_pose_rig_class"] = lambda reg, model, checksum: u"krystal-biped"
+    g["prod_pose_registry_select"] = lambda reg, mode: {}
+    g["prod_pose_browse_eligible"] = lambda sel, rec, cls: [u"left_arm"]
+    try:
+        window.identity = dict(ident)
+        window.selection_token = {"kind": g["PROD_INSTANCE_TOKEN_KIND"], "test": True}
+        window.body_items = [preset(u"Alpha", u"preset-a"), preset(u"Legacy", u"preset-l", u"legacy-v2")]
+        tabs.setCurrentWidget(window.body_page)
+        window.refresh_preset_view(g["P03_KIND_BODY"])
+        env.settle()
+        lst = window.body_list
+        lst.setCurrentRow(-1)
+        rows = dict((lst.item(i).text(), lst.item(i)) for i in range(lst.count()))
+        alpha = [r for t, r in rows.items() if t.startswith(u"Alpha")][0]
+        legacy = [r for t, r in rows.items() if t.startswith(u"Legacy")][0]
+        check("N1 Body Presets, Expressions and Poses lists use a custom context menu",
+              all(w.contextMenuPolicy() == QtCore.Qt.CustomContextMenu
+                  for w in (window.body_list, window.expr_list, window.pose_list)))
+        window.show_rename_menu(g["P03_KIND_BODY"], lst.visualItemRect(alpha).center())
+        check("N1 right-click selects the item and shows a menu with only Rename (no shortcut, no ellipsis)",
+              lst.currentItem() is alpha and menus == [[(u"Rename", True, True)]], menus)
+        del menus[:]
+        empty = QtCore.QPoint(5, lst.viewport().height() - 2)
+        check("N1 fixture: the point is empty list space", lst.itemAt(empty) is None)
+        window.show_rename_menu(g["P03_KIND_BODY"], empty)
+        check("N1 right-click on empty list space opens nothing", menus == [] and lst.currentItem() is alpha, menus)
+        window.show_rename_menu(g["P03_KIND_BODY"], lst.visualItemRect(legacy).center())
+        check("N1 a read-only legacy preset: Rename shown disabled", lst.currentItem() is legacy
+              and menus == [[(u"Rename", True, False)]], menus)
+        del menus[:]
+        window.busy = True
+        window.show_rename_menu(g["P03_KIND_BODY"], lst.visualItemRect(alpha).center())
+        window.busy = False
+        check("N1 while another action runs: Rename disabled", menus == [[(u"Rename", True, False)]], menus)
+        del menus[:]
+        # Choosing Rename opens the dialog with the current name; Cancel changes nothing.
+        prompted = []
+        window.prompt_rename = lambda current: (prompted.append(current), None)[1]
+        reply["choose"] = True
+        window.show_rename_menu(g["P03_KIND_BODY"], lst.visualItemRect(alpha).center())
+        check("N2 choosing Rename asks for the new name with the current name; Cancel changes nothing",
+              prompted == [u"Alpha"] and window.body_items[0]["record"]["name"] == u"Alpha"
+              and not window.busy and window.operation is None, prompted)
+        # A successful rename (store call recorded here; storage is verified in the integration suite): the list
+        # shows the new name with the item still selected, and Preset Info shows it.
+        window.prompt_rename = lambda current: u"Gamma"
+        calls = []
+
+        def rename(identity, item, name, phase_callback=None):
+            calls.append((item["record"]["preset_id"], name))
+            return dict(item["record"], name=name.strip())
+        g["prod_rename_preset"] = rename
+        window.show_rename_menu(g["P03_KIND_BODY"], lst.visualItemRect(alpha).center())
+        current = lst.currentItem()
+        check("N2 after a rename the list shows the new name and keeps the item selected",
+              calls == [(u"preset-a", u"Gamma")] and current is not None and current.text().startswith(u"Gamma")
+              and window.selected_or_none(g["P03_KIND_BODY"])["record"]["preset_id"] == u"preset-a",
+              (calls, current and current.text()))
+        info = capture_dialog(QtGui, lambda: window.open_preset_info(g["P03_KIND_BODY"]))
+        check("N2 Preset Info shows the renamed preset", info and u"Gamma" in info[0]["labels"], info)
+        del window.prompt_rename
+        reply["choose"] = False
+        del menus[:]
+        # Poses: the same menu on a saved pose; nothing on the message row.
+        tabs.setCurrentWidget(window.pose_page)
+        window.refresh_pose_view()
+        env.settle()
+        plist = window.pose_list
+        plist.setCurrentRow(-1)
+        window.show_rename_menu(g["PROD_POSE_KIND"], plist.visualItemRect(plist.item(0)).center())
+        check("N3 Poses: right-click selects the pose and shows only Rename",
+              plist.currentRow() == 0 and menus == [[(u"Rename", True, True)]], menus)
+        del menus[:]
+        g["prod_pose_discover"] = lambda char_dir, key, reg: {u"items": [], u"unusable": []}
+        window.refresh_pose_view()
+        env.settle()
+        window.show_rename_menu(g["PROD_POSE_KIND"], plist.visualItemRect(plist.item(0)).center())
+        check("N3 Poses: right-click on the list message row opens nothing", menus == [], menus)
+        # The Rename dialog itself.
+        shown = []
+        real_dialog = QtGui.QDialog.exec_
+        answer = {"code": 0}
+
+        def dialog_exec(self):
+            edit = self.findChildren(QtGui.QLineEdit)[0]
+            shown.append((self.windowTitle(), edit.text(), edit.selectedText(),
+                          sorted(b.text() for b in self.findChildren(QtGui.QPushButton)),
+                          [b.text() for b in self.findChildren(QtGui.QPushButton) if b.isDefault()]))
+            if answer["code"]:
+                edit.setText(u"New Name")
+            return answer["code"]
+        QtGui.QDialog.exec_ = dialog_exec
+        try:
+            cancelled = window.prompt_rename(u"Arms Up")
+            answer["code"] = QtGui.QDialog.Accepted
+            accepted = window.prompt_rename(u"Arms Up")
+        finally:
+            QtGui.QDialog.exec_ = real_dialog
+        check("N4 Rename dialog: title Rename, current name prefilled and selected, Save and Cancel, Cancel default",
+              shown[:1] == [(u"Rename", u"Arms Up", u"Arms Up", [u"Cancel", u"Save"], [u"Cancel"])], shown)
+        check("N4 Cancel returns nothing; Save returns the entered name", cancelled is None
+              and accepted == u"New Name", (cancelled, accepted))
+        # Missing or damaged pose profiles: their own list message; unsupported characters keep theirs.
+        def broken():
+            raise g["ProdPoseIntegrationError"](u"registry", u"The pose profiles are unavailable. Reinstall CPM.")
+        g["prod_pose_load_registry"] = broken
+        window.refresh_pose_view()
+        rows = [plist.item(i).text() for i in range(plist.count())]
+        check("N5 missing or damaged pose profiles: the list says so (not 'unsupported')",
+              rows == [u"Pose Library files are missing or damaged. Reinstall Character Preset Manager."]
+              and not window.save_pose_button.isEnabled(), rows)
+        g["prod_pose_load_registry"] = lambda: {}
+        g["prod_pose_rig_class"] = lambda reg, model, checksum: None
+        window.refresh_pose_view()
+        rows = [plist.item(i).text() for i in range(plist.count())]
+        check("N5 an unsupported character keeps its own message",
+              rows == [g["PROD_POSE_MESSAGES"][u"unsupported-character"]], rows)
+    finally:
+        QtGui.QMenu = real_menu
+        g.update(saved)
+        window.body_items = []
+        window.identity = None
+        window.selection_token = None
+        window.refresh_pose_view()
+        window.body_list.clear()
+        tabs.setCurrentWidget(window.body_page)
+        env.settle()
 
 
 def section_selection_refresh(window, tabs, env, boxes):
@@ -322,13 +564,14 @@ def main():
     check("P2 selected-tab styling unchanged", u"QTabBar::tab:selected {\n            background: #454545;\n"
           u"            border-top: 2px solid #7c8f9c;\n            border-bottom: 1px solid #454545;" in sheet, sheet)
     buttons = [b.text() for b in window.pose_page.findChildren(QtGui.QPushButton)]
-    check("P3 Poses page buttons", sorted(buttons) == [u"Apply Pose", u"Pose Info", u"Save New"], buttons)
+    check("P3 Poses page buttons", sorted(buttons) == [u"Add Favorite", u"Apply Pose", u"Delete Pose", u"Pose Info",
+                                                        u"Save New", u"Update Pose"], buttons)
     check("P3 no ellipses in any label", not [t for t in buttons + titles if u"..." in t or u"…" in t])
     check("P3 search field", window.pose_search.placeholderText() == u"Search poses")
     tabs.setCurrentWidget(window.pose_page)
     env.settle()
-    check("P4 no character: Apply, Save and Pose Info disabled", not window.apply_pose_button.isEnabled()
-          and not window.save_pose_button.isEnabled() and not window.info_pose_button.isEnabled())
+    check("P4 no character: every Poses button disabled", not [
+        b.text() for b in window.pose_page.findChildren(QtGui.QPushButton) if b.isEnabled()])
     check("P4 no character: only the Motion Editor note above an empty list",
           window.pose_summary.text() == u"You must be in the Motion Editor to apply poses."
           and window.pose_list.count() == 0, (window.pose_summary.text(), window.pose_list.count()))
@@ -355,6 +598,7 @@ def main():
     check("P5 tabs never elide or shrink their labels", bar.elideMode() == g_qt(window).Qt.ElideNone
           or bar.elideMode() == 0, bar.elideMode())
     section_ui_pass(window, tabs, env, boxes, QtGui)
+    section_rename_ui(window, tabs, env, boxes, QtGui)
     section_selection_refresh(window, tabs, env, boxes)
     try:
         window.close()

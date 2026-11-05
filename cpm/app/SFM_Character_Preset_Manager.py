@@ -152,6 +152,7 @@ PROD_LOG_NON_MUTATING_LABELS = (
     "Clear Model",
     "Model Info",
     "Preset Info",
+    "Pose Info",
     "Help",
 )
 
@@ -28068,6 +28069,171 @@ def prod_save(
 
 
 
+def prod_rename_preset(
+    identity,
+    item,
+    name_value,
+    phase_callback=None,
+):
+    """Rename a current-library Body or Expression preset: only the record's display name changes. The file and
+    its file name, the preset identity, the saved values and every other field (including created_at and
+    modified_at) are kept; Favorites and the character's default Body preset are keyed by preset_id and so are
+    unaffected. The selected record is reread against its revision first; the new name follows Save New's rules
+    (not blank, unique within the kind's library, case-insensitive)."""
+    if (
+        not isinstance(
+            item,
+            dict,
+        )
+        or item.get(
+            "source"
+        )
+        != u"v3"
+    ):
+        raise RuntimeError(
+            "Legacy presets are read-only. Only current-library presets can be renamed."
+        )
+    name_value = u(
+        name_value
+        or u""
+    ).strip()
+    if not name_value:
+        raise RuntimeError(
+            "Preset name cannot be blank."
+        )
+    path = item.get(
+        "path"
+    )
+    if (
+        not path
+        or not os.path.isfile(
+            path
+        )
+    ):
+        raise RuntimeError(
+            "Preset file no longer exists."
+        )
+    record = prod_reread_selected_record(
+        identity,
+        item,
+        u(
+            (
+                item.get(
+                    "record"
+                )
+                or {}
+            ).get(
+                "kind"
+            )
+        ),
+    )
+    kind = u(
+        record.get(
+            "kind"
+        )
+    )
+    if os.path.normcase(
+        os.path.abspath(
+            os.path.dirname(
+                path
+            )
+        )
+    ) != os.path.normcase(
+        os.path.abspath(
+            prod_preset_dir(
+                identity,
+                kind,
+            )
+        )
+    ):
+        raise RuntimeError(
+            "Preset is outside the selected model's current library."
+        )
+    preset_id = u(
+        record.get(
+            "preset_id"
+        )
+    )
+    prod_assert_unique_preset_name_items(
+        [
+            other
+            for other in prod_discover(
+                identity,
+                kind,
+            )
+            if u(
+                (
+                    other.get(
+                        "record"
+                    )
+                    or {}
+                ).get(
+                    "preset_id"
+                )
+            )
+            != preset_id
+        ],
+        kind,
+        name_value,
+    )
+    updated = dict(
+        record
+    )
+    updated[
+        "name"
+    ] = name_value
+    prod_validate_preset(
+        identity,
+        updated,
+        kind,
+    )
+    p02_safe_write_json(
+        path,
+        updated,
+    )
+    detail = {
+        "path": path,
+        "kind": kind,
+        "preset_id": preset_id,
+    }
+    if phase_callback is not None:
+        phase_callback(
+            "durable-commit",
+            detail,
+        )
+    loaded = p02_read_json(
+        path
+    )
+    prod_validate_preset(
+        identity,
+        loaded,
+        kind,
+    )
+    if loaded != updated:
+        raise RuntimeError(
+            "Renamed preset did not read back exactly."
+        )
+    if phase_callback is not None:
+        phase_callback(
+            "durable-verified",
+            detail,
+        )
+    try:
+        log_line(
+            "PROD_RENAME=PASS model=%r kind=%r preset=%r"
+            % (
+                identity[
+                    "model"
+                ],
+                kind,
+                preset_id,
+            )
+        )
+    except Exception:
+        pass
+    return loaded
+
+
 def prod_update_preset(
     identity,
     item,
@@ -30453,6 +30619,8 @@ class ProdWindow(QtGui.QDialog):
         self.body_list = QtGui.QListWidget()
         tool_apply_preset_list_style(self.body_list)
         self.body_list.currentRowChanged.connect(lambda row: self.preset_selection_changed(P03_KIND_BODY))
+        self.body_list.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.body_list.customContextMenuRequested.connect(lambda pos: self.show_rename_menu(P03_KIND_BODY, pos))
         body_layout.addWidget(self.body_list, 1)
 
         body_primary = QtGui.QHBoxLayout()
@@ -30514,6 +30682,9 @@ class ProdWindow(QtGui.QDialog):
         self.expr_list = QtGui.QListWidget()
         tool_apply_preset_list_style(self.expr_list)
         self.expr_list.currentRowChanged.connect(lambda row: self.preset_selection_changed(P03_KIND_EXPRESSION))
+        self.expr_list.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.expr_list.customContextMenuRequested.connect(
+            lambda pos: self.show_rename_menu(P03_KIND_EXPRESSION, pos))
         expr_layout.addWidget(self.expr_list, 1)
 
         expr_primary = QtGui.QHBoxLayout()
@@ -30586,6 +30757,8 @@ class ProdWindow(QtGui.QDialog):
         tool_apply_preset_list_style(self.pose_list)
         self.pose_list.setWordWrap(True)
         self.pose_list.currentRowChanged.connect(lambda row: self.refresh_pose_buttons())
+        self.pose_list.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.pose_list.customContextMenuRequested.connect(lambda pos: self.show_rename_menu(PROD_POSE_KIND, pos))
         pose_layout.addWidget(self.pose_list, 1)
         pose_primary = QtGui.QHBoxLayout()
         self.apply_pose_button = QtGui.QPushButton("Apply Pose")
@@ -30596,11 +30769,26 @@ class ProdWindow(QtGui.QDialog):
         tool_apply_main_action_button(self.save_pose_button)
         self.save_pose_button.clicked.connect(lambda: self.save_pose(None, (u"left_arm",)))
         pose_primary.addWidget(self.save_pose_button)
+        self.update_pose_button = QtGui.QPushButton("Update Pose")
+        tool_apply_main_action_button(self.update_pose_button)
+        self.update_pose_button.clicked.connect(lambda: self.update_selected_pose())
+        pose_primary.addWidget(self.update_pose_button)
+        pose_layout.addLayout(pose_primary)
+
+        pose_secondary = QtGui.QHBoxLayout()
+        self.favorite_pose_button = QtGui.QPushButton("Add Favorite")
+        tool_apply_semantic_action_button(self.favorite_pose_button, u"favorite")
+        self.favorite_pose_button.clicked.connect(lambda: self.toggle_pose_favorite())
+        pose_secondary.addWidget(self.favorite_pose_button, 1)
         self.info_pose_button = QtGui.QPushButton("Pose Info")
         tool_apply_secondary_action_button(self.info_pose_button)
         self.info_pose_button.clicked.connect(lambda: self.open_pose_info())
-        pose_primary.addWidget(self.info_pose_button)
-        pose_layout.addLayout(pose_primary)
+        pose_secondary.addWidget(self.info_pose_button, 1)
+        self.delete_pose_button = QtGui.QPushButton("Delete Pose")
+        tool_apply_semantic_action_button(self.delete_pose_button, u"destructive")
+        self.delete_pose_button.clicked.connect(lambda: self.delete_selected_pose())
+        pose_secondary.addWidget(self.delete_pose_button, 1)
+        pose_layout.addLayout(pose_secondary)
         self.pose_items = []
         self.pose_items_key = None
         self.tabs.addTab(self.pose_page, "Poses")
@@ -31614,16 +31802,71 @@ class ProdWindow(QtGui.QDialog):
         if label in (
             "Apply Pose",
             "Save Pose",
+            "Update Pose",
         ):
             # F-01 stage C: pose refusals carry their own UX copy (pose_guard
             # replaces unexpected internal errors with the generic pose copy).
             return (
-                (
-                    "Pose Not Applied"
-                    if label == "Apply Pose"
-                    else "Pose Not Saved"
+                {
+                    "Apply Pose": "Pose Not Applied",
+                    "Save Pose": "Pose Not Saved",
+                }.get(
+                    label,
+                    "Pose Not Updated",
                 ),
                 raw,
+            )
+
+        if label in (
+            "Rename Preset",
+            "Rename Pose",
+        ):
+            # Naming and changed-record refusals are user-facing copy;
+            # anything else is shown generically.
+            known = (
+                raw
+                in (
+                    u"Preset name cannot be blank.",
+                    u"Preset file no longer exists.",
+                    u"The selected preset changed on disk. Refresh Presets and select it again.",
+                    u"Legacy presets are read-only. Only current-library presets can be renamed.",
+                    u"Enter a name for the pose.",
+                    u"The pose name is too long or contains control characters.",
+                )
+                or raw in PROD_POSE_MESSAGES.values()
+                or (
+                    raw.startswith(u'A pose named "')
+                    and raw.endswith(u'" already exists for this character.')
+                )
+            )
+            return (
+                "Can't rename",
+                (
+                    raw
+                    if known
+                    else "The name could not be changed. Nothing was changed."
+                ),
+            )
+
+        if label in (
+            "Favorite Pose",
+            "Delete Pose",
+        ):
+            # Pose library refusals are user-facing copy; anything else is
+            # shown generically, as for the preset equivalents.
+            if raw in PROD_POSE_MESSAGES.values():
+                message = raw
+            elif label == "Favorite Pose":
+                message = "Favorite could not be changed. Try again."
+            else:
+                message = "Pose could not be moved to Trash. Try again."
+            return (
+                (
+                    "Can't change Favorite"
+                    if label == "Favorite Pose"
+                    else "Can't delete pose"
+                ),
+                message,
             )
 
         if label == "Refresh Models":
@@ -35436,6 +35679,8 @@ class ProdWindow(QtGui.QDialog):
                     (
                         PROD_POSE_MESSAGES[u"not-applied"]
                         if label == u"Apply Pose"
+                        else u"The pose wasn't updated. Nothing was changed."
+                        if label == u"Update Pose"
                         else u"The pose wasn't saved. Nothing was saved."
                     ),
                 )
@@ -35860,6 +36105,7 @@ class ProdWindow(QtGui.QDialog):
             self.pose_items_key = None
             self.pose_unusable = 0
             self.pose_rig_class = None
+            self.pose_registry_unavailable = False
 
             if self.identity is not None:
                 try:
@@ -35890,6 +36136,12 @@ class ProdWindow(QtGui.QDialog):
                     except Exception:
                         pass
                     found = {u"items": [], u"unusable": []}
+                    # prod_pose_load_registry's own refusal: the installed profiles are missing or fail their
+                    # integrity check (not an unsupported character).
+                    self.pose_registry_unavailable = (
+                        isinstance(exc, ProdPoseIntegrationError)
+                        and exc.code == u"registry"
+                    )
 
                 self.pose_items_key = prod_key(
                     self.identity["model"]
@@ -35918,6 +36170,13 @@ class ProdWindow(QtGui.QDialog):
                         QtCore.Qt.UserRole,
                         len(self.pose_items) - 1,
                     )
+
+                    if self.is_favorite_cached(
+                        item[u"record"]
+                    ):
+                        row.setIcon(
+                            tool_favorite_star_icon()
+                        )
                     self.pose_list.addItem(
                         row
                     )
@@ -35980,12 +36239,32 @@ class ProdWindow(QtGui.QDialog):
         self.save_pose_button.setEnabled(
             state[u"buttons"][u"save_new"]
         )
+        self.update_pose_button.setEnabled(
+            item is not None
+            and state[u"buttons"][u"update_pose"]
+        )
+        self.favorite_pose_button.setEnabled(
+            item is not None
+            and state[u"buttons"][u"favorite"]
+        )
+        self.favorite_pose_button.setText(
+            state[u"favorite_label"]
+        )
         self.info_pose_button.setEnabled(
             item is not None
             and state[u"buttons"][u"pose_info"]
         )
+        self.delete_pose_button.setEnabled(
+            item is not None
+            and state[u"buttons"][u"delete_pose"]
+        )
+        message = state[u"list_message"]
+
+        if self.identity is not None and getattr(self, "pose_registry_unavailable", False):
+            message = PROD_POSE_REGISTRY_UNAVAILABLE_COPY
+
         self.set_pose_list_message(
-            state[u"list_message"]
+            message
             if not getattr(self, "pose_items", [])
             else None
         )
@@ -36037,7 +36316,9 @@ class ProdWindow(QtGui.QDialog):
                     for r in saved
                 ),
                 u"unusable": False,
-                u"favorite": False,
+                u"favorite": self.is_favorite_cached(
+                    item[u"record"]
+                ),
             }
 
         return prod_pose_ui_state(
@@ -36172,6 +36453,842 @@ class ProdWindow(QtGui.QDialog):
                 dialog.deleteLater()
 
         return self.guard("Pose Info", work)
+
+    def pose_selection_for_action(
+        self,
+    ):
+        """The selected pose for a Poses button, or None (status set) when nothing is selected or the list was
+        built for another model selection."""
+        item = self.selected_pose()
+
+        if item is None:
+            self.set_status(
+                "Select a pose."
+            )
+            return None
+
+        if (
+            self.identity is None
+            or getattr(self, "pose_items_key", None) != prod_key(self.identity["model"])
+        ):
+            self.refresh_pose_view()
+            self.set_status(
+                PROD_POSE_MESSAGES[u"record-changed"],
+                u"warning",
+            )
+            return None
+
+        return item
+
+    def update_selected_pose(
+        self,
+    ):
+        item = self.pose_selection_for_action()
+
+        if item is None:
+            return None
+
+        result = self.update_pose(
+            item
+        )
+        self.refresh_pose_buttons()
+        return result
+
+    def confirm_pose_update(
+        self,
+        name,
+        parts,
+    ):
+        """The Update Pose overwrite confirmation (as Update Preset's): Cancel is the default."""
+        box = QtGui.QMessageBox(
+            self
+        )
+        tool_keep_modal_dialog_in_front(
+            box
+        )
+
+        try:
+            box.setWindowTitle(
+                "Update pose?"
+            )
+            box.setText(
+                u'Copy the current %s pose into "%s"?'
+                % (
+                    u(parts).lower(),
+                    u(name),
+                )
+            )
+            box.setInformativeText(
+                "The pose's saved values will be overwritten."
+            )
+            update_button = box.addButton(
+                "Update Pose",
+                QtGui.QMessageBox.AcceptRole,
+            )
+            cancel_button = box.addButton(
+                "Cancel",
+                QtGui.QMessageBox.RejectRole,
+            )
+            box.setDefaultButton(
+                cancel_button
+            )
+            tool_apply_dialog_font(
+                box
+            )
+            box.exec_()
+            return box.clickedButton() is update_button
+        finally:
+            box.deleteLater()
+
+    def update_pose(
+        self,
+        item,
+    ):
+        """Update Pose: replace exactly the saved parts of an own pose with the character's pose at the playhead,
+        after the overwrite confirmation. The same authorization, time pin and read-only capture as Save New; the
+        store (prod_pose_update) keeps the pose's identity, name, creation time and file."""
+        def work():
+            ident = self.current()
+            reg = prod_pose_load_registry()
+            selected = prod_pose_selected_library(
+                ident
+            )
+            fresh = prod_pose_reread(
+                selected,
+                item,
+                reg,
+            )
+
+            if fresh.get(u"character_key") != selected[u"character_key"]:
+                raise ProdPoseLibraryError(
+                    u"foreign-locked",
+                    PROD_POSE_MESSAGES[u"foreign-locked"],
+                )
+
+            saved = sorted(
+                fresh[u"record"][u"pose"][u"regions"]
+            )
+            parts = prod_pose_parts_phrase(
+                saved
+            )
+            refused = ProdPoseIntegrationError(
+                u"update-refused",
+                PROD_POSE_MESSAGES[u"update-refused"] % {u"part": parts},
+            )
+            authorization = prod_pose_authorize(
+                self.operation[
+                    "context"
+                ],
+                ident,
+                reg,
+                self.pose_registry_mode(),
+                u"Update Pose",
+            )
+
+            try:
+                pinned = prod_pose_current_time(
+                    ident,
+                    authorization,
+                    reg,
+                    saved,
+                )
+            except ProdPoseError:
+                raise refused
+
+            if not self.confirm_pose_update(
+                fresh[u"record"][u"name"],
+                parts,
+            ):
+                prod_log_outcome(
+                    u"no-op",
+                    {"reason": u"cancelled", "kind": PROD_POSE_KIND},
+                )
+                return None
+
+            # Modal return is an operation boundary (section 6.1 step 2).
+            self.operation_revalidate()
+            authorization = prod_pose_authorize(
+                self.operation[
+                    "context"
+                ],
+                ident,
+                reg,
+                self.pose_registry_mode(),
+                u"Update Pose",
+            )
+            fresh = prod_pose_reread(
+                selected,
+                fresh,
+                reg,
+            )
+
+            try:
+                pose = prod_pose_capture(
+                    ident,
+                    authorization,
+                    saved,
+                    reg,
+                    pinned_time=pinned,
+                )
+            except ProdPoseError as exc:
+                if exc.code in (u"stale", u"time-mapping"):
+                    raise
+                raise refused
+
+            if sorted(
+                pose[
+                    u"regions"
+                ]
+            ) != saved:
+                # The saved parts are replaced exactly, never reduced.
+                raise refused
+
+            self.operation_revalidate()
+            updated = prod_pose_update(
+                selected,
+                fresh,
+                pose,
+                p03_now_stamp(),
+                reg,
+            )
+            detail = {
+                "kind": PROD_POSE_KIND,
+                "preset_id": updated[
+                    u"preset_id"
+                ],
+            }
+            self.operation_mark_phase(
+                u"durable-commit",
+                detail,
+            )
+            self.operation_mark_phase(
+                u"durable-verified",
+                detail,
+            )
+            prod_log_outcome(
+                u"verified",
+                detail,
+            )
+            self.set_status(
+                u'"%s" updated (%s).'
+                % (
+                    updated[u"record"][u"name"],
+                    parts,
+                ),
+                u"success",
+            )
+            return updated
+
+        result = self.pose_guard(
+            u"Update Pose",
+            work,
+        )
+
+        if result is not None:
+            self.refresh_pose_view(
+                select_id=result[
+                    u"preset_id"
+                ]
+            )
+
+        return result
+
+    def toggle_pose_favorite(
+        self,
+    ):
+        """Add Favorite / Remove Favorite for an own pose: the `pose:<id>` key in the character's library.json,
+        through CPM's own Favorite write and readback (prod_set_favorite)."""
+        item = self.pose_selection_for_action()
+
+        if item is None:
+            return None
+
+        def work():
+            ident = self.current()
+            reg = prod_pose_load_registry()
+            selected = prod_pose_selected_library(
+                ident
+            )
+            fresh = prod_pose_reread(
+                selected,
+                item,
+                reg,
+            )
+            record = fresh[
+                u"record"
+            ]
+            prod_pose_assert_contained(
+                selected,
+                prod_pose_library_paths(
+                    selected[u"char_dir"]
+                )[u"library_meta"],
+            )
+            result = prod_set_favorite(
+                ident,
+                record,
+                not self.is_favorite_cached(
+                    record
+                ),
+                phase_callback=self.operation_mark_phase,
+            )
+            enabled = bool(
+                result[
+                    "enabled"
+                ]
+            )
+            prod_log_outcome(
+                u"verified",
+                {"favorite": enabled, "kind": PROD_POSE_KIND},
+            )
+            self.library_meta = dict(
+                result[
+                    "meta"
+                ]
+            )
+            self.refresh_pose_view(
+                select_id=record[u"preset_id"]
+            )
+            self.set_status(
+                (
+                    "Added to Favorites."
+                    if enabled
+                    else "Removed from Favorites."
+                ),
+                u"success",
+            )
+
+        result = self.guard(
+            "Favorite Pose",
+            work,
+        )
+        self.refresh_pose_buttons()
+        return result
+
+    def confirm_pose_trash(
+        self,
+        name,
+        trash_path,
+    ):
+        """The Delete Pose confirmation (as Delete Preset's): Move to Trash, with Cancel as the default."""
+        box = QtGui.QDialog(
+            self
+        )
+
+        try:
+            box.setWindowTitle(
+                "Move pose to Trash?"
+            )
+            box.setMinimumWidth(590)
+            box.setMaximumWidth(620)
+
+            layout = QtGui.QVBoxLayout(box)
+            layout.setContentsMargins(
+                12,
+                12,
+                12,
+                12,
+            )
+            layout.setSpacing(8)
+
+            shown = u(name).replace(u"&", u"&amp;").replace(u"<", u"&lt;").replace(u">", u"&gt;")
+            question = QtGui.QLabel(
+                u'<b>Move "%s" to Trash?</b>'
+                % shown
+            )
+            question.setWordWrap(True)
+            layout.addWidget(question)
+
+            layout.addWidget(
+                QtGui.QLabel(
+                    "You can recover it from:"
+                )
+            )
+
+            path_label = QtGui.QLabel(
+                u(trash_path)
+            )
+            path_label.setWordWrap(False)
+            path_label.setTextInteractionFlags(
+                QtCore.Qt.TextSelectableByMouse
+            )
+            layout.addWidget(path_label)
+
+            buttons = QtGui.QDialogButtonBox()
+            delete_button = buttons.addButton(
+                "Move to Trash",
+                QtGui.QDialogButtonBox.AcceptRole,
+            )
+            cancel_button = buttons.addButton(
+                "Cancel",
+                QtGui.QDialogButtonBox.RejectRole,
+            )
+            delete_button.clicked.connect(
+                box.accept
+            )
+            cancel_button.clicked.connect(
+                box.reject
+            )
+            cancel_button.setDefault(True)
+            layout.addWidget(buttons)
+
+            tool_apply_visual_theme(box)
+            tool_apply_dialog_font(box)
+            return box.exec_() == QtGui.QDialog.Accepted
+        finally:
+            box.deleteLater()
+
+    def delete_selected_pose(
+        self,
+    ):
+        """Delete Pose: after the confirmation, move an own pose to the library Trash (prod_pose_trash: never
+        overwrites, refuses a redirected Trash), then remove its Favorite."""
+        item = self.pose_selection_for_action()
+
+        if item is None:
+            return None
+
+        def work():
+            ident = self.current()
+            reg = prod_pose_load_registry()
+            selected = prod_pose_selected_library(
+                ident
+            )
+            fresh = prod_pose_reread(
+                selected,
+                item,
+                reg,
+            )
+
+            if fresh.get(u"character_key") != selected[u"character_key"]:
+                raise ProdPoseLibraryError(
+                    u"foreign-locked",
+                    PROD_POSE_MESSAGES[u"foreign-locked"],
+                )
+
+            record = fresh[
+                u"record"
+            ]
+            trash_path = os.path.join(
+                selected[u"library_root"],
+                P03_TRASH_DIRNAME,
+            )
+
+            if not self.confirm_pose_trash(
+                record[u"name"],
+                trash_path,
+            ):
+                prod_log_outcome(
+                    u"no-op",
+                    {"reason": u"cancelled", "kind": PROD_POSE_KIND},
+                )
+                return None
+
+            self.operation_revalidate()
+            destination = prod_pose_trash(
+                selected,
+                fresh,
+                trash_path,
+                p03_now_stamp(),
+                reg,
+            )
+            detail = {
+                "path": destination,
+                "source_path": fresh[u"path"],
+                "kind": u"trash-move",
+                "preset_id": record[u"preset_id"],
+            }
+            self.operation_mark_phase(
+                u"durable-commit",
+                detail,
+            )
+
+            if os.path.lexists(fresh[u"path"]) or not os.path.isfile(destination):
+                raise RuntimeError(
+                    "Pose Trash move could not be verified."
+                )
+
+            self.operation_mark_phase(
+                u"durable-verified",
+                detail,
+            )
+            prod_log_outcome(
+                u"verified",
+                {"trash_move": True, "kind": PROD_POSE_KIND},
+            )
+
+            try:
+                if prod_is_favorite(
+                    ident,
+                    record,
+                ):
+                    prod_set_favorite(
+                        ident,
+                        record,
+                        False,
+                    )
+            except Exception as exc:
+                try:
+                    log_line(
+                        "PROD_FAVORITE_CLEANUP_WARNING preset=%r error=%r"
+                        % (
+                            record.get(
+                                "preset_id"
+                            ),
+                            exc,
+                        )
+                    )
+                except Exception:
+                    pass
+
+            self.library_meta = prod_load_library_meta(
+                ident
+            )
+            self.refresh_pose_view()
+            self.set_status(
+                "Pose moved to Trash.",
+                u"success",
+            )
+            return destination
+
+        result = self.guard(
+            "Delete Pose",
+            work,
+        )
+        self.refresh_pose_buttons()
+        return result
+
+    def show_rename_menu(
+        self,
+        kind,
+        pos,
+    ):
+        """Right-click on a saved item of Body Presets, Expressions or Poses: select it, then a menu with only
+        Rename (enabled when the item can be renamed). Empty list space and message rows open nothing."""
+        widget = {
+            P03_KIND_BODY: self.body_list,
+            P03_KIND_EXPRESSION: self.expr_list,
+            PROD_POSE_KIND: self.pose_list,
+        }[kind]
+        row = widget.itemAt(
+            pos
+        )
+
+        if (
+            row is None
+            or not (row.flags() & QtCore.Qt.ItemIsSelectable)
+            or not (row.flags() & QtCore.Qt.ItemIsEnabled)
+        ):
+            return None
+
+        widget.setCurrentItem(
+            row
+        )
+
+        if kind == PROD_POSE_KIND:
+            item = self.selected_pose()
+            enabled = (
+                item is not None
+                and self.pose_ui_state(item)[u"buttons"][u"rename"]
+            )
+        else:
+            item = self.selected_or_none(
+                kind
+            )
+            enabled = (
+                item is not None
+                and item.get("source") == u"v3"
+                and not self.busy
+            )
+
+        if item is None:
+            return None
+
+        menu = QtGui.QMenu(
+            widget
+        )
+
+        try:
+            action = menu.addAction(
+                "Rename"
+            )
+            action.setEnabled(
+                bool(enabled)
+            )
+            chosen = menu.exec_(
+                widget.viewport().mapToGlobal(
+                    pos
+                )
+            )
+        finally:
+            menu.deleteLater()
+
+        if not enabled or chosen is not action:
+            return None
+
+        if kind == PROD_POSE_KIND:
+            return self.rename_selected_pose()
+
+        return self.rename_kind(
+            kind
+        )
+
+    def prompt_rename(
+        self,
+        current,
+    ):
+        """The Rename dialog: the current name prefilled and selected; Save and Cancel, Cancel the default.
+        Returns the entered text, or None when cancelled (the name rules are the store's)."""
+        dialog = QtGui.QDialog(
+            self
+        )
+        tool_keep_modal_dialog_in_front(
+            dialog
+        )
+
+        try:
+            dialog.setWindowTitle(
+                "Rename"
+            )
+            dialog.setMinimumWidth(380)
+            layout = QtGui.QVBoxLayout(dialog)
+            layout.addWidget(
+                QtGui.QLabel(
+                    "Name:"
+                )
+            )
+            edit = QtGui.QLineEdit(
+                u(current)
+            )
+            edit.selectAll()
+            layout.addWidget(edit)
+            buttons = QtGui.QDialogButtonBox()
+            save_button = buttons.addButton(
+                "Save",
+                QtGui.QDialogButtonBox.AcceptRole,
+            )
+            cancel_button = buttons.addButton(
+                "Cancel",
+                QtGui.QDialogButtonBox.RejectRole,
+            )
+            save_button.clicked.connect(
+                dialog.accept
+            )
+            cancel_button.clicked.connect(
+                dialog.reject
+            )
+            save_button.setAutoDefault(False)
+            cancel_button.setDefault(True)
+            layout.addWidget(buttons)
+            tool_apply_visual_theme(dialog)
+            tool_apply_dialog_font(dialog)
+            edit.setFocus()
+
+            if dialog.exec_() != QtGui.QDialog.Accepted:
+                return None
+
+            return u(
+                edit.text()
+            )
+        finally:
+            dialog.deleteLater()
+
+    def rename_kind(
+        self,
+        kind,
+    ):
+        """Rename the selected Body or Expression preset (prod_rename_preset: the display name only)."""
+        def work():
+            ident = self.current()
+            item = self.selected(
+                kind
+            )
+
+            if item.get(
+                "source"
+            ) != u"v3":
+                raise RuntimeError(
+                    "Legacy presets are read-only. Only current-library presets can be renamed."
+                )
+
+            current_name = prod_item_display_name(
+                item
+            )
+            name_value = self.prompt_rename(
+                current_name
+            )
+
+            if (
+                name_value is None
+                or u(name_value).strip() == u(item["record"].get("name") or u"")
+            ):
+                prod_log_outcome(
+                    u"no-op",
+                    {"reason": u"cancelled" if name_value is None else u"unchanged"},
+                )
+                return None
+
+            # Modal return is an operation boundary.
+            self.operation_revalidate()
+            renamed = prod_rename_preset(
+                ident,
+                item,
+                name_value,
+                phase_callback=self.operation_mark_phase,
+            )
+            prod_log_outcome(
+                u"verified",
+                {"preset_id": renamed.get("preset_id")},
+            )
+
+            source_items = (
+                self.body_items
+                if kind == P03_KIND_BODY
+                else self.expr_items
+            )
+            replaced = False
+
+            for source_item in source_items:
+                if os.path.normcase(
+                    os.path.abspath(
+                        source_item.get(
+                            "path"
+                        )
+                    )
+                ) == os.path.normcase(
+                    os.path.abspath(
+                        item.get(
+                            "path"
+                        )
+                    )
+                ):
+                    source_item[
+                        "record"
+                    ] = renamed
+                    source_item[
+                        "revision"
+                    ] = prod_json_digest(
+                        renamed
+                    )
+                    replaced = True
+                    break
+
+            if not replaced:
+                raise RuntimeError(
+                    "Renamed preset could not be refreshed in the library view."
+                )
+
+            self.refresh_preset_view(
+                kind,
+                u(
+                    renamed.get(
+                        "preset_id"
+                    )
+                ),
+            )
+            self.set_status(
+                u'Renamed to "%s".'
+                % u(
+                    renamed.get(
+                        "name"
+                    )
+                ),
+                u"success",
+            )
+            return renamed
+
+        return self.guard(
+            "Rename Preset",
+            work,
+        )
+
+    def rename_selected_pose(
+        self,
+    ):
+        """Rename the selected own pose (prod_pose_rename: the displayed name and updated_at only; the file,
+        identity, saved parts and Favorite are kept)."""
+        item = self.pose_selection_for_action()
+
+        if item is None:
+            return None
+
+        def work():
+            ident = self.current()
+            reg = prod_pose_load_registry()
+            selected = prod_pose_selected_library(
+                ident
+            )
+            fresh = prod_pose_reread(
+                selected,
+                item,
+                reg,
+            )
+
+            if fresh.get(u"character_key") != selected[u"character_key"]:
+                raise ProdPoseLibraryError(
+                    u"foreign-locked",
+                    PROD_POSE_MESSAGES[u"foreign-locked"],
+                )
+
+            name_value = self.prompt_rename(
+                fresh[u"record"][u"name"]
+            )
+
+            if (
+                name_value is None
+                or u(name_value).strip() == fresh[u"record"][u"name"]
+            ):
+                prod_log_outcome(
+                    u"no-op",
+                    {
+                        "reason": u"cancelled" if name_value is None else u"unchanged",
+                        "kind": PROD_POSE_KIND,
+                    },
+                )
+                return None
+
+            # Modal return is an operation boundary.
+            self.operation_revalidate()
+            renamed = prod_pose_rename(
+                selected,
+                fresh,
+                u(name_value),
+                p03_now_stamp(),
+                reg,
+            )
+            detail = {
+                "kind": PROD_POSE_KIND,
+                "preset_id": renamed[
+                    u"preset_id"
+                ],
+            }
+            self.operation_mark_phase(
+                u"durable-commit",
+                detail,
+            )
+            self.operation_mark_phase(
+                u"durable-verified",
+                detail,
+            )
+            prod_log_outcome(
+                u"verified",
+                detail,
+            )
+            self.refresh_pose_view(
+                select_id=renamed[u"preset_id"]
+            )
+            self.set_status(
+                u'Renamed to "%s".'
+                % renamed[u"name"],
+                u"success",
+            )
+            return renamed
+
+        result = self.guard(
+            "Rename Pose",
+            work,
+        )
+        self.refresh_pose_buttons()
+        return result
 
     def apply_selected_pose(
         self,
@@ -38275,7 +39392,7 @@ class ProdWindow(QtGui.QDialog):
                 <p>Only supported characters and body parts can use saved poses. Use <b>Pose Info</b> to see what a pose includes.</p>
 
                 <h3>Preset controls</h3>
-                <p><b>Save New</b> creates a new preset from the current values. <b>Update Preset</b> overwrites the selected preset with the current values. <b>Add Favorite</b> marks presets for the <b>Favorites only</b> filter. <b>Delete Preset</b> moves the selected preset to Trash.</p>
+                <p><b>Save New</b> creates a new preset from the current values. <b>Update Preset</b> overwrites the selected preset with the current values. <b>Add Favorite</b> marks presets for the <b>Favorites only</b> filter. <b>Delete Preset</b> moves the selected preset to Trash. Right-click a saved preset or pose and choose <b>Rename</b> to change its name.</p>
 
                 <h3>Undo</h3>
                 <p>Use SFM's normal Undo command <b>(Ctrl+Z)</b> to reverse applied Body Presets, Expressions, Poses, and Clothing Fit changes.</p>
@@ -40304,10 +41421,11 @@ PROD_POSE_KIND = u"pose"
 PROD_POSE_REGISTRY_FILENAME = u"cpm_pose_profiles_v1.json"
 PROD_POSE_REGISTRY_SHA256 = u"f445d5ef7fb183e6bcae3099b3812ffd2363213911605134231c2a1f708d6d00"
 PROD_POSE_AUTH_SCHEMA = u"cpm-pose-operation-authorization-v1"
-PROD_POSE_SCENE_LABELS = (u"Apply Pose", u"Save Pose")
+PROD_POSE_SCENE_LABELS = (u"Apply Pose", u"Save Pose", u"Update Pose")
 PROD_POSE_REGISTRY_MODE = u"production"
 PROD_POSE_CHECKING_COPY = u"Checking the applied pose..."
 PROD_POSE_EDITOR_NOTE_COPY = u"You must be in the Motion Editor to apply poses."
+PROD_POSE_REGISTRY_UNAVAILABLE_COPY = u"Pose Library files are missing or damaged. Reinstall Character Preset Manager."
 
 
 class ProdPoseIntegrationError(RuntimeError):

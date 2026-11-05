@@ -49,10 +49,16 @@ STAGE_D_END = u"# === end of F-01 stage D block ==="
 STAGE_B_START = u"# F-01 Pose Library M1, stage B: offline pose library"
 STAGE_B_END = u"# === end of F-01 stage B block ==="
 POSE_METHODS = ["pose_registry_mode", "pose_guard", "apply_pose", "save_pose", "pose_begin_verification",
-                "pose_finish_verification"]
-PAGE_METHODS = ["refresh_pose_view", "selected_pose", "refresh_pose_buttons", "apply_selected_pose"]
+                "pose_finish_verification", "update_pose"]
+PAGE_METHODS = ["refresh_pose_view", "selected_pose", "refresh_pose_buttons", "apply_selected_pose",
+                "pose_selection_for_action", "update_selected_pose", "toggle_pose_favorite", "delete_selected_pose",
+                "rename_selected_pose"]
 SHARED_METHODS = ["operation_default_error_copy", "apply_verification_turn", "apply_finish_verification", "apply_close_pending_verification",
-                  "operation_continuation_owned", "apply_begin_verification", "apply_kind", "guard"]
+                  "operation_continuation_owned", "apply_begin_verification", "apply_kind", "guard", "favorite_keys",
+                  "is_favorite_cached", "rename_kind", "toggle_favorite"]
+LIBRARY_BUTTON_METHODS = ["update_pose", "toggle_pose_favorite", "delete_selected_pose", "confirm_pose_update",
+                          "confirm_pose_trash", "pose_selection_for_action", "update_selected_pose",
+                          "show_rename_menu", "prompt_rename", "rename_kind", "rename_selected_pose"]
 SCENE_WRITE_TOKENS = ("SetKeyValue", "InsertKey", "SetKey(", "StartUndo", "FinishUndo", "AbortUndoableOperation",
                       "SetValue", "RemoveKey", "SetCurrentTime", "SetHeadTime")
 REFUSAL = u"Pose records are handled only by the Pose Library."
@@ -104,7 +110,10 @@ def build(app):
     # Real p02 store helpers and the CPM path helpers used by stage C.
     for name in ("_PROD_PRIVATE_WINDLL", "prod_private_windll", "p02_ensure_dir", "p02_json_text", "p02_unique_temp", "p02_safe_write_json", "prod_paths",
                  "prod_label", "prod_key", "prod_preset_dir", "p03_now_stamp", "prod_apply_deferred_unverified",
-                 "prod_outcome"):
+                 "prod_outcome", "PROD_LIBRARY_META_SCHEMA", "PROD_LIBRARY_META_FILENAME", "P03_TRASH_DIRNAME",
+                 "prod_favorite_key", "prod_load_library_meta", "prod_save_library_meta", "prod_is_favorite",
+                 "prod_set_favorite", "prod_rename_preset", "prod_move_current_preset_to_trash",
+                 "prod_item_display_name", "prod_json_digest", "prod_apply_deferred_verify"):
         if name not in ns:
             route._run_source(app.top_text(name), "app:%s" % name, ns)
     for name in POSE_METHODS + PAGE_METHODS + SHARED_METHODS:
@@ -219,6 +228,19 @@ def section_static(app):
     for m in ("apply_pose", "save_pose"):
         check("C0.%s_runs_through_pose_guard_and_guard" % m, "self.pose_guard(" in app.method_text("ProdWindow", m))
     check("C0.pose_guard_uses_window_guard", "self.guard(" in app.method_text("ProdWindow", "pose_guard"))
+    buttons = u"\n".join(app.method_text("ProdWindow", m) for m in LIBRARY_BUTTON_METHODS)
+    check("C0.library_buttons_have_no_scene_write_or_undo_call",
+          not [t for t in SCENE_WRITE_TOKENS if t in buttons], [t for t in SCENE_WRITE_TOKENS if t in buttons])
+    update = app.method_text("ProdWindow", "update_pose")
+    check("C0.update_pose_uses_pose_guard_save_capture_and_store_update",
+          "self.pose_guard(" in update and "prod_pose_current_time(" in update and "prod_pose_capture(" in update
+          and "prod_pose_update(" in update and "prod_pose_apply" not in update and "self.confirm_pose_update(" in update)
+    check("C0.favorite_and_delete_use_window_guard_and_existing_store",
+          "self.guard(" in app.method_text("ProdWindow", "toggle_pose_favorite")
+          and "prod_set_favorite(" in app.method_text("ProdWindow", "toggle_pose_favorite")
+          and "self.guard(" in app.method_text("ProdWindow", "delete_selected_pose")
+          and "prod_pose_trash(" in app.method_text("ProdWindow", "delete_selected_pose")
+          and "self.confirm_pose_trash(" in app.method_text("ProdWindow", "delete_selected_pose"))
     check("C0.registry_pin_is_the_committed_file",
           app.top_text("PROD_POSE_REGISTRY_SHA256").count(core.sha(core.read(core.REGISTRY_PATH))) == 1)
 
@@ -591,6 +613,505 @@ def section_independent_persistence(ns, Window, reg):
         ns["PROD_INSTANCE_SESSION"] = session
 
 
+def section_library_buttons(ns, app, Window, reg):
+    """Update Pose, Add/Remove Favorite and Delete Pose through the real window methods, CPM's operation lifecycle
+    and the real pose store, CPM Favorite write and Trash on the disposable library. Simulated boundaries: the
+    confirmation dialogs (answered per check), the scene time read and the capture (stage D's, qualified natively
+    through Save New)."""
+    s = w1.twin_scene()
+    w1.fresh_library()
+    win = window(ns, Window, s, s.target)
+    win.library_meta = ns["prod_load_library_meta"](win.identity)
+    item = saved_item(ns, win, reg)
+    asked, times, captures = [], [], []
+    real_time = ns["prod_pose_current_time"]
+    time = {u"t_doc": 50208, u"t_shot": 50208, u"t_chan": 50208}
+    behaviour = {"time": None, "capture": None, "answer": True, "during": None}
+
+    def current_time(identity, authorization, reg_, regions):
+        times.append((authorization[u"operation"], list(regions)))
+        if behaviour["time"] is not None:
+            raise behaviour["time"]
+        return dict(time)
+
+    def capture(identity, authorization, regions, reg_, pinned_time=None):
+        captures.append((authorization[u"operation"], list(regions), pinned_time))
+        if behaviour["capture"] is not None:
+            raise behaviour["capture"]
+        pose = pose_payload(ns, tuple(behaviour.get("regions") or regions))
+        pose[u"source"][u"shot_name"] = u"shot20"   # the character's pose now (differs from the saved one)
+        return ns["prod_pose_roundtrip"](pose)
+
+    def confirm(name, parts):
+        asked.append((name, parts))
+        if behaviour["during"] is not None:
+            behaviour["during"]()
+        return behaviour["answer"]
+    ns["prod_pose_current_time"] = current_time
+    ns["prod_pose_capture"] = capture
+    win.confirm_pose_update = confirm
+    try:
+        raw = core.read(item[u"path"])
+        behaviour["answer"] = False
+        win.update_pose(item)
+        check("C9.update_asks_before_overwriting_and_cancel_changes_nothing",
+              asked == [(u"Arms Up", u"Left arm")] and not captures and core.read(item[u"path"]) == raw
+              and ended(win), (asked, captures))
+        check("C9.update_pins_the_time_before_the_confirmation", times == [(u"Update Pose", [u"left_arm"])], times)
+        behaviour["answer"] = True
+        win.update_pose(item)
+        fresh = own_items(ns, win, reg)
+        check("C9.update_replaces_the_saved_parts_in_the_same_file_and_identity",
+              len(fresh) == 1 and fresh[0][u"path"] == item[u"path"] and fresh[0][u"preset_id"] == item[u"preset_id"]
+              and fresh[0][u"name"] == u"Arms Up" and fresh[0][u"revision"] != item[u"revision"]
+              and fresh[0][u"record"][u"created_at"] == item[u"record"][u"created_at"]
+              and fresh[0][u"record"][u"pose"][u"source"][u"shot_name"] == u"shot20"
+              and sorted(fresh[0][u"record"][u"pose"][u"regions"]) == [u"left_arm"], fresh)
+        check("C9.update_captures_exactly_the_saved_parts_at_the_pinned_time",
+              captures == [(u"Update Pose", [u"left_arm"], time)], captures)
+        check("C9.update_status_and_operation_ended",
+              last_status(win) == (u'"Arms Up" updated (Left arm).', u"success") and ended(win), win.statuses[-1:])
+        current = fresh[0]
+        for name, setting, expected in (
+                ("capture_unreadable", ("capture", ns["ProdPoseError"](u"structure-unsupported", u"x")),
+                 ns["PROD_POSE_MESSAGES"][u"update-refused"] % {u"part": u"Left arm"}),
+                ("time_unreadable", ("time", ns["ProdPoseError"](u"evidence-unreadable", u"x")),
+                 ns["PROD_POSE_MESSAGES"][u"update-refused"] % {u"part": u"Left arm"}),
+                ("stale_time", ("capture", ns["ProdPoseError"](u"stale", ns["PROD_POSE_MESSAGES"][u"stale"])),
+                 ns["PROD_POSE_MESSAGES"][u"stale"])):
+            behaviour[setting[0]] = setting[1]
+            raw = core.read(current[u"path"])
+            win.update_pose(current)
+            behaviour[setting[0]] = None
+            check("C9.update_%s_refused_nothing_changed" % name, core.read(current[u"path"]) == raw
+                  and last_status(win) == (expected, u"error") and ended(win), win.statuses[-1:])
+        both = saved_item(ns, win, reg, name=u"Both", regions=(u"left_arm", u"right_arm"))
+        ns["prod_pose_capture"] = capture   # saved_item installs its own capture fake
+        behaviour["regions"] = (u"left_arm",)
+        raw = core.read(both[u"path"])
+        win.update_pose(both)
+        behaviour["regions"] = None
+        check("C9.update_never_reduces_the_saved_parts", core.read(both[u"path"]) == raw
+              and last_status(win)[1] == u"error" and ended(win), win.statuses[-1:])
+
+        def touch():
+            with open(current[u"path"], "ab") as f:
+                f.write(b"\n")
+        behaviour["during"] = touch
+        del captures[:]
+        win.update_pose(current)
+        behaviour["during"] = None
+        check("C9.update_rereads_the_record_after_the_confirmation",
+              not captures and last_status(win) == (ns["PROD_POSE_MESSAGES"][u"record-changed"], u"error")
+              and ended(win), win.statuses[-1:])
+        current = [i for i in own_items(ns, win, reg) if i[u"name"] == u"Arms Up"][0]
+        win.pose_recovery_blocked = True
+        del asked[:]
+        win.update_pose(current)
+        win.pose_recovery_blocked = False
+        check("C9.update_refused_while_pose_changes_are_paused", not asked
+              and last_status(win) == (ns["PROD_POSE_MESSAGES"][u"blocked-after-recovery"], u"error"))
+    finally:
+        ns["prod_pose_current_time"] = real_time
+        restore_stubs(ns, app)
+    # Favorite: CPM's library.json, the pose:<id> key, every other entry kept.
+    meta_path = ns["prod_paths"](win.identity)["library_meta"]
+    ns["prod_save_library_meta"](win.identity, {"schema_version": 1, "record_kind": u"library-metadata",
+                                                "favorites": [u"body:keep-me"]})
+    win.library_meta = ns["prod_load_library_meta"](win.identity)
+    win.pose_selection_for_action = lambda: current
+    win.toggle_pose_favorite()
+    key = u"pose:%s" % current[u"preset_id"]
+    on_disk = ns["prod_load_library_meta"](win.identity)[u"favorites"]
+    check("C10.add_favorite_writes_the_pose_key_and_keeps_other_favorites",
+          on_disk == sorted([u"body:keep-me", key]) and key in win.favorite_keys()
+          and last_status(win) == (u"Added to Favorites.", u"success") and ended(win), (on_disk, win.statuses[-1:]))
+    check("C10.the_pose_store_reads_the_same_favorite",
+          ns["prod_pose_is_favorite"](ns["prod_paths"](win.identity)["char"], current[u"preset_id"]))
+    win.toggle_pose_favorite()
+    check("C10.remove_favorite", ns["prod_load_library_meta"](win.identity)[u"favorites"] == [u"body:keep-me"]
+          and last_status(win) == (u"Removed from Favorites.", u"success") and ended(win), win.statuses[-1:])
+    raw_meta = core.read(meta_path)
+    stale = dict(current, revision=u"0" * 64)
+    win.pose_selection_for_action = lambda: stale
+    win.toggle_pose_favorite()
+    check("C10.favorite_of_a_changed_record_refused", core.read(meta_path) == raw_meta
+          and last_status(win)[1] == u"error" and ended(win), win.statuses[-1:])
+    # Delete Pose: confirmation, the library Trash, the Favorite removed.
+    win.pose_selection_for_action = lambda: current
+    win.toggle_pose_favorite()
+    trash = os.path.join(w1.Library.root, u"Trash")
+    shown = []
+    win.confirm_pose_trash = lambda name, path: (shown.append((name, path)), False)[1]
+    raw = core.read(current[u"path"])
+    win.delete_selected_pose()
+    check("C11.delete_asks_with_the_trash_location_and_cancel_keeps_the_pose",
+          shown == [(u"Arms Up", trash)] and core.read(current[u"path"]) == raw and ended(win), shown)
+    win.pose_selection_for_action = lambda: stale
+    win.confirm_pose_trash = lambda name, path: True
+    win.delete_selected_pose()
+    check("C11.delete_of_a_changed_record_refused", os.path.isfile(current[u"path"])
+          and last_status(win)[1] == u"error" and ended(win), win.statuses[-1:])
+    win.pose_selection_for_action = lambda: current
+    stamp = ns["p03_now_stamp"]
+    ns["p03_now_stamp"] = lambda: u"20261104-120000-000000"   # CPM's stamp format (the W1 fixture pins an ISO time)
+    try:
+        win.delete_selected_pose()
+    finally:
+        ns["p03_now_stamp"] = stamp
+    moved = [os.path.join(trash, n) for n in os.listdir(trash)] if os.path.isdir(trash) else []
+    check("C11.delete_moves_the_file_to_the_library_trash_unchanged",
+          not os.path.lexists(current[u"path"]) and len(moved) == 1 and core.read(moved[0]) == raw
+          and os.path.basename(moved[0]).endswith(os.path.basename(current[u"path"])), moved)
+    check("C11.delete_removes_the_pose_favorite_and_keeps_the_others",
+          ns["prod_load_library_meta"](win.identity)[u"favorites"] == [u"body:keep-me"]
+          and win.favorite_keys() == set([u"body:keep-me"]))
+    check("C11.delete_status_and_operation_ended",
+          last_status(win) == (u"Pose moved to Trash.", u"success") and ended(win), win.statuses[-1:])
+    check("C11.other_poses_untouched", [i[u"name"] for i in own_items(ns, win, reg)] == [u"Both"])
+
+
+def tree_bytes(root):
+    out = {}
+    for d, _, fs in os.walk(root):
+        for f in fs:
+            p = os.path.join(d, f)
+            out[os.path.relpath(p, root)] = core.read(p)
+    return out
+
+
+def set_flex(inst, literal, value, plain=False):
+    control = [c for c in inst.controls if c._name == literal][0]
+    if plain:
+        control.put("value", value)   # an ordinary flex: the stored value follows the key
+    control.raw("channel").log.layers[0].keys[0][1] = value
+    control.raw("channel").raw("toElement").put("flexWeight", value)
+
+
+def expression_scope(ns, win):
+    """The W1 scope with zz_brow classified as an Expression control (the simulated provider's choice)."""
+    scope = w1.make_scope(ns, win.identity, win.selection_token)
+    brow = dict((k, v) for k, v in scope["body"].items() if u"zz_brow" in _TEXT(k))
+    scope["expression"] = brow
+    scope["body"] = dict((k, v) for k, v in scope["body"].items() if k not in brow)
+    return scope
+
+
+def section_rename_presets(ns, Window, reg):
+    """Rename on Body Presets and Expressions through the real window operation (ProdWindow.rename_kind, the CPM
+    lifecycle) and the real store (prod_rename_preset) on a disposable library; then Apply, Update, Favorite and
+    Delete on the renamed preset through the real store paths. Simulated boundary: the Rename dialog's answer."""
+    for kind in (u"body", u"expression"):
+        # Expressions use ordinary (plain) flexes: CPM admits static-play flex channels for Body only (M-06).
+        plain = kind == u"expression"
+        s = w1.twin_scene(plain=plain)
+        w1.fresh_library()
+        win = window(ns, Window, s, s.target)
+        win.library_meta = ns["prod_load_library_meta"](win.identity)
+        scope = w1.make_scope(ns, win.identity, win.selection_token) if kind == u"body" else expression_scope(ns, win)
+        win.scope = scope
+
+        def save(name):
+            ctx = w1.begin(win)
+            try:
+                path = ns["prod_save"](win.identity, kind, name, scope=scope, operation_context=ctx)
+            finally:
+                w1.end(win)
+            rec = ns["p02_read_json"](path)
+            return {"path": path, "record": rec, "source": u"v3", "revision": ns["prod_json_digest"](rec)}
+        alpha = save(u"Alpha")
+        beta = save(u"Beta")
+        # The window's library cache, as refresh_preset_view publishes it (W1's window stubs the list widgets).
+        win.body_items, win.expr_items = ([alpha, beta], []) if kind == u"body" else ([], [alpha, beta])
+        ns["prod_set_favorite"](win.identity, alpha["record"], True)
+        win.library_meta = ns["prod_load_library_meta"](win.identity)
+        root = w1.Library.root
+        before = tree_bytes(root)
+        asked = []
+        answer = {"value": u"Gamma", "during": None}
+
+        def prompt(current):
+            asked.append(current)
+            if answer["during"] is not None:
+                answer["during"]()
+            return answer["value"]
+        win.prompt_rename = prompt
+        win.selected_item = alpha
+        win.rename_kind(kind)
+        after = tree_bytes(root)
+        renamed = ns["p02_read_json"](alpha["path"])
+        expected = dict(alpha["record"], name=u"Gamma")
+        tag = "R1[%s]" % kind
+        check("%s.rename_prefills_the_current_name" % tag, asked == [u"Alpha"], asked)
+        check("%s.rename_changes_only_the_name_in_the_same_file" % tag, renamed == expected
+              and os.path.basename(alpha["path"]).startswith(u"Alpha--"), sorted(set(renamed) ^ set(expected)))
+        rel = os.path.relpath(alpha["path"], root)
+        check("%s.rename_touches_no_other_library_file_and_keeps_cpm_backup" % tag,
+              sorted(set(after) - set(before)) == [rel + ".bak"] and after[rel + ".bak"] == before[rel]
+              and not set(before) - set(after) and [k for k in before if after[k] != before[k]] == [rel],
+              (sorted(set(after) ^ set(before)), [k for k in before if k in after and after[k] != before[k]]))
+        check("%s.identity_values_dates_kept" % tag,
+              renamed["preset_id"] == alpha["record"]["preset_id"] and renamed["values"] == alpha["record"]["values"]
+              and renamed.get("created_at") == alpha["record"].get("created_at")
+              and renamed.get("modified_at") == alpha["record"].get("modified_at"))
+        check("%s.favorite_kept" % tag, ns["prod_is_favorite"](win.identity, renamed)
+              and win.is_favorite_cached(renamed))
+        listed = ns["prod_discover"](win.identity, kind)
+        check("%s.discovered_sorted_by_new_name_with_same_identity" % tag,
+              [(i["record"]["name"], i["record"]["preset_id"]) for i in listed] ==
+              [(u"Beta", beta["record"]["preset_id"]), (u"Gamma", alpha["record"]["preset_id"])], listed)
+        cache = win.body_items if kind == u"body" else win.expr_items
+        check("%s.window_library_cache_updated_with_new_revision" % tag,
+              cache[0]["record"] == renamed and cache[0]["revision"] == ns["prod_json_digest"](renamed))
+        check("%s.status_and_operation_ended" % tag,
+              last_status(win) == (u'Renamed to "Gamma".', u"success") and ended(win), win.statuses[-1:])
+        item = [i for i in listed if i["record"]["name"] == u"Gamma"][0]
+        # Apply uses the original saved values.
+        literal = u"zz_smile" if kind == u"body" else u"zz_brow"
+        saved_value = item["record"]["values"][u"flex." + literal]["mono"]
+        set_flex(s.target, literal, 0.77, plain)
+        ctx = w1.begin(win, u"Apply Body Preset" if kind == u"body" else u"Apply Expression")
+        try:
+            result = ns["prod_apply"](win.identity, item["record"], scope=scope, operation_context=ctx)
+            exc = None
+        except Exception as e:
+            result, exc = None, e
+        finally:
+            w1.end(win)
+        w1.run_events(s)
+        pending = (result or {}).get("pending")
+        out = ns["prod_apply_deferred_verify"](pending) if pending else result
+        check("%s.apply_of_the_renamed_preset_restores_its_saved_values" % tag,
+              exc is None and w1.close(w1.flex_value(s.target, literal)["key"], saved_value)
+              and (out or {}).get("phase") in (u"committed-verified", None) , (exc, out, w1.flex_value(s.target, literal)))
+        # Update operates on the renamed preset and keeps its name and identity.
+        set_flex(s.target, literal, 0.41, plain)
+        ctx = w1.begin(win, u"Update Preset")
+        try:
+            ns["prod_update_preset"](win.identity, item, scope=scope, operation_context=ctx)
+            exc = None
+        except Exception as e:
+            exc = e
+        finally:
+            w1.end(win)
+        updated = ns["p02_read_json"](item["path"])
+        check("%s.update_writes_the_renamed_preset" % tag, exc is None and updated["name"] == u"Gamma"
+              and updated["preset_id"] == alpha["record"]["preset_id"]
+              and w1.close(updated["values"][u"flex." + literal]["mono"], 0.41), exc)
+        item = [i for i in ns["prod_discover"](win.identity, kind) if i["record"]["name"] == u"Gamma"][0]
+        # Favorite: removed and added again through the window operation.
+        win.selected_item = item
+        win.toggle_favorite(kind)
+        off = ns["prod_is_favorite"](win.identity, item["record"])
+        win.toggle_favorite(kind)
+        on = ns["prod_is_favorite"](win.identity, item["record"])
+        check("%s.favorite_removed_and_added_on_the_renamed_preset" % tag, not off and on and ended(win),
+              win.statuses[-2:])
+        # Refusals: cancel, unchanged, blank, duplicate (case-insensitive), changed or removed during the dialog,
+        # legacy read-only. Each leaves the library unchanged.
+        cases = [("cancel", None, None, None), ("unchanged", u"Gamma", None, None),
+                 ("blank", u"   ", None, u"Preset name cannot be blank."),
+                 ("duplicate", u"beta", None, u"already exists. Choose a different name.")]
+        for name, value, during, text in cases:
+            before = tree_bytes(root)
+            n = len(win.statuses)
+            answer.update(value=value, during=during)
+            win.selected_item = item
+            win.rename_kind(kind)
+            new = win.statuses[n:]
+            ok = tree_bytes(root) == before and ended(win)
+            if text is None:
+                ok = ok and not new
+            else:
+                ok = ok and len(new) == 1 and new[0][1] == u"error" and text in new[0][0]
+            check("%s.%s_leaves_the_preset_unchanged" % (tag, name), ok, new)
+
+        def edit_elsewhere():
+            rec = ns["p02_read_json"](item["path"])
+            rec["name"] = u"Edited Elsewhere"
+            ns["p02_safe_write_json"](item["path"], rec)
+        answer.update(value=u"Delta", during=edit_elsewhere)
+        win.selected_item = item
+        win.rename_kind(kind)
+        check("%s.record_changed_during_the_dialog_refused" % tag,
+              ns["p02_read_json"](item["path"])["name"] == u"Edited Elsewhere" and last_status(win)[1] == u"error"
+              and u"changed on disk" in last_status(win)[0] and ended(win), win.statuses[-1:])
+        item = [i for i in ns["prod_discover"](win.identity, kind) if i["record"]["name"] == u"Edited Elsewhere"][0]
+        legacy = dict(item, source=u"legacy-v2")
+        raw = core.read(item["path"])
+        answer.update(value=u"Delta", during=None)
+        win.selected_item = legacy
+        win.rename_kind(kind)
+        check("%s.legacy_read_only_preset_refused" % tag, core.read(item["path"]) == raw
+              and last_status(win)[1] == u"error" and u"read-only" in last_status(win)[0], win.statuses[-1:])
+        # Delete operates on the renamed preset with its Trash safeguards (and removes its Favorite).
+        answer.update(value=u"Omega", during=None)
+        win.selected_item = item
+        win.rename_kind(kind)
+        item = [i for i in ns["prod_discover"](win.identity, kind) if i["record"]["name"] == u"Omega"][0]
+        raw = core.read(item["path"])
+        stamp = ns["p03_now_stamp"]
+        ns["p03_now_stamp"] = lambda: u"20261104-130000-000000"   # CPM's stamp format (W1 pins an ISO time)
+        try:
+            target = ns["prod_move_current_preset_to_trash"](win.identity, item)
+        finally:
+            ns["p03_now_stamp"] = stamp
+        check("%s.delete_moves_the_renamed_preset_to_trash_unchanged" % tag,
+              not os.path.exists(item["path"]) and core.read(target) == raw
+              and os.path.dirname(target) == os.path.join(root, u"Trash")
+              and not ns["prod_is_favorite"](win.identity, item["record"]), target)
+        check("%s.other_preset_untouched" % tag,
+              [i["record"]["name"] for i in ns["prod_discover"](win.identity, kind)] == [u"Beta"])
+
+        def remove_during():
+            os.remove(beta["path"])
+        answer.update(value=u"Zeta", during=remove_during)
+        win.selected_item = beta
+        win.rename_kind(kind)
+        check("%s.record_removed_during_the_dialog_refused" % tag,
+              not os.path.exists(beta["path"]) and not ns["prod_discover"](win.identity, kind)
+              and last_status(win)[1] == u"error" and ended(win), win.statuses[-1:])
+
+
+def section_rename_poses(ns, app, Window, reg):
+    """Rename on Poses through the real window operation and the real store (prod_pose_rename); then Apply,
+    Update, Favorite and Delete on the renamed pose through the real window operations."""
+    s = w1.twin_scene()
+    w1.fresh_library()
+    win = window(ns, Window, s, s.target)
+    win.library_meta = ns["prod_load_library_meta"](win.identity)
+    pose = saved_item(ns, win, reg, name=u"Arms Up")
+    other = saved_item(ns, win, reg, name=u"Wave")
+    win.pose_selection_for_action = lambda: pose
+    win.toggle_pose_favorite()
+    pose = [i for i in own_items(ns, win, reg) if i[u"name"] == u"Arms Up"][0]
+    root = w1.Library.root
+    before = tree_bytes(root)
+    asked = []
+    answer = {"value": u"Reach", "during": None}
+
+    def prompt(current):
+        asked.append(current)
+        if answer["during"] is not None:
+            answer["during"]()
+        return answer["value"]
+    win.prompt_rename = prompt
+    win.rename_selected_pose()
+    after = tree_bytes(root)
+    renamed = [i for i in own_items(ns, win, reg) if i[u"preset_id"] == pose[u"preset_id"]]
+    rec = renamed[0][u"record"] if renamed else {}
+    check("R2[pose].rename_prefills_the_current_name", asked == [u"Arms Up"], asked)
+    check("R2[pose].rename_changes_only_the_name_and_updated_at_in_the_same_file",
+          len(renamed) == 1 and renamed[0][u"path"] == pose[u"path"] and rec[u"name"] == u"Reach"
+          and dict(rec, name=None, updated_at=None) == dict(pose[u"record"], name=None, updated_at=None), rec)
+    check("R2[pose].identity_saved_parts_and_creation_kept",
+          rec.get(u"preset_id") == pose[u"preset_id"] and rec.get(u"pose") == pose[u"record"][u"pose"]
+          and rec.get(u"payload_sha256") == pose[u"record"][u"payload_sha256"]
+          and rec.get(u"created_at") == pose[u"record"][u"created_at"])
+    rel = os.path.relpath(pose[u"path"], root)
+    check("R2[pose].rename_touches_no_other_library_file_and_keeps_cpm_backup",
+          sorted(set(after) - set(before)) == [rel + ".bak"] and after[rel + ".bak"] == before[rel]
+          and not set(before) - set(after) and [k for k in before if after[k] != before[k]] == [rel],
+          (sorted(set(after) ^ set(before)), [k for k in before if k in after and after[k] != before[k]]))
+    check("R2[pose].favorite_kept", ns["prod_pose_is_favorite"](ns["prod_paths"](win.identity)["char"],
+                                                                 pose[u"preset_id"]) and win.is_favorite_cached(rec))
+    check("R2[pose].discovered_sorted_with_same_identity",
+          sorted((i[u"name"], i[u"preset_id"]) for i in own_items(ns, win, reg)) ==
+          [(u"Reach", pose[u"preset_id"]), (u"Wave", other[u"preset_id"])])
+    check("R2[pose].status_and_operation_ended",
+          last_status(win) == (u'Renamed to "Reach".', u"success") and ended(win), win.statuses[-1:])
+    item = renamed[0]
+    # Apply: the renamed record, its original saved parts, through the real Apply entry (scene path recorded).
+    install_fakes(ns, verify_phase=u"committed-verified")
+    win.apply_pose(item)
+    m05.Timer.run_all()
+    applied = Fakes.applies[0] if Fakes.applies else (None, {}, {})
+    check("R2[pose].apply_uses_the_renamed_record_and_its_saved_values",
+          len(Fakes.applies) == 1 and applied[2][u"record"][u"pose"] == pose[u"record"][u"pose"]
+          and applied[1][u"record"][u"preset_id"] == pose[u"preset_id"] and applied[1][u"record"][u"name"] == u"Reach"
+          and last_status(win) == (u"Pose applied: Reach (Left arm).", u"success") and ended(win), win.statuses[-1:])
+    # Update: the renamed pose, same file and identity, name kept.
+    real_time = ns["prod_pose_current_time"]
+    ns["prod_pose_current_time"] = lambda identity, authorization, reg_, regions: {u"t_doc": 1, u"t_shot": 1,
+                                                                                    u"t_chan": 1}
+    win.confirm_pose_update = lambda name, parts: True
+    try:
+        win.update_pose(item)
+    finally:
+        ns["prod_pose_current_time"] = real_time
+        restore_stubs(ns, app)
+    fresh = [i for i in own_items(ns, win, reg) if i[u"preset_id"] == pose[u"preset_id"]]
+    check("R2[pose].update_writes_the_renamed_pose",
+          len(fresh) == 1 and fresh[0][u"path"] == pose[u"path"] and fresh[0][u"name"] == u"Reach"
+          and last_status(win) == (u'"Reach" updated (Left arm).', u"success") and ended(win), win.statuses[-1:])
+    item = fresh[0]
+    # Favorite removed and added on the renamed pose.
+    win.pose_selection_for_action = lambda: item
+    win.toggle_pose_favorite()
+    off = ns["prod_pose_is_favorite"](ns["prod_paths"](win.identity)["char"], pose[u"preset_id"])
+    item = [i for i in own_items(ns, win, reg) if i[u"preset_id"] == pose[u"preset_id"]][0]
+    win.pose_selection_for_action = lambda: item
+    win.toggle_pose_favorite()
+    on = ns["prod_pose_is_favorite"](ns["prod_paths"](win.identity)["char"], pose[u"preset_id"])
+    check("R2[pose].favorite_removed_and_added_on_the_renamed_pose", not off and on and ended(win),
+          win.statuses[-2:])
+    # Refusals.
+    long_name = u"x" * (ns["PROD_POSE_NAME_MAX"] + 1)
+    for name, value, text in (("cancel", None, None), ("unchanged", u"Reach", None),
+                              ("blank", u"  ", u"Enter a name for the pose."),
+                              ("too_long", long_name, u"too long"),
+                              ("duplicate", u"WAVE", u'A pose named "WAVE" already exists for this character.')):
+        before = tree_bytes(root)
+        n = len(win.statuses)
+        answer.update(value=value, during=None)
+        win.pose_selection_for_action = lambda: item
+        win.rename_selected_pose()
+        new = win.statuses[n:]
+        ok = tree_bytes(root) == before and ended(win)
+        ok = ok and (not new if text is None else len(new) == 1 and new[0][1] == u"error" and text in new[0][0])
+        check("R2[pose].%s_leaves_the_pose_unchanged" % name, ok, new)
+
+    def touch():
+        with open(item[u"path"], "ab") as f:
+            f.write(b"\n")
+    answer.update(value=u"Delta", during=touch)
+    win.pose_selection_for_action = lambda: item
+    raw_before = core.read(item[u"path"])
+    win.rename_selected_pose()
+    check("R2[pose].record_changed_during_the_dialog_refused",
+          core.read(item[u"path"]) == raw_before + b"\n"
+          and last_status(win) == (ns["PROD_POSE_MESSAGES"][u"record-changed"], u"error") and ended(win),
+          win.statuses[-1:])
+    item = [i for i in own_items(ns, win, reg) if i[u"preset_id"] == pose[u"preset_id"]][0]
+    other_item = [i for i in own_items(ns, win, reg) if i[u"name"] == u"Wave"][0]
+
+    def remove_during():
+        os.remove(other_item[u"path"])
+    answer.update(value=u"Zeta", during=remove_during)
+    win.pose_selection_for_action = lambda: other_item
+    win.rename_selected_pose()
+    check("R2[pose].record_removed_during_the_dialog_refused",
+          [i[u"name"] for i in own_items(ns, win, reg)] == [u"Reach"]
+          and last_status(win) == (ns["PROD_POSE_MESSAGES"][u"record-changed"], u"error") and ended(win),
+          win.statuses[-1:])
+    # Delete the renamed pose: confirmation, library Trash, Favorite removed.
+    win.pose_selection_for_action = lambda: item
+    win.confirm_pose_trash = lambda name, path: True
+    stamp = ns["p03_now_stamp"]
+    ns["p03_now_stamp"] = lambda: u"20261104-130000-000000"
+    raw = core.read(item[u"path"])
+    try:
+        win.delete_selected_pose()
+    finally:
+        ns["p03_now_stamp"] = stamp
+    trash = os.path.join(root, u"Trash")
+    moved = [os.path.join(trash, n) for n in os.listdir(trash)] if os.path.isdir(trash) else []
+    check("R2[pose].delete_moves_the_renamed_pose_to_trash_unchanged",
+          not own_items(ns, win, reg) and len(moved) == 1 and core.read(moved[0]) == raw
+          and not ns["prod_pose_is_favorite"](ns["prod_paths"](win.identity)["char"], pose[u"preset_id"])
+          and last_status(win) == (u"Pose moved to Trash.", u"success") and ended(win), (moved, win.statuses[-1:]))
+
+
 def section_foreign(ns, Window, reg):
     s = w1.twin_scene()
     w1.fresh_library()
@@ -655,7 +1176,10 @@ def main():
                           ("apply", lambda: section_apply(ns, app, Window, reg)),
                           ("recovery", lambda: section_recovery(ns, Window, reg)),
                           ("independent_persistence", lambda: section_independent_persistence(ns, Window, reg)),
-                          ("foreign", lambda: section_foreign(ns, Window, reg))):
+                          ("foreign", lambda: section_foreign(ns, Window, reg)),
+                          ("library_buttons", lambda: section_library_buttons(ns, app, Window, reg)),
+                          ("rename_presets", lambda: section_rename_presets(ns, Window, reg)),
+                          ("rename_poses", lambda: section_rename_poses(ns, app, Window, reg))):
             run_section(label, fn)
     finally:
         shutil.rmtree(mainmenu, True)

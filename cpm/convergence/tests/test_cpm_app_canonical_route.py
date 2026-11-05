@@ -326,6 +326,7 @@ F01_STAGEC_NEW_TOP = set([
     "PROD_POSE_AUTH_SCHEMA", "PROD_POSE_CHECKING_COPY", "PROD_POSE_KIND", "PROD_POSE_REGISTRY_FILENAME",
     "PROD_POSE_REGISTRY_MODE", "PROD_POSE_REGISTRY_SHA256", "PROD_POSE_SCENE_LABELS", "ProdPoseIntegrationError",
     "PROD_POSE_EDITOR_NOTE_COPY",  # F-01 UI consistency pass: the Poses page's one line above the list
+    "PROD_POSE_REGISTRY_UNAVAILABLE_COPY",  # F-01 UI completion: the list message for missing/damaged profiles
     "prod_pose_authorize", "prod_pose_context_gate", "prod_pose_deferred_verify", "prod_pose_load_registry",
     "prod_pose_registry_path", "prod_pose_reread", "prod_pose_selected_library",
 ])
@@ -365,8 +366,13 @@ F01_STAGED_NEW_METHODS = set(["refresh_pose_view", "selected_pose", "refresh_pos
 # F-01 UI consistency pass: the application name (TOOL_NAME; the diagnostic log keeps its product literal), Help's
 # preferred height, and the Poses page's state, list-message row and read-only Pose Info.
 F01_UI_CHANGED_TOP = set(["TOOL_NAME", "StartCharacterSliderPresetTool"])
-F01_UI_NEW_TOP = set(["tool_help_preferred_height"])
-F01_UI_NEW_METHODS = set(["pose_ui_state", "set_pose_list_message", "open_pose_info"])
+F01_UI_NEW_TOP = set(["tool_help_preferred_height", "prod_rename_preset"])
+F01_UI_NEW_METHODS = set(["pose_ui_state", "set_pose_list_message", "open_pose_info",
+                          # The Poses six-button layout: Update Pose, Add/Remove Favorite and Delete Pose handlers.
+                          "pose_selection_for_action", "update_selected_pose", "confirm_pose_update", "update_pose",
+                          "toggle_pose_favorite", "confirm_pose_trash", "delete_selected_pose",
+                          # Rename (list context menu) on Body Presets, Expressions and Poses.
+                          "show_rename_menu", "prompt_rename", "rename_kind", "rename_selected_pose"])
 EXPECTED_CHANGED_TOP = (STEP2B_CHANGED_TOP | STEP3_CHANGED_TOP | STEP4_CHANGED_TOP | R14_CHANGED_TOP
                         | R15_CHANGED_TOP | ITEM6_CHANGED_TOP | ITEM7_CHANGED_TOP | UIPASS_CHANGED_TOP
                         | LOGFIX_CHANGED_TOP | M05_CHANGED_TOP | M06_CHANGED_TOP | M06W1_CHANGED_TOP
