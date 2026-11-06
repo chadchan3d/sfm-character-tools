@@ -990,6 +990,173 @@ def section_window(app, ns, reg, fx, root):
         ns["PROD_POSE_REGISTRY_MODE"] = mode
 
 
+
+# ---------------------------------------------------------------------------
+# Astra S1 corrections: the reviewer's counterexamples (X.1 ... X.12)
+# ---------------------------------------------------------------------------
+
+def foreign_channel(world, log, name=u"foreign_channel"):
+    """An unrelated channel in another channels clip of the shot, reading the given log."""
+    clip = FB.Clip(world, world.new_handle(), "DmeChannelsClip", "Other", offset=0, start=0, end=10 ** 7,
+                   channels=FB.ElementArray(world, []))
+    track = world.shot.attrs["trackGroups"].items[0].attrs["tracks"].items[0]
+    track.attrs["children"].items.append(clip)
+    target = FB.Element(world, world.new_handle(), "DmeTransform", "other", position=FB.Vector())
+    ch = FB.Channel(world, world.new_handle(), "DmeChannel", name, fromElement=None, fromAttribute=u"",
+                    toElement=target, toAttribute=u"position", mode=3, fromIndex=0, toIndex=0, log=log)
+    clip.attrs["channels"].items.append(ch)
+    return ch
+
+
+def external_constraint(world, bone=u"bip_tail05"):
+    """An orient constraint in another animation set of the shot, driving one of Krystal's bones."""
+    prop_t = FB.Element(world, world.new_handle(), "DmeTransform", "prop", position=FB.Vector(),
+                        orientation=FB.Quaternion())
+    prop = FB.Dag(world, world.new_handle(), "DmeDag", "prop", prop_t)
+    slave = FB.Element(world, world.new_handle(), "DmeConstraintSlave", "unnamed", target=world.bone_dag[bone],
+                       position=FB.Vector(), orientation=FB.Quaternion())
+    target = FB.Element(world, world.new_handle(), "DmeConstraintTarget", "prop", target=prop, targetWeight=1.0)
+    op = FB.Element(world, world.new_handle(), "DmeRigOrientConstraintOperator", "orientConstraint_prop",
+                    slave=slave, targets=FB.ElementArray(world, [target]))
+    other = FB.Element(world, world.new_handle(), "DmeAnimationSet", "Prop", operators=FB.ElementArray(world, [op]),
+                       controls=FB.ElementArray(world, []))
+    world.shot.attrs["animationSets"].items.append(other)
+    return op
+
+
+def posed_destination(ns, fx, prepare=None):
+    world = FB.World(fx[u"shot13"])
+    pose_differently(world)
+    if prepare is not None:
+        prepare(world)
+    use_world(ns, world)
+    return world
+
+
+def transform_state(world):
+    return dict((n, (FB.plain(d.attrs["transform"].attrs["position"]), FB.plain(d.attrs["transform"].attrs[
+        "orientation"]))) for n, d in list(world.bone_dag.items()) + list(world.handle_dag.items()))
+
+
+def no_mutation(world):
+    return not scene_writes(world) and not world.dm.calls
+
+
+def section_corrections(app, ns, reg, fx, item, lib):
+    apply_ = lambda world: outcome(lambda: ns["prod_body_apply"](  # noqa: E731
+        IDENTITY, authorize(ns, reg, u"Apply Pose", item), item, reg))
+
+    # X.1 shared log or layer
+    world = posed_destination(ns, fx, lambda w: foreign_channel(w, w.channels[u"Hip_o"].attrs["log"]))
+    got = apply_(world)
+    refused("X.1a_unrelated_channel_sharing_a_planned_log_refuses", got, u"shared-authority")
+    check("X.1a_no_mutation", no_mutation(world))
+
+    def shared_layer(w):
+        layer = w.channels[u"bip_tail05_o"].attrs["log"].layer
+        foreign_channel(w, FB.Log(w, w.new_handle(), "DmeQuaternionLog", layer))
+    world = posed_destination(ns, fx, shared_layer)
+    got = apply_(world)
+    refused("X.1b_unrelated_log_sharing_a_planned_layer_refuses", got, u"shared-authority")
+    check("X.1b_no_mutation", no_mutation(world))
+    # X.2 external constraint
+    world = posed_destination(ns, fx, lambda w: external_constraint(w))
+    got = apply_(world)
+    refused("X.2_constraint_outside_the_animation_set_refuses", got, u"shared-authority")
+    check("X.2_no_mutation", no_mutation(world))
+    world = posed_destination(ns, fx, lambda w: external_constraint(w, u"bip_pelvis"))
+    refused("X.2b_external_constraint_on_a_constrained_bone_refuses", apply_(world), u"shared-authority")
+    # X.3 a newly conflicting authority after commit prevents verified success
+    for label, conflict in ((u"shared_log", lambda w: foreign_channel(w, w.channels[u"Hip_o"].attrs["log"])),
+                            (u"external_constraint", lambda w: external_constraint(w))):
+        world = posed_destination(ns, fx)
+        auth = authorize(ns, reg, u"Apply Pose", item)
+        result = ns["prod_body_apply"](IDENTITY, auth, item, reg)
+        calls = list(world.dm.calls)
+        conflict(world)
+        verdict = ns["prod_pose_deferred_verify"](dict(result[u"pending"], authorization=auth))
+        check("X.3_%s_after_commit_is_committed_unverified" % label,
+              verdict.get(u"phase") == u"committed-unverified" and world.dm.calls == calls and
+              len(world.dm.stack) == 1, (verdict, world.dm.calls[len(calls):]))
+    # X.4 a one-float32-step evaluated FK change between P1 and P2 refuses (keys unchanged)
+    world = posed_destination(ns, fx)
+    original = ns["prod_body_preflight"]
+
+    def preflight_then_nudge(*args):
+        pre = original(*args)
+        t = world.bone_dag[u"bip_tail05"].attrs["transform"]
+        v = FB.plain(t.attrs["position"])
+        t.set("position", FB.Vector(v[0], next_f32(v[1]), v[2]))
+        return pre
+    ns["prod_body_preflight"] = preflight_then_nudge
+    try:
+        got = apply_(world)
+    finally:
+        ns["prod_body_preflight"] = original
+    refused("X.4_one_ulp_fk_position_change_between_p1_and_p2_refuses", got, u"stale")
+    check("X.4_no_mutation_and_a_logged_a1_recheck", no_mutation(world) and any(
+        u"evaluated state refused: fk-position" in l for l in ns["LOG"][-5:]))
+    # X.5 effective-position or channel-evaluation inconsistency refuses at P1
+    for name, attr in ((u"Hip", "position"), (u"Hip", "orientation"), (u"bip_tail06", "position")):
+        def skew(w, name=name, attr=attr):
+            dag = w.handle_dag.get(name) or w.bone_dag[name]
+            t = dag.attrs["transform"]
+            v = FB.plain(t.attrs[attr])
+            t.set(attr, FB.Vector(v[0] + 0.25, v[1], v[2]) if attr == "position" else
+                  FB.Quaternion(*rotate(v, [0.0, 0.0, 1.0], 5.0)))
+        world = FB.World(fx[u"shot13"])
+        pose_differently(world)
+        skew(world)                                   # after evaluation: the transform no longer matches its channel
+        use_world(ns, world)
+        got = apply_(world)
+        check("X.5_%s_%s_inconsistent_with_its_channel_refuses" % (name, attr), got[0] != "ok" and
+              got[1] in (u"evidence-unreadable", u"fk-position") and no_mutation(world), got)
+    # X.10 a late-operation Abort restores the complete baseline (keys and evaluated transforms)
+    last = sorted(n for n, r in ns["prod_body_classify"](fx[u"shot13"], profile_of(ns, reg))[u"channels"].items()
+                  if r in (u"handle-written", u"fk-written"))[-1]
+    world = posed_destination(ns, fx)
+    keys0, transforms0 = all_keys(world), transform_state(world)
+    world.fail_on_write = last
+    got = apply_(world)
+    check("X.10_late_abort_restores_keys_transforms_and_undo", got[0] == "ok" and
+          got[1][u"phase"] == u"not-applied" and all_keys(world) == keys0 and transform_state(world) == transforms0
+          and not world.dm.stack and world.dm.current is None, got)
+    # X.11 bindings are resolved once per comparison phase
+    counter = []
+    real = ns["prod_body_bindings"]
+    ns["prod_body_bindings"] = lambda *a: counter.append(1) or real(*a)
+    try:
+        world = posed_destination(ns, fx)
+        auth = authorize(ns, reg, u"Apply Pose", item)
+        pre = ns["prod_body_preflight"](IDENTITY, auth, item, reg)
+        del counter[:]
+        problems = ns["prod_body_same_state"](IDENTITY, auth, pre)
+        one = len(counter)
+        del counter[:]
+        world2 = posed_destination(ns, fx)
+        world2.fail_on_write = last
+        ns["prod_body_apply"](IDENTITY, authorize(ns, reg, u"Apply Pose", item), item, reg)
+        whole = len(counter)
+    finally:
+        ns["prod_body_bindings"] = real
+    check("X.11_one_binding_resolution_per_comparison", problems == [] and one == 1 and whole == 3,
+          (problems[:3], one, whole))
+    # X.12 constraint order permutation keeps the classification and the descriptor
+    world = posed_destination(ns, fx)
+    profile = profile_of(ns, reg)
+    row = ns["prod_resolve_instance"](live_context(ns)["instance"])
+    D = ns["prod_body_discover"](ns["prod_body_live"](row, profile), world.t_chan(), ns["prod_pose_writer_index"]())
+    C = ns["prod_body_classify"](D, profile)
+    ok = True
+    for order in (list(reversed(D[u"operators"])), D[u"operators"][1::2] + D[u"operators"][0::2]):
+        D2 = dict(D, operators=order)
+        C2 = ns["prod_body_classify"](D2, profile)
+        ok = ok and dict((k, v) for k, v in C2.items() if k not in (u"constraints", u"constraint_operators")) == \
+            dict((k, v) for k, v in C.items() if k not in (u"constraints", u"constraint_operators")) and \
+            ns["prod_body_descriptor"](D2, C2, profile) == ns["prod_body_descriptor"](D, C, profile)
+    check("X.12_constraint_order_permutation_preserves_classification_and_descriptor", ok)
+
+
 def main():
     if "--phase=run" not in sys.argv[1:]:
         print("usage: %s --phase=run" % os.path.basename(sys.argv[0]))
@@ -1010,6 +1177,10 @@ def main():
             lived = run("live", lambda: section_live(ns, reg, fx, os.path.join(root, u"live")))
             if lived:
                 run("live_refusals", lambda: section_live_refusals(ns, lived[0], fx, lived[1]))
+                live_lib = {u"character_key": u"krystal2020", u"library_root": os.path.join(root, u"live"),
+                            u"char_dir": os.path.join(root, u"live", u"Characters", u"krystal2020"),
+                            u"model_ref": MODEL, u"checksum": 1234}
+                run("corrections", lambda: section_corrections(app, ns, lived[0], fx, lived[1], live_lib))
             run("window", lambda: section_window(app, ns, reg, fx, os.path.join(root, u"window")))
     finally:
         shutil.rmtree(root, True)

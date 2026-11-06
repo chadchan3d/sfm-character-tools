@@ -352,7 +352,7 @@ class DataModel(object):
         self.current, self.stack, self.redo_stack, self.calls = None, [], [], []
 
     def IsUndoEnabled(self):
-        return True
+        return self.world.undo_enabled
 
     def CanUndo(self):
         return bool(self.stack)
@@ -369,14 +369,20 @@ class DataModel(object):
     def StartUndo(self, label, redo):
         self.calls.append(("StartUndo", label))
         assert self.current is None, "nested Undo (fake)"
+        if self.world.start_raises == "before":           # fails without opening anything
+            raise RuntimeError("StartUndo failed before opening (test)")
         self.current = {"label": label.decode("utf-8") if isinstance(label, bytes) else label, "items": []}
+        if self.world.start_raises == "after":            # opened, then reported a failure
+            raise RuntimeError("StartUndo failed after opening (test)")
 
     def ItemsAddedToCurrentUndo(self):
         return bool(self.current and self.current["items"])
 
     def FinishUndo(self):
         self.calls.append(("FinishUndo",))
-        if self.world.finish_raises:
+        if self.world.finish_raises == "before":          # fails before committing: the transaction stays open
+            raise RuntimeError("FinishUndo failed before commit (test)")
+        if self.world.finish_raises:                      # True or "after": committed, then reported a failure
             entry, self.current = self.current, None
             self.stack.append(entry)
             self.redo_stack = []
@@ -434,6 +440,8 @@ class World(object):
         self.stale_clock = 50299
         self.fail_on_write = None        # a channel name whose first write raises
         self.finish_raises = self.abort_raises = False
+        self.start_raises = None                 # None, "before" or "after"
+        self.undo_enabled = True
         self.evaluate_on_refresh = True
         self.refresh_calls = []
         self.dm = DataModel(self)

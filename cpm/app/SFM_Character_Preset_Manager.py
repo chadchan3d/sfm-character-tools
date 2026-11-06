@@ -43766,6 +43766,7 @@ def prod_body_classify(D, profile):
         label[h[u"handle"]] = u"handle:" + n
         owner_of[h[u"transform"]] = (u"handle", n)
     constraints, slave_elements, target_elements, slaved, roles_of_handle = [], {}, {}, {}, {}
+    constraint_operators = []
     for op in D[u"operators"]:
         kind = op[u"type"]
         if kind in PROD_BODY_PRESERVED_OPERATORS:
@@ -43798,6 +43799,7 @@ def prod_body_classify(D, profile):
         for x in [label[t[u"target"]]] + ([pole] if pole else []):
             roles_of_handle.setdefault(x, []).append(op[u"name"])
         constraints.append({u"type": kind, u"slaves": slaves, u"targets": [label[t[u"target"]]], u"pole": pole})
+        constraint_operators.append(op[u"handle"])
     key = lambda c: json.dumps(c, sort_keys=True)  # noqa: E731
     if sorted(constraints, key=key) != sorted(profile[u"constraints"], key=key):
         mine = set(key(c) for c in constraints)
@@ -43923,7 +43925,7 @@ def prod_body_classify(D, profile):
         raise fail(u"structure-unsupported", u"channels without a role: %s" % sorted(set(channels) - set(roles))[:8])
     written = sorted(n for n, r in roles.items() if r in PROD_BODY_WRITTEN_ROLES)
     return {u"bones": bone_classes, u"handles": handle_classes, u"channels": roles, u"owners": owners,
-            u"constraints": constraints, u"written": written}
+            u"constraints": constraints, u"constraint_operators": constraint_operators, u"written": written}
 
 
 # --- the compatibility descriptor --------------------------------------------------------------------------------
@@ -43951,7 +43953,8 @@ def prod_body_descriptor(D, C, profile):
     bones = sorted(({u"name": n, u"index": b[u"index"], u"parent": b[u"parent"], u"class": C[u"bones"][n]}
                     for n, b in D[u"bones"].items()), key=lambda r: (r[u"index"], r[u"name"]))
     constraints = []
-    for c, op in zip(C[u"constraints"], [op for op in D[u"operators"] if op[u"type"] in PROD_POSE_CONSTRAINT_TYPES]):
+    ops_by_handle = dict((op[u"handle"], op) for op in D[u"operators"])
+    for c, op in zip(C[u"constraints"], [ops_by_handle[h] for h in C[u"constraint_operators"]]):
         row = dict(c)
         t = op[u"targets"][0]
         row[u"solver"] = dict((n, prod_body_typed(v, op[u"name"] + u"." + n)) for n, v in sorted(op[u"solver"].items())
@@ -44500,11 +44503,103 @@ def prod_body_discover(L, t_chan, index):
                else [], u"value": None, u"clock": prod_pose_ticks_of(ch.GetCurrentTime())}
         if log is not None and row[u"log_type"] in (u"DmeVector3Log", u"DmeQuaternionLog"):
             row[u"value"] = prod_pose_plain(log.GetValue(t))
+        if log is not None:
+            row[u"log_handle"] = prod_pose_h(log)
+            row[u"layer_handles"] = [prod_pose_h(log.GetLayer(i)) for i in range(int(log.GetNumLayers()))]
         D[u"channels"][name] = row
         if to is not None:
             key = u"%d:%s" % (prod_pose_h(to), to_attr)
             D[u"writers"][key] = len(index[u"destinations"].get(key, []))
+    D[u"authority"] = prod_body_authority_evidence(L, index)
     return prod_pose_roundtrip(D)
+
+
+def prod_body_authority_evidence(L, index):
+    """Document-wide authority over the instance, from the writer index (the stage D ownership rules, applied
+    instance-wide): every channel writing any element of the instance, every channel using one of its channels'
+    logs, every log using one of their layers, and every operator slaving one of its DAGs. Handles of this process;
+    compared exactly between P1, P2 and P7 (Astra S1 P1/P7)."""
+    elements, dags, ops = set(), [], set()
+    for b in L[u"bones"].values():
+        elements.update([prod_pose_h(b[u"dag"]), prod_pose_h(b[u"transform"])])
+        dags.append(prod_pose_h(b[u"dag"]))
+    for dag in L[u"rig_handles"].values():
+        elements.update([prod_pose_h(dag), prod_pose_h(prod_pose_attr(dag, u"transform"))])
+        dags.append(prod_pose_h(dag))
+    elements.update([prod_pose_h(L[u"gm"]), prod_pose_h(prod_pose_attr(L[u"gm"], u"transform"))])
+    dags.append(prod_pose_h(L[u"gm"]))
+    for c in L[u"all_controls"]:
+        elements.add(prod_pose_h(c))
+    for op in L[u"operators"]:
+        ops.add(prod_pose_h(op))
+        elements.add(prod_pose_h(op))
+        for slot in PROD_BODY_SLAVE_SLOTS:
+            present, slave = prod_pose_opt_attr(op, slot)
+            if present and slave is not None:
+                elements.add(prod_pose_h(slave))
+        if prod_pose_has(op, u"targets"):
+            for t in prod_pose_seq(prod_pose_attr(op, u"targets")):
+                elements.add(prod_pose_h(t))
+    destinations = {}
+    for key, writers in index[u"destinations"].items():
+        if int(key.split(u":", 1)[0]) in elements:
+            destinations[key] = sorted(writers)
+    logs, layers = {}, {}
+    for ch in L[u"clip_channels"]:
+        log = ch.GetLog()
+        if log is None:
+            continue
+        logs[u"%d" % prod_pose_h(log)] = sorted(index[u"logs"].get(prod_pose_h(log), []))
+        for i in range(int(log.GetNumLayers())):
+            layer = log.GetLayer(i)
+            layers[u"%d" % prod_pose_h(layer)] = sorted(index[u"layers"].get(prod_pose_h(layer), []))
+    return {u"channels": sorted(prod_pose_h(ch) for ch in L[u"clip_channels"]), u"operators": sorted(ops),
+            u"destinations": destinations, u"logs": logs, u"layers": layers,
+            u"slave_targets": dict((u"%d" % d, sorted(index[u"slave_targets"].get(d, []))) for d in dags)}
+
+
+def prod_body_check_authority(D, C):
+    """Exclusive ownership before any write (Astra S1 P1): no channel outside the instance writes an element of it;
+    every written channel owns its log and layer alone and its control is not itself driven; every operator slaving
+    one of its DAGs is one of its own constraints, exactly as classified. Refuses on anything else."""
+    A = D.get(u"authority")
+    if not isinstance(A, dict):
+        raise prod_body_error(u"evidence-unreadable", u"no authority evidence")
+    mine, ops = set(A[u"channels"]), set(A[u"operators"])
+    foreign = sorted(k for k, ws in A[u"destinations"].items() if any(w not in mine for w in ws))
+    if foreign:
+        raise prod_body_error(u"shared-authority", u"channels outside the instance write %s" % foreign[:8])
+    for name, ch in D[u"channels"].items():
+        # Instance elements only (destinations outside it, such as flex controller operators, are checked for a
+        # unique writer by the classification).
+        got = A[u"destinations"].get(u"%d:%s" % (ch[u"to"][u"handle"], ch[u"to_attribute"])) if ch[u"to"] else None
+        if got is not None and got != [ch[u"handle"]]:
+            raise prod_body_error(u"shared-authority", u"channel %s is not the only writer of its destination" % name)
+    expected = {}
+    for op in D[u"operators"]:
+        if op[u"type"] in PROD_POSE_CONSTRAINT_TYPES:
+            for s in op[u"slaves"].values():
+                if s is not None and s.get(u"target") is not None:
+                    expected.setdefault(u"%d" % s[u"target"], set()).add(op[u"handle"])
+    for dag, found in A[u"slave_targets"].items():
+        outside = [o for o in found if o not in ops]
+        if outside:
+            raise prod_body_error(u"shared-authority", u"operators outside the animation set drive element %s: %s" %
+                                  (dag, outside[:4]))
+        if sorted(expected.get(dag, set())) != found:
+            raise prod_body_error(u"shared-authority", u"element %s is not driven exactly as classified" % dag)
+    for name in C[u"written"]:
+        ch = D[u"channels"][name]
+        log, layers = ch.get(u"log_handle"), ch.get(u"layer_handles") or []
+        if log is None or A[u"logs"].get(u"%d" % log) != [ch[u"handle"]]:
+            raise prod_body_error(u"shared-authority", u"written channel %s does not own its log" % name)
+        if any(A[u"layers"].get(u"%d" % layer) != [log] for layer in layers) or len(layers) != 1:
+            raise prod_body_error(u"shared-authority", u"written channel %s does not own its layer" % name)
+        source = ch[u"from"]
+        for attr in (u"valuePosition", u"valueOrientation"):
+            if source is not None and A[u"destinations"].get(u"%d:%s" % (source[u"handle"], attr)):
+                raise prod_body_error(u"shared-authority", u"a channel drives the control of %s" % name)
+    return A
 
 
 def prod_body_identity(L):
@@ -44545,6 +44640,7 @@ def prod_body_state(row, profile):
         time = prod_pose_time_read(L, names)
         D = prod_body_discover(L, time[u"t_chan"], index)
         C = prod_body_classify(D, profile)
+        prod_body_check_authority(D, C)
         return {u"L": L, u"D": D, u"C": C, u"time": time, u"descriptor": prod_body_descriptor(D, C, profile),
                 u"authored": prod_pose_capture_authored(L), u"observed": prod_pose_capture_observed(L),
                 u"identity": prod_body_identity(L)}
@@ -44637,6 +44733,7 @@ def prod_body_preflight(identity, authorization, item, reg):
     D, C, L = st[u"D"], st[u"C"], st[u"L"]
     prod_body_compare_descriptor(region[u"descriptor"], st[u"descriptor"])
     prod_body_check_fk_positions(region, D, C)
+    inputs = prod_body_effective_inputs(D, C, profile)     # transforms evaluated at their channels' values
     t_chan = st[u"time"][u"t_chan"]
     gate = prod_pose_apply_gate(L, sorted(L[u"channels"]), t_chan)
     bindings = prod_body_bindings(L, C)
@@ -44648,14 +44745,18 @@ def prod_body_preflight(identity, authorization, item, reg):
     noop = prod_body_noop(plans, D, C, region, profile)
     handles = dict((n, prod_pose_h(b[u"channel"])) for n, b in bindings.items())
     return {u"state": st, u"profile": profile, u"undo": undo, u"time": st[u"time"], u"gate": gate,
+            u"region": region, u"inputs": inputs,
             u"bindings": bindings, u"snaps": snaps, u"plans": plans, u"values": values, u"expected": expected,
             u"noop": noop, u"expected_authored": prod_body_expected_authored(st[u"authored"], plans, handles),
             u"row": row}
 
 
 def prod_body_same_state(identity, authorization, pre):
-    """P2 / Abort: a fresh read equals the P1 state exactly (identities, time, classification, authored, observed,
-    the planned layers, the gate, Undo). Returns the problems; unreadable evidence is a problem."""
+    """P2 / Abort: a fresh read equals the P1 state exactly (identities, time, classification, authority, authored,
+    observed, the planned layers, the gate, Undo) and the P1 evaluated obligations still hold: A1 against the saved
+    FK positions, and every written channel's owner evaluated at the same channel value as at P1 (after an Abort:
+    the restored original state, never the intended applied one). Returns the problems; unreadable evidence is a
+    problem. Bindings are resolved once per comparison."""
     problems = []
     try:
         row = prod_resolve_instance(prod_instance_token(authorization[u"context"]), identity)
@@ -44667,9 +44768,21 @@ def prod_body_same_state(identity, authorization, pre):
             problems.append(u"%s changed %s" % (key, prod_pose_differences(st[key], pre[u"state"][key])[:4]))
     if st[u"C"] != pre[u"state"][u"C"]:
         problems.append(u"classification changed")
+    if st[u"D"][u"authority"] != pre[u"state"][u"D"][u"authority"]:
+        problems.append(u"authority changed")
+    try:
+        prod_body_check_fk_positions(pre[u"region"], st[u"D"], st[u"C"])
+        if prod_body_effective_inputs(st[u"D"], st[u"C"], pre[u"profile"]) != pre[u"inputs"]:
+            problems.append(u"evaluated inputs changed")
+    except ProdPoseError as exc:
+        problems.append(u"evaluated state refused: %s" % exc.code)
+    try:
+        bindings = prod_body_bindings(st[u"L"], st[u"C"])
+    except Exception as exc:
+        return problems + [u"bindings unreadable %r" % (exc,)]
     for name, snap in pre[u"snaps"].items():
         try:
-            now = prod_pose_layer_snapshot(prod_body_bindings(st[u"L"], st[u"C"])[name], st[u"time"][u"t_chan"])
+            now = prod_pose_layer_snapshot(bindings[name], st[u"time"][u"t_chan"])
         except Exception as exc:
             problems.append(u"%s unreadable %r" % (name, exc))
             continue
@@ -44834,6 +44947,15 @@ def prod_body_verify_applied(pending):
         if prod_pose_capture_observed(L) != pending[u"observed"]:
             problems.append(u"constraint or operator attributes")
         D = prod_body_discover(L, time[u"t_chan"], prod_pose_writer_index())
+        # Astra S1 P7: the authority checked now must be the authority admitted at P1, from fresh discovery.
+        if prod_body_classify(D, profile) != pending[u"classes"]:
+            problems.append(u"classification")
+        if D[u"authority"] != pending[u"baseline"][u"authority"]:
+            problems.append(u"authority changed since P1")
+        try:
+            prod_body_check_authority(D, pending[u"classes"])
+        except ProdPoseError as exc:
+            problems.append(u"authority refused: %s" % exc.code)
         expected = dict((k, (v[0], v[1])) for k, v in pending[u"expected"].items())
         problems.extend(prod_body_verify_skeleton(D, pending[u"baseline"], expected, pending[u"classes"], profile,
                                                   pending[u"values"]))
