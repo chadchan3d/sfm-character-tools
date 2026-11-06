@@ -44090,4 +44090,177 @@ def prod_body_payload(D, C, profile):
                                 u"descriptor": prod_body_descriptor(D, C, profile)})
 
 
+def prod_body_check_fk_positions(region, D, C):
+    """A1: every included FK position must already match the destination's effective position exactly, as finite
+    native float32 values; any difference refuses the whole operation before a write (body proportions)."""
+    bad = []
+    for name in C[u"written"]:
+        owner, attr = C[u"owners"][name]
+        if attr != u"position" or C[u"channels"][name] != u"fk-written":
+            continue
+        saved = region[u"positions"].get(name)
+        here = prod_body_owner_row(D, owner)[u"local_position"]
+        if saved is None or not prod_body_exact(saved, list(here)) or \
+                not prod_body_exact(saved, prod_body_channel_value(D, name)):
+            bad.append(name)
+    if bad:
+        raise prod_body_error(u"fk-position", u"FK positions differ from the pose: %s" % bad[:16])
+
+
+def prod_body_plan(region, D, C, snaps, t_chan):
+    """P1's one deduplicated write plan: one exact-time key plan per written channel, from the saved parent-local
+    value. Compatible FK position channels are planned too (A1): a missing key is inserted, a correct key is left
+    unchanged (action none). Refuses when the saved values and the destination's written set differ."""
+    names = C[u"written"]
+    saved = dict(region[u"positions"])
+    saved.update(region[u"orientations"])
+    if len(saved) != len(region[u"positions"]) + len(region[u"orientations"]) or sorted(saved) != sorted(names):
+        raise prod_body_error(u"rig-differs", u"the pose's channels are not the destination's written set")
+    if sorted(snaps) != sorted(names):
+        raise prod_body_error(u"evidence-unreadable", u"layer evidence is missing for %s" %
+                              sorted(set(names) ^ set(snaps))[:8])
+    plans = []
+    for name in sorted(names):
+        attr = C[u"owners"][name][1]
+        types = PROD_BODY_TRANSFORM_TYPES[attr]
+        plans.append(prod_pose_key_plan(snaps[name], t_chan, saved[name], types))
+    if len(set(p[u"name"] for p in plans)) != len(plans):
+        raise prod_body_error(u"structure-unsupported", u"a channel is planned twice")
+    return plans
+
+
+def prod_body_expected_authored(authored, plans, channel_handles):
+    """The one complete expected authored state of the instance after the whole plan: the baseline with every
+    planned key applied once. Every other channel, control and operator relationship stays exactly as it was."""
+    result = json.loads(json.dumps(authored))
+    by_handle = dict((row[u"id"][u"handle"], row) for row in result[u"channels"])
+    for plan in plans:
+        row = by_handle.get(channel_handles[plan[u"name"]])
+        if row is None or len(row[u"layers"]) != 1:
+            raise prod_body_error(u"evidence-unreadable", u"%s is not in the authored baseline" % plan[u"name"])
+        keys = row[u"layers"][0][u"keys"]
+        if plan[u"action"] == u"update":
+            keys[plan[u"index"]][1] = list(plan[u"value"])
+        elif plan[u"action"] == u"insert":
+            keys.insert(plan[u"index"], [plan[u"t"], list(plan[u"value"])])
+            result[u"keys"] += 1
+    return prod_pose_roundtrip(result)
+
+
+def prod_body_bone_order(D):
+    """Bones parents first (the scene hierarchy, not names)."""
+    order, done, pending = [], set(), sorted(D[u"bones"])
+    while pending:
+        progressed = False
+        for name in list(pending):
+            parent = D[u"bones"][name][u"parent"]
+            if parent is None or parent in done:
+                order.append(name)
+                done.add(name)
+                pending.remove(name)
+                progressed = True
+        if not progressed:
+            raise prod_body_error(u"structure-unsupported", u"the bone hierarchy is not a tree")
+    return order
+
+
+def prod_body_bone_scale(D, name):
+    """A bone's own uniform scale (absent: 1). Natively a child's local offset is scaled by the product of its
+    ancestors' scales (S0: bip_head 1.13 scales jaw and tongue; bip_tail00 0.8); an unreadable scale refuses."""
+    if name is None:
+        return 1.0
+    f = D[u"bones"][name][u"scale"]
+    if f.get(u"status") == u"ABSENT":
+        return 1.0
+    v = prod_body_field_value(f)
+    if isinstance(v, bool) or not prod_pose_is_number(v) or not 0.0 < float(v) < 1.0e3:
+        raise prod_body_error(u"structure-unsupported", u"bone %s has an unsupported scale %r" % (name, v))
+    return float(v)
+
+
+def prod_body_scaled_compose(parent, scale, local):
+    """parent x local where the parent bone's uniform scale scales the child's offset (rotations are unscaled)."""
+    p, q = parent
+    lp, lq = local
+    return (prod_pose_compose((p, q), ([c * scale for c in lp], lq))[0], prod_pose_compose((p, q), ((0.0, 0.0, 0.0),
+                                                                                                    lq))[1])
+
+
+def prod_body_expected_skeleton(region, D, C, profile):
+    """Every bone's expected world transform after the Apply, in the destination's own placement: the saved
+    placement-relative posture for posed bones (written FK, and constraint-driven bones), and for preserved and
+    passive bones their parent's expected transform times their own unchanged local transform (authorized
+    descendant motion: a preserved jaw follows the posed head, keeping its own pose)."""
+    root = prod_body_root_world(D, profile)
+    model = (D[u"model"][u"world_position"], prod_pose_unit(D[u"model"][u"world_orientation"]))
+    oracle = region[u"oracle"][u"bones"]
+    expected, world_scale = {}, {}
+    for name in prod_body_bone_order(D):
+        b = D[u"bones"][name]
+        parent_scale = world_scale[b[u"parent"]] if b[u"parent"] is not None else 1.0
+        world_scale[name] = parent_scale * prod_body_bone_scale(D, name)     # scale accumulates down the hierarchy
+        if C[u"bones"][name] in (u"fk-preserved", u"passive"):
+            parent = expected[b[u"parent"]] if b[u"parent"] is not None else model
+            expected[name] = prod_body_scaled_compose(parent, parent_scale, (
+                b[u"local_position"], prod_pose_unit(b[u"local_orientation"])))
+        else:
+            o = oracle[name]
+            expected[name] = prod_pose_compose(root, (o[u"position"], o[u"orientation"]))
+    return expected
+
+
+def prod_body_verify_skeleton(D_now, D_base, expected, C, profile, values=None):
+    """The evaluated destination against the expected state: every bone where expected; preserved and passive bones
+    with unchanged local transforms; every bone's scale and the model's placement and scale unchanged; the
+    placement handle unchanged; and, when given, each written channel's owner at its planned value. Returns the
+    problems (empty: verified)."""
+    tol = profile[u"tolerances"]
+    problems = []
+    for name, (p, q) in expected.items():
+        now, was = D_now[u"bones"][name], D_base[u"bones"][name]
+        if prod_pose_distance(now[u"world_position"], p) > tol[u"position"] or \
+                prod_pose_angle_deg(now[u"world_orientation"], q) > tol[u"angle_degrees"]:
+            problems.append(u"bone %s" % name)
+        if now[u"scale"] != was[u"scale"]:
+            problems.append(u"bone %s scale" % name)
+        if C[u"bones"][name] in (u"fk-preserved", u"passive") and (
+                prod_pose_distance(now[u"local_position"], was[u"local_position"]) > tol[u"position"] or
+                prod_pose_angle_deg(now[u"local_orientation"], was[u"local_orientation"]) > tol[u"angle_degrees"]):
+            problems.append(u"preserved bone %s local" % name)
+    for key in (u"world", u"local"):
+        if prod_pose_distance(D_now[u"model"][key + u"_position"], D_base[u"model"][key + u"_position"]) > \
+                tol[u"position"] or prod_pose_angle_deg(D_now[u"model"][key + u"_orientation"],
+                                                         D_base[u"model"][key + u"_orientation"]) > tol[u"angle_degrees"]:
+            problems.append(u"model %s placement" % key)
+    if D_now[u"model"][u"scale"] != D_base[u"model"][u"scale"]:
+        problems.append(u"model scale")
+    root_now = D_now[u"rig"][u"handles"][profile[u"placement_handle"]]
+    root_was = D_base[u"rig"][u"handles"][profile[u"placement_handle"]]
+    if prod_pose_distance(root_now[u"world_position"], root_was[u"world_position"]) > tol[u"position"] or \
+            prod_pose_angle_deg(root_now[u"world_orientation"], root_was[u"world_orientation"]) > tol[u"angle_degrees"]:
+        problems.append(u"placement handle")
+    for name, h in D_now[u"rig"][u"handles"].items():
+        if h[u"scale"] != D_base[u"rig"][u"handles"][name][u"scale"]:
+            problems.append(u"handle %s scale" % name)
+    for name, v in sorted((values or {}).items()):
+        owner, attr = C[u"owners"][name]
+        row = prod_body_owner_row(D_now, owner)
+        if attr == u"position":
+            if not prod_body_exact(prod_body_f32_list(row[u"local_position"]), list(v)):
+                problems.append(u"input %s" % name)
+        elif prod_pose_angle_deg(row[u"local_orientation"], v) > tol[u"effective_angle_degrees"]:
+            problems.append(u"input %s" % name)
+    return problems
+
+
+def prod_body_noop(plans, D, C, region, profile):
+    """True no-op: every planned channel already holds its exact key and the evaluated skeleton already verifies.
+    A visible match with any required key missing (an insert, including an FK position key) is not a no-op."""
+    values = dict(region[u"positions"])
+    values.update(region[u"orientations"])
+    if not prod_pose_noop_test(plans, {u"rig_inputs_ok": True, u"skeletal_oracle_ok": True}):
+        return False
+    expected = prod_body_expected_skeleton(region, D, C, profile)
+    return not prod_body_verify_skeleton(D, D, expected, C, profile, values)
+
 # === end of F-01 stage E block ===

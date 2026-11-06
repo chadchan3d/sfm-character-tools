@@ -403,6 +403,108 @@ def legacy_pose(ns):
     return copy.deepcopy(core.make_record(ns, golden, (u"left_arm",))["pose"])
 
 
+# ---------------------------------------------------------------------------
+# S1-C: compatibility (A1, A3, proportions) and the combined planner
+# ---------------------------------------------------------------------------
+
+def section_planner(ns, reg, fx, pose):
+    profile = profile_of(ns, reg)
+    region = pose[u"regions"][u"full_body"]
+    D13 = fx[u"shot13"]
+    C13 = ns["prod_body_classify"](D13, profile)
+    live = ns["prod_body_descriptor"](D13, C13, profile)
+    check("P.shot13_is_compatible_with_the_shot15_pose",
+          outcome(lambda: ns["prod_body_compare_descriptor"](region[u"descriptor"], live))[0] == "ok")
+    check("P.A1_shot13_fk_positions_match_exactly",
+          outcome(lambda: ns["prod_body_check_fk_positions"](region, D13, C13))[0] == "ok")
+    D10 = fx[u"shot10"]
+    C10 = ns["prod_body_classify"](D10, profile)
+    refused("P.shot10_refuses_on_scale_state", outcome(lambda: ns["prod_body_compare_descriptor"](
+        region[u"descriptor"], ns["prod_body_descriptor"](D10, C10, profile))), u"proportions")
+    refused("P.A1_shot10_float32_noise_in_fk_positions_refuses",
+            outcome(lambda: ns["prod_body_check_fk_positions"](region, D10, C10)), u"fk-position")
+    check("P.A1_refusal_copy_is_the_owner_wording", ns["PROD_BODY_MESSAGES"][u"fk-position"] ==
+          u"This pose uses different bone positions and can't be applied safely.")
+
+    def moved(name, ulp=True):
+        d = copy.deepcopy(D13)
+        bone = d[u"bones"][name[:-2]]
+        v = list(d[u"channels"][name][u"value"])
+        v[1] = next_f32(v[1])
+        d[u"channels"][name][u"value"] = v
+        bone[u"local_position"] = list(v)
+        return d
+    refused("P.A1_one_ulp_fk_translation_refuses_before_any_write",
+            outcome(lambda: ns["prod_body_check_fk_positions"](region, moved(u"bip_tail05_p"), C13)), u"fk-position")
+    d = moved(u"bip_hip_l_p")
+    refused("P.changed_ik_bone_offset_is_a_proportion_refusal", outcome(lambda: ns["prod_body_compare_descriptor"](
+        region[u"descriptor"], ns["prod_body_descriptor"](d, C13, profile))), u"proportions")
+    d = copy.deepcopy(D13)
+    d[u"channels"][u"bip_lowerArm_l_twist2_o"][u"value"] = [0.0, 0.0, 0.0, 1.0]
+    refused("P.A3_different_passive_twist_refuses", outcome(lambda: ns["prod_body_compare_descriptor"](
+        region[u"descriptor"], ns["prod_body_descriptor"](d, C13, profile))), u"rig-differs")
+    snaps = snapshots(D13, C13[u"written"])
+    plans = ns["prod_body_plan"](region, D13, C13, snaps, D13[u"t_chan"])
+    actions = counts(p[u"action"] for p in plans)
+    check("P.matching_pose_with_missing_keys_plans_insertions_on_every_channel",
+          len(plans) == 278 and actions == {u"insert": 278}, actions)
+    fk_pos = [p for p in plans if C13[u"channels"][p[u"name"]] == u"fk-written" and C13[u"owners"][p[u"name"]][1] ==
+              u"position"]
+    check("P.A1_compatible_fk_positions_are_planned_with_their_exact_values", len(fk_pos) == 124 and all(
+        p[u"value"] == region[u"positions"][p[u"name"]] for p in fk_pos))
+    check("P.not_a_noop_while_keys_are_missing", ns["prod_body_noop"](plans, D13, C13, region, profile) is False)
+    full = copy.deepcopy(D13)
+    for p in plans:                                   # the state after the planned keys: SFM evaluates them
+        ch = full[u"channels"][p[u"name"]]
+        ch[u"keys"].insert(p[u"index"], [p[u"t"], list(p[u"value"])])
+        ch[u"value"] = list(p[u"value"])
+        owner, attr = C13[u"owners"][p[u"name"]]
+        kind, _, n = owner.partition(u":")
+        row = full[u"bones"][n] if kind == u"bone" else full[u"rig"][u"handles"][n]
+        row[u"local_" + attr] = list(p[u"value"])
+    snaps2 = snapshots(full, C13[u"written"])
+    plans2 = ns["prod_body_plan"](region, full, C13, snaps2, full[u"t_chan"])
+    check("P.correct_keys_are_left_unchanged", counts(p[u"action"] for p in plans2) == {u"none": 278})
+    check("P.verified_repeat_is_a_noop", ns["prod_body_noop"](plans2, full, C13, region, profile) is True)
+    odd = copy.deepcopy(full)
+    k = odd[u"channels"][u"Hip_o"][u"keys"]
+    idx = [i for i, x in enumerate(k) if x[0] == full[u"t_chan"]][0]
+    k[idx][1] = [0.0, 0.0, 0.0, 1.0]
+    plans3 = ns["prod_body_plan"](region, odd, C13, snapshots(odd, C13[u"written"]), odd[u"t_chan"])
+    check("P.a_different_key_at_t_is_updated_in_place_only_there",
+          [(p[u"name"], p[u"action"]) for p in plans3 if p[u"action"] != u"none"] == [(u"Hip_o", u"update")])
+    dup = snapshots(full, C13[u"written"])
+    dup[u"Hip_p"][u"times"].insert(0, full[u"t_chan"])
+    dup[u"Hip_p"][u"values"].insert(0, [0.0, 0.0, 0.0])
+    dup[u"Hip_p"][u"times"].sort()
+    refused("P.duplicate_keys_refuse", outcome(lambda: ns["prod_body_plan"](region, full, C13, dup, full[u"t_chan"])))
+    empty = snapshots(D13, C13[u"written"])
+    empty[u"bip_tail05_o"].update({u"times": [], u"values": []})
+    refused("P.zero_key_channel_refuses", outcome(lambda: ns["prod_body_plan"](region, D13, C13, empty,
+                                                                              D13[u"t_chan"])), u"structure-unsupported")
+    curve = snapshots(D13, C13[u"written"])
+    curve[u"bip_tail05_o"][u"curveinfo"] = u"present"
+    refused("P.curve_info_refuses", outcome(lambda: ns["prod_body_plan"](region, D13, C13, curve, D13[u"t_chan"])),
+            u"structure-unsupported")
+    missing = snapshots(D13, C13[u"written"])
+    missing.pop(u"bip_tail05_o")
+    refused("P.missing_layer_evidence_refuses", outcome(lambda: ns["prod_body_plan"](region, D13, C13, missing,
+                                                                                    D13[u"t_chan"])))
+    handles = dict((n, D13[u"channels"][n][u"handle"]) for n in C13[u"written"])
+    authored = {u"channels": [{u"id": {u"handle": D13[u"channels"][n][u"handle"]}, u"layers": [
+        {u"keys": [list(k) for k in D13[u"channels"][n][u"keys"]]}]} for n in sorted(D13[u"channels"])], u"keys": 0}
+    exp = ns["prod_body_expected_authored"](authored, plans, handles)
+    changed = [row for row, was in zip(exp[u"channels"], authored[u"channels"]) if row != was]
+    check("P.one_combined_expected_state_changes_exactly_the_planned_channels",
+          len(changed) == 278 and exp[u"keys"] == 278)
+    expected = ns["prod_body_expected_skeleton"](region, D13, C13, profile)
+    check("P.expected_skeleton_verifies_on_the_identical_posture",
+          not ns["prod_body_verify_skeleton"](D13, D13, expected, C13, profile))
+    expected10 = ns["prod_body_expected_skeleton"](region, D10, C10, profile)
+    problems = ns["prod_body_verify_skeleton"](D10, D10, expected10, C10, profile)
+    check("P.expected_skeleton_detects_a_different_posture", len(problems) > 20, len(problems))
+
+
 def main():
     if "--phase=run" not in sys.argv[1:]:
         print("usage: %s --phase=run" % os.path.basename(sys.argv[0]))
@@ -418,6 +520,8 @@ def main():
         if reg:
             run("classification", lambda: section_classification(ns, reg, fx))
             got = run("records", lambda: section_records(ns, reg, fx, root))
+            if got:
+                run("planner", lambda: section_planner(ns, reg, fx, got[0]))
     finally:
         shutil.rmtree(root, True)
     failed = [r for r in RESULTS if not r[1]]
