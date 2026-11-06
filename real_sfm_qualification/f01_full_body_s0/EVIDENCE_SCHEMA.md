@@ -34,8 +34,10 @@ Format `F01-S0-report-v1`: per observation its validity and read-only result; `r
 (`every_observation_unchanged`, `one_document_digest_per_process`); for the primary observation (the first Motion
 Editor observation unless named) `analysis`:
 
-- `bones`: per bone `class` from binding evidence only: `constrained` (slaved by a rig constraint; its own channels
-  listed as `dormant_channels`), `direct FK` (written only by control channels; per channel its layers, keys,
+- `bones`: per bone `class` from binding evidence only: `constrained` (slaved by a rig constraint; the attributes the
+  constraints set; `dormant_slave_base_channels`, the channels writing its `DmeConstraintSlave` base values; and
+  `structural_offset_channels`, channels writing an attribute no constraint sets, such as an IK chain bone's
+  position), `channel-driven without a control` (written only by channels with no source element), `direct FK` (written only by control channels; per channel its layers, keys,
   distinct values, clock and whether the mapped value equals the bone's local transform; `translation`: *constant
   (structural-offset candidate)* or *animated translation*), `operator-driven` (a channel from an operator, such as
   an expression), `driven by an unknown operator`, `competing writers`, `no writer`, `unclassified`;

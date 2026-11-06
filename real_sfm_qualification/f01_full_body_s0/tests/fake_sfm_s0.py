@@ -5,7 +5,8 @@ It models only what the observer reads. Every mutating call the observer must ne
 itself in World.mutations and raises, so a read-only violation fails a test even if the observer swallowed the
 exception. The rig is a reduced biped shaped like the natively recorded Krystal structure (PS-1b5 OBS-03; the Pose B
 descriptor): point/orient constraints from rig handles to the pelvis, an IK leg with a pole, an orient-constrained
-foot, dormant channels on constrained bones, a foot helper under the foot handle, FK toes and tail with position
+foot, constrained-bone controls writing their constraint slaves (dormant) and IK-chain bone offsets, a channel-
+driven bone with no control, a foot helper under the foot handle, FK toes and tail with position
 channels (one a constant offset, one animated), an expression-driven twist bone, a bone with no writer, a bone
 slaved by an unknown operator type, a bone with two competing writers, and a constraint-weight channel.
 """
@@ -310,21 +311,42 @@ def build(world, stale=(), competing=False):
         chan_clip.attrs["channels"].items.append(ch)
         return ch
 
-    def control(name, target, pos_keys, rot_keys):
+    def control(name, target, pos_keys, rot_keys, rot_target=None):
         c = El(w, "DmeTransformControl", name, valuePosition=Vector(*pos_keys[0][1]),
                valueOrientation=Quaternion(*rot_keys[0][1]))
         c.attrs["positionChannel"] = channel(name + "_p", target, "position", pos_keys, control=c)
-        c.attrs["orientationChannel"] = channel(name + "_o", target, "orientation", rot_keys, "Quaternion",
-                                                control=c)
+        c.attrs["orientationChannel"] = channel(name + "_o", rot_target or target, "orientation", rot_keys,
+                                                "Quaternion", control=c)
         animset.attrs["controls"].items.append(c)
         return c
 
+    def slave(bone):
+        return El(w, "DmeConstraintSlave", "unnamed", target=bone, position=Vector(0, 0, 0),
+                  orientation=Quaternion(0, 0, 0, 1))
+
+    # One slave element per constraint, as natively recorded (S0 run 2).
+    sl = {"pelvis_point": slave(bones["bip_pelvis"]), "pelvis_orient": slave(bones["bip_pelvis"]),
+          "hip": slave(bones["bip_hip_l"]), "knee": slave(bones["bip_knee_l"]), "foot_ik": slave(bones["bip_foot_l"]),
+          "foot_orient": slave(bones["bip_foot_l"])}
     still = lambda v: [[0, v], [80000, v]]  # noqa: E731
     for name in ("rig_root", "Hip", "Foot_l", "Knee_l", "rig_footHelper0"):
         t = handles[name].attrs["transform"]
         control(name, t, still([1, 2, 3]), [[0, [0, 0, 0, 1]], [T_CHAN, [0, 0.1, 0, 0.995]]])
-    for name in ("bip_pelvis", "bip_hip_l", "bip_knee_l", "bip_foot_l"):  # dormant: their bones are constrained
-        control(name, bones[name].attrs["transform"], still([0, 0, 0]), still([0, 0, 0, 1]))
+    # Native shape: a constrained bone's own control writes its constraint slaves (dormant base values); on an IK
+    # chain its position channel writes the bone itself (the bone offset, which no constraint sets).
+    control("bip_pelvis", sl["pelvis_point"], still([0, 0, 0]), still([0, 0, 0, 1]), rot_target=sl["pelvis_orient"])
+    for name, key in (("bip_hip_l", "hip"), ("bip_knee_l", "knee"), ("bip_foot_l", "foot_orient")):
+        control(name, bones[name].attrs["transform"], still(list(bones[name].attrs["transform"].attrs[
+            "position"].__dict__.values())), still([0, 0, 0, 1]), rot_target=sl[key])
+    twist = Dag(w, "DmeDag", "bip_shin_twist_l", pos=(0, 0, -8), transform_name="bone 10 (bip_shin_twist_l)")
+    bones["bip_knee_l"].add(twist)
+    gm.attrs["bones"].items.append(twist.attrs["transform"])
+    bones["bip_shin_twist_l"] = twist
+    for suffix, attr_name, kind, v in (("_p", "position", "Vector3", [0, 0, -8]),
+                                       ("_o", "orientation", "Quaternion", [0, 0, 0, 1])):
+        ch = channel("bip_shin_twist_l" + suffix, twist.attrs["transform"], attr_name, [[k * 500, v] for k in range(20)],
+                     kind, from_el=None)
+        ch.attrs["fromElement"], ch.attrs["fromAttribute"] = None, ""
     control("bip_toe_l", bones["bip_toe_l"].attrs["transform"], still([0, 5, -3]),
             [[0, [0, 0, 0, 1]], [T_CHAN, [0.2, 0, 0, 0.98]]])
     control("bip_tail00", bones["bip_tail00"].attrs["transform"], [[0, [0, -4, 0]], [T_CHAN, [0, -5, 1]]],
@@ -342,22 +364,19 @@ def build(world, stale=(), competing=False):
         return El(w, "DmeConstraintTarget", handle.name, target=handle, targetWeight=weight, oOffset=Quaternion(
             0, 0, 0, 1), vecOffset=Vector(0, 0, 0))
 
-    def slave(bone):
-        return El(w, "DmeConstraintSlave", bone.name, target=bone, basePosition=Vector(0, 0, 0))
-
     ops = animset.attrs["operators"].items
     hip_t = target(handles["Hip"])
-    ops.append(El(w, "DmeRigPointConstraintOperator", "pointConstraint_bip_pelvis", slave=slave(bones["bip_pelvis"]),
+    ops.append(El(w, "DmeRigPointConstraintOperator", "pointConstraint_bip_pelvis", slave=sl["pelvis_point"],
                   targets=Array(w, [hip_t])))
     ops.append(El(w, "DmeRigOrientConstraintOperator", "orientConstraint_bip_pelvis",
-                  slave=slave(bones["bip_pelvis"]), targets=Array(w, [target(handles["Hip"])])))
+                  slave=sl["pelvis_orient"], targets=Array(w, [target(handles["Hip"])])))
     foot_t = target(handles["Foot_l"])
-    ops.append(El(w, "DmeRigIKConstraintOperator", "ikConstraint_Foot_l", startJoint=slave(bones["bip_hip_l"]),
-                  midJoint=slave(bones["bip_knee_l"]), endJoint=slave(bones["bip_foot_l"]),
+    ops.append(El(w, "DmeRigIKConstraintOperator", "ikConstraint_Foot_l", startJoint=sl["hip"],
+                  midJoint=sl["knee"], endJoint=sl["foot_ik"],
                   targets=Array(w, [foot_t]), pvTarget=handles["Knee_l"], startOffset=Vector(0, 0, 0),
                   midOffset=Vector(0, 0, 0), poleVector=Vector(0, 1, 0), mode=0))
     ops.append(El(w, "DmeRigOrientConstraintOperator", "orientConstraint_bip_foot_l",
-                  slave=slave(bones["bip_foot_l"]), targets=Array(w, [target(handles["Foot_l"])])))
+                  slave=sl["foot_orient"], targets=Array(w, [target(handles["Foot_l"])])))
     ops.append(El(w, "DmeRigWingOperator", "wingSolver", slave=slave(bones["bip_wing_l"]),
                   targets=Array(w, [])))
     expr = El(w, "DmeExpressionOperator", "twist_l", expr="hip*0.5", result=Quaternion(0, 0, 0, 1))

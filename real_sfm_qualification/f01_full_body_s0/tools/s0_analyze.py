@@ -193,10 +193,35 @@ def classify(obs):
             if not any(e[0] == r["type"] and e[2] == r["slot"] for e in slaved.get(int(hd), [])):
                 slaved.setdefault(int(hd), []).append(entry)
 
+    # Constraint slave elements (DmeConstraintSlave) -> the DAG they slave. A channel writing a slave element writes
+    # the constraint's base value, not the bone (native S0: every constrained-bone control does this).
+    slave_of = {}
+    for op in obs["operators"]:
+        for slot, s in (op.get("slaves") or {}).items():
+            if s.get("slave") and s.get("target"):
+                slave_of[s["slave"]["handle"]] = (s["target"]["handle"], op["id"]["type"], slot)
+    slave_base = {}
+    for ch in instance_channels.values():
+        to = value(ch["binding"].get("toElement"))
+        if to and to["handle"] in slave_of:
+            slave_base.setdefault(slave_of[to["handle"]][0], []).append(ch["id"]["name"])
+
     def writers(transform_handle, attr):
         rows = destinations.get("%d:%s" % (transform_handle, attr), [])
-        return [dict(w, kind="control" if is_control(w.get("from")) else "operator" if w.get("from") else "none",
+        return [dict(w, kind="control" if is_control(w.get("from")) else "operator" if w.get("from") else "sourceless",
                      in_instance=w["channel"] in instance_channels) for w in rows]
+
+    def driven_attributes(drivers):
+        """Transform attributes the rig constraints set: point -> position; orient and IK joints -> orientation."""
+        out = set()
+        for kind, _, slot in drivers:
+            if kind == "DmeRigPointConstraintOperator":
+                out.add("position")
+            elif kind in ("DmeRigOrientConstraintOperator", "DmeRigIKConstraintOperator"):
+                out.add("orientation")
+            else:
+                out.update(("position", "orientation"))
+        return out
 
     def channel_evidence(w, local):
         ch = instance_channels.get(w["channel"])
@@ -235,18 +260,27 @@ def classify(obs):
         unknown = [d for d in drivers if d[0] not in KNOWN_CONSTRAINTS and not CONSTRAINT_RE.match(d[0])]
         ctrl = [w for w in wp + wo if w["kind"] == "control"]
         opw = [w for w in wp + wo if w["kind"] == "operator"]
+        srcless = [w for w in wp + wo if w["kind"] == "sourceless"]
+        competing = len(wp) > 1 or len(wo) > 1
+        driven = driven_attributes(known + other_constraint)
+        overridden = [w["name"] for attr_name, ws in (("position", wp), ("orientation", wo)) if attr_name in driven
+                      for w in ws]
         if b["dag"] is None:
             cls = "unclassified (no unique scene element)"
-        elif known or other_constraint:
-            cls = "constrained"
         elif unknown:
             cls = "driven by an unknown operator"
+        elif competing or overridden:
+            cls = "competing writers"
+        elif known or other_constraint:
+            cls = "constrained"
         elif opw:
             cls = "operator-driven"
-        elif len([w for w in wp if w["kind"] == "control"]) > 1 or len([w for w in wo if w["kind"] == "control"]) > 1:
-            cls = "competing writers"
-        elif ctrl:
+        elif ctrl and not srcless:
             cls = "direct FK"
+        elif srcless and not ctrl:
+            cls = "channel-driven without a control"
+        elif ctrl or srcless:
+            cls = "competing writers"
         else:
             cls = "no writer (structurally fixed or driven outside the observed bindings)"
         row = {"class": cls, "parent": b.get("parent_bone"), "index": b["index"],
@@ -254,7 +288,12 @@ def classify(obs):
                "position_writers": [w["name"] for w in wp], "orientation_writers": [w["name"] for w in wo],
                "scale": value(b.get("scale"))}
         if cls == "constrained":
-            row["dormant_channels"] = [w["name"] for w in ctrl]
+            row["constraint_driven_attributes"] = sorted(driven)
+            row["dormant_slave_base_channels"] = sorted(slave_base.get(b["dag"], []))
+            row["structural_offset_channels"] = [w["name"] for w in ctrl]  # writes an attribute no constraint sets
+        if cls == "channel-driven without a control":
+            row["channels"] = [channel_evidence(w, b["local_orientation"] if w in wo else b["local_position"])
+                               for w in srcless]
         if cls == "direct FK":
             row["orientation"] = [channel_evidence(w, b["local_orientation"]) for w in wo]
             row["position"] = [channel_evidence(w, b["local_position"]) for w in wp]
@@ -300,12 +339,22 @@ def classify(obs):
         owner = owner_of_transform.get(to["handle"]) if to else None
         if to_attr == "targetWeight":
             k = "constraint weight"
+        elif to and to["handle"] in slave_of:
+            k = "constraint slave base (dormant)"
         elif owner and owner[0] == "handle":
             k = "rig handle"
         elif owner and owner[0] == "bone":
             bc = bone_rows[owner[1]]["class"]
-            k = ("dormant (constrained bone)" if bc == "constrained" else "bone, operator output" if not
-                 is_control(frm) else "direct FK bone" if bc == "direct FK" else "bone (%s)" % bc)
+            if frm and not is_control(frm):
+                k = "bone, operator output"
+            elif frm is None:
+                k = "bone, channel without a control"
+            elif bc == "constrained":
+                k = "constrained bone, structural offset"
+            elif bc == "direct FK":
+                k = "direct FK bone"
+            else:
+                k = "bone (%s)" % bc
         else:
             k = "other (flex, scale, eye or non-transform)"
         channel_class[hd] = k
@@ -461,8 +510,10 @@ def markdown(report):
     L += ["", "## Bones", "", "| Bone | Parent | Class | Drivers / dormant | Translation |", "|---|---|---|---|---|"]
     for n, r in sorted(a["bones"].items(), key=lambda kv: kv[1]["index"] if kv[1]["index"] is not None else 1e9):
         extra = "; ".join(r["drivers"]) or ""
-        if r.get("dormant_channels"):
-            extra += " | dormant: " + ", ".join(r["dormant_channels"])
+        if r.get("dormant_slave_base_channels"):
+            extra += " | dormant slave base: " + ", ".join(r["dormant_slave_base_channels"])
+        if r.get("structural_offset_channels"):
+            extra += " | structural offset: " + ", ".join(r["structural_offset_channels"])
         L.append("| %s | %s | %s | %s | %s |" % (n, r["parent"], r["class"], extra or "-",
                                                  ", ".join(r.get("translation", [])) or "-"))
     L += ["", "## Scale", "", "```", json.dumps(a["scale"], indent=1, sort_keys=True), "```", ""]

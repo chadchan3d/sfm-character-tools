@@ -72,7 +72,7 @@ class ObserverTests(Base):
         self.assertTrue(obs["readonly"]["unchanged"])
         self.assertEqual(obs["format"], "F01-S0-survey-v1")
         self.assertEqual(obs["time"]["t_chan"], F.T_CHAN)
-        self.assertEqual(len(obs["bones"]), 10)
+        self.assertEqual(len(obs["bones"]), 11)
         self.assertEqual(sorted(obs["rig"]["handles"]), ["Foot_l", "Hip", "Knee_l", "rig_footHelper0", "rig_root"])
         self.assertEqual(obs["bones"]["bip_knee_l"]["parent_bone"], "bip_hip_l")
         self.assertEqual(obs["bones"]["bip_pelvis"]["parent_bone"], None)
@@ -143,7 +143,13 @@ class AnalyzerTests(Base):
         b = rep["analysis"]["bones"]
         for n in ("bip_pelvis", "bip_hip_l", "bip_knee_l", "bip_foot_l"):
             self.assertEqual(b[n]["class"], "constrained", n)
-        self.assertEqual(b["bip_pelvis"]["dormant_channels"], ["bip_pelvis_p", "bip_pelvis_o"])
+        self.assertEqual(b["bip_pelvis"]["dormant_slave_base_channels"], ["bip_pelvis_o", "bip_pelvis_p"])
+        self.assertEqual(b["bip_pelvis"]["structural_offset_channels"], [])
+        self.assertEqual(b["bip_hip_l"]["structural_offset_channels"], ["bip_hip_l_p"])
+        self.assertEqual(b["bip_hip_l"]["dormant_slave_base_channels"], ["bip_hip_l_o"])
+        self.assertEqual(b["bip_hip_l"]["constraint_driven_attributes"], ["orientation"])
+        self.assertEqual(b["bip_shin_twist_l"]["class"], "channel-driven without a control")
+        self.assertEqual([e["keys"] for e in b["bip_shin_twist_l"]["channels"]], [[20], [20]])
         self.assertEqual(len(b["bip_foot_l"]["drivers"]), 2)  # IK end joint and orient constraint
         self.assertEqual(b["bip_hip_twist2_l"]["class"], "operator-driven")
         self.assertEqual(b["bip_wing_l"]["class"], "driven by an unknown operator")
@@ -168,7 +174,9 @@ class AnalyzerTests(Base):
         self.assertEqual(ik["solver"]["poleVector"], [0.0, 1.0, 0.0])
         self.assertEqual(a["controls"]["Hip"]["channels"][0]["drives"], "handle:Hip")
         self.assertEqual(a["clocks_by_channel_class"]["constraint weight"]["channels"], 1)
-        self.assertEqual(a["clocks_by_channel_class"]["dormant (constrained bone)"]["channels"], 8)
+        self.assertEqual(a["clocks_by_channel_class"]["constraint slave base (dormant)"]["channels"], 5)
+        self.assertEqual(a["clocks_by_channel_class"]["constrained bone, structural offset"]["channels"], 3)
+        self.assertEqual(a["clocks_by_channel_class"]["bone, channel without a control"]["channels"], 2)
 
     def test_competing_writers_are_unaccounted(self):
         obs, rep = self.report(competing=True)
@@ -179,7 +187,7 @@ class AnalyzerTests(Base):
         obs, rep = self.report(stale=("bip_toe_l_o", "bip_pelvis_o"))
         c = rep["analysis"]["clocks_by_channel_class"]
         self.assertEqual(c["direct FK bone"]["other_clocks"], {str(F.T_CHAN + 91): 1})
-        self.assertEqual(c["dormant (constrained bone)"]["other_clocks"], {str(F.T_CHAN + 91): 1})
+        self.assertEqual(c["constraint slave base (dormant)"]["other_clocks"], {str(F.T_CHAN + 91): 1})
         self.assertEqual(c["rig handle"]["other_clocks"], {})
         self.assertEqual(rep["analysis"]["off_clock_channels"], ["bip_pelvis_o", "bip_toe_l_o"])
 
