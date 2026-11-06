@@ -44263,4 +44263,526 @@ def prod_body_noop(plans, D, C, region, profile):
     expected = prod_body_expected_skeleton(region, D, C, profile)
     return not prod_body_verify_skeleton(D, D, expected, C, profile, values)
 
+
+
+# --- part 3: the live layer (discovery, capture, P1-P7) --------------------------------------------------------------
+# Native reads and writes reuse the stage D primitives qualified for the left arm (strict reads, the writer index,
+# authored and observed captures, layer snapshots, InsertKeyAtTime + SetKeyValue, the Motion Editor gate, the clock
+# check, the same-time refresh). Nothing here polls, rebuilds a rig or retargets.
+
+PROD_BODY_MAX_CHANNELS = 16384
+
+
+def prod_body_wrap(fn):
+    """Run one live step; stage D refusals carry technical messages, so they become body refusals with user copy
+    (the detail is logged)."""
+    try:
+        return fn()
+    except ProdPoseUnreadable as exc:
+        raise prod_body_error(u"evidence-unreadable", u"%s" % exc)
+    except ProdPoseError as exc:
+        if u"%s" % exc in PROD_BODY_MESSAGES.values() or exc.code in (u"capture-clock", u"editor-mode", u"time-mapping",
+                                                                       u"stale"):
+            raise
+        code = exc.code if exc.code in PROD_BODY_MESSAGES else u"structure-unsupported"
+        raise prod_body_error(code, u"%s" % exc)
+
+
+def prod_body_live(row, profile):
+    """Every native element of the pinned instance a full-body operation depends on, resolved by identity inside
+    the instance (M-06: the instance's own channels clip by membership, never a name lookup)."""
+    shot, animset, gm = row["shot"], row["animset"], row["gm"]
+    L = {u"shot": shot, u"animset": animset, u"gm": gm, u"profile": profile}
+    nodes, parents = prod_pose_walk(prod_pose_attr(shot, u"scene"))
+    if prod_pose_h(gm) not in nodes:
+        raise prod_body_error(u"rig-differs", u"the character model is not in the current shot's scene")
+    L[u"nodes"], L[u"parents"] = nodes, parents
+    rigs = []
+    for obj in nodes.values():
+        if prod_pose_type(obj) == u"DmeRig":
+            for reg in prod_pose_seq(prod_pose_attr(obj, u"animSetList")):
+                linked = prod_pose_attr(reg, u"animationSet")
+                if linked is not None and prod_pose_h(linked) == prod_pose_h(animset):
+                    rigs.append((obj, reg))
+    if len(rigs) != 1:
+        raise prod_body_error(u"rig-differs", u"%d rig registrations for the character" % len(rigs))
+    L[u"rigs"] = rigs
+    L[u"rig"], L[u"reg"] = rigs[0]
+    L[u"owned"] = prod_pose_seq(prod_pose_attr(L[u"reg"], u"elementList"))
+    handles = {}
+    for obj in L[u"owned"]:
+        if obj is not None and prod_pose_type(obj) == u"DmeRigHandle":
+            name = prod_pose_text(obj.GetName())
+            if name in handles:
+                raise prod_body_error(u"ambiguous", u"rig handle %s is duplicated" % name)
+            handles[name] = obj
+    L[u"rig_handles"] = handles
+    L[u"all_controls"] = prod_pose_seq(prod_pose_attr(animset, u"controls"))
+    controls = {}
+    for c in L[u"all_controls"]:
+        name = prod_pose_text(c.GetName())
+        if name in controls:
+            raise prod_body_error(u"ambiguous", u"control %s is duplicated" % name)
+        controls[name] = c
+    L[u"controls"] = controls
+    L[u"clip"] = prod_instance_channels_clip(animset, shot)
+    L[u"clip_channels"] = prod_pose_seq(prod_pose_attr(L[u"clip"], u"channels"), PROD_BODY_MAX_CHANNELS)
+    channels = {}
+    for ch in L[u"clip_channels"]:
+        name = prod_pose_text(ch.GetName())
+        if name in channels:
+            raise prod_body_error(u"ambiguous", u"channel %s is duplicated" % name)
+        channels[name] = ch
+    L[u"channels"] = channels
+    bones = prod_pose_seq(prod_pose_attr(gm, u"bones"))
+    by_transform = dict((prod_pose_h(b), b) for b in bones)
+    L[u"bones"] = {}
+    for obj in nodes.values():
+        if not prod_pose_has(obj, u"transform"):
+            continue
+        t = prod_pose_attr(obj, u"transform")
+        if t is None or prod_pose_h(t) not in by_transform:
+            continue
+        m = PROD_POSE_BONE_NAME_RE.match(prod_pose_text(t.GetName()))
+        if m is None:
+            raise prod_body_error(u"structure-unsupported", u"unrecognised bone transform %s" %
+                                  prod_pose_text(t.GetName()))
+        name = m.group(2)
+        if name in L[u"bones"]:
+            raise prod_body_error(u"ambiguous", u"bone %s is duplicated" % name)
+        L[u"bones"][name] = {u"dag": obj, u"transform": t, u"index": int(m.group(1))}
+    if len(L[u"bones"]) != len(bones):
+        raise prod_body_error(u"structure-unsupported", u"not every model bone has exactly one scene element")
+    operators = prod_pose_seq(prod_pose_attr(animset, u"operators"))
+    seen = set(prod_pose_h(x) for x in operators)
+    for op in prod_pose_seq(prod_pose_attr(shot, u"operators")):
+        if prod_pose_h(op) not in seen:
+            operators.append(op)
+            seen.add(prod_pose_h(op))
+    L[u"operators"] = operators
+    return L
+
+
+def prod_body_discover(L, t_chan, index):
+    """The portable discovery data of the pinned instance (the form prod_body_classify reads), at the mapped tick."""
+    t = prod_pose_time(t_chan)
+    parents = L[u"parents"]
+
+    def one_parent(h):
+        ps = [p for p in parents.get(h, []) if p is not None]
+        return ps, (L[u"nodes"][ps[0]] if len(ps) == 1 else None)
+
+    def state(dag):
+        s = prod_pose_transform_state(dag)
+        return dict((k, s[k]) for k in (u"local_position", u"local_orientation", u"world_position",
+                                        u"world_orientation", u"scale"))
+    gm = L[u"gm"]
+    D = {u"t_chan": t_chan, u"unknown_operator_types": []}
+    D[u"model"] = dict(state(gm), handle=prod_pose_h(gm), transform=prod_pose_h(prod_pose_attr(gm, u"transform")),
+                       model_ref=prod_pose_text(prod_pose_attr(gm, u"modelName")) if prod_pose_has(gm, u"modelName")
+                       else None)
+    D[u"rig"] = {u"names": [prod_pose_text(r.GetName()) for r, _ in L[u"rigs"]], u"registrations": len(L[u"rigs"]),
+                 u"handles": {}}
+    for name, dag in L[u"rig_handles"].items():
+        ps, parent = one_parent(prod_pose_h(dag))
+        D[u"rig"][u"handles"][name] = dict(state(dag), handle=prod_pose_h(dag),
+                                           transform=prod_pose_h(prod_pose_attr(dag, u"transform")),
+                                           parent_count=len(ps), parent=prod_pose_ident(parent))
+    dag_to_bone = dict((prod_pose_h(b[u"dag"]), n) for n, b in L[u"bones"].items())
+    D[u"bones"] = {}
+    for name, b in L[u"bones"].items():
+        ps, _ = one_parent(prod_pose_h(b[u"dag"]))
+        D[u"bones"][name] = dict(state(b[u"dag"]), index=b[u"index"], handle=prod_pose_h(b[u"dag"]),
+                                 transform=prod_pose_h(b[u"transform"]), parent_count=len(ps),
+                                 parent=dag_to_bone.get(ps[0]) if len(ps) == 1 else None)
+    D[u"operators"] = []
+    for op in L[u"operators"]:
+        row = {u"handle": prod_pose_h(op), u"type": prod_pose_type(op), u"name": prod_pose_text(op.GetName()),
+               u"slaves": {}, u"targets": [], u"pole": None, u"solver": {}}
+        for slot in PROD_BODY_SLAVE_SLOTS:
+            present, slave = prod_pose_opt_attr(op, slot)
+            if present:
+                target = prod_pose_attr(slave, u"target") if slave is not None else None
+                row[u"slaves"][slot] = None if slave is None else {
+                    u"slave": prod_pose_h(slave), u"target": prod_pose_h(target) if target is not None else None}
+        if prod_pose_has(op, u"targets"):
+            for tgt in prod_pose_seq(prod_pose_attr(op, u"targets")):
+                target = prod_pose_attr(tgt, u"target")
+                row[u"targets"].append({u"handle": prod_pose_h(tgt), u"target": prod_pose_h(target) if target is not None
+                                        else None, u"weight": prod_pose_field(tgt, u"targetWeight"),
+                                        u"oOffset": prod_pose_field(tgt, u"oOffset"),
+                                        u"vecOffset": prod_pose_field(tgt, u"vecOffset")})
+        if prod_pose_has(op, u"pvTarget"):
+            pole = prod_pose_attr(op, u"pvTarget")
+            row[u"pole"] = prod_pose_h(pole) if pole is not None else None
+        for name in PROD_POSE_SOLVER_FIELDS:
+            if prod_pose_has(op, name):
+                row[u"solver"][name] = prod_pose_field(op, name)
+        D[u"operators"].append(row)
+    D[u"controls"] = {}
+    for name, c in L[u"controls"].items():
+        refs = {}
+        for attr in (u"positionChannel", u"orientationChannel", u"channel", u"leftvaluechannel", u"rightvaluechannel"):
+            present, ch = prod_pose_opt_attr(c, attr)
+            if present:
+                refs[attr] = prod_pose_h(ch) if ch is not None else None
+        D[u"controls"][name] = {u"handle": prod_pose_h(c), u"type": prod_pose_type(c), u"channels": refs}
+    D[u"channels"], D[u"writers"] = {}, {}
+    for name, ch in L[u"channels"].items():
+        to, to_attr = prod_pose_attr(ch, u"toElement"), prod_pose_text(prod_pose_attr(ch, u"toAttribute"))
+        log = ch.GetLog()
+        row = {u"handle": prod_pose_h(ch), u"from": prod_pose_ident(prod_pose_attr(ch, u"fromElement")),
+               u"from_attribute": prod_pose_text(prod_pose_attr(ch, u"fromAttribute")), u"to": prod_pose_ident(to),
+               u"to_attribute": to_attr, u"mode": prod_pose_attr(ch, u"mode"),
+               u"log_type": prod_pose_type(log) if log is not None else None,
+               u"layers": [prod_pose_type(log.GetLayer(i)) for i in range(int(log.GetNumLayers()))] if log is not None
+               else [], u"value": None, u"clock": prod_pose_ticks_of(ch.GetCurrentTime())}
+        if log is not None and row[u"log_type"] in (u"DmeVector3Log", u"DmeQuaternionLog"):
+            row[u"value"] = prod_pose_plain(log.GetValue(t))
+        D[u"channels"][name] = row
+        if to is not None:
+            key = u"%d:%s" % (prod_pose_h(to), to_attr)
+            D[u"writers"][key] = len(index[u"destinations"].get(key, []))
+    return prod_pose_roundtrip(D)
+
+
+def prod_body_identity(L):
+    """Every native identity a full-body operation depends on; compared exactly between its phases."""
+    out = {u"shot": prod_pose_h(L[u"shot"]), u"animset": prod_pose_h(L[u"animset"]), u"gm": prod_pose_h(L[u"gm"]),
+           u"rig": prod_pose_h(L[u"rig"]), u"registration": prod_pose_h(L[u"reg"]), u"clip": prod_pose_h(L[u"clip"]),
+           u"handles": dict((n, prod_pose_h(v)) for n, v in L[u"rig_handles"].items()),
+           u"bones": dict((n, [prod_pose_h(b[u"dag"]), prod_pose_h(b[u"transform"]), b[u"index"]])
+                          for n, b in L[u"bones"].items()),
+           u"operators": sorted(prod_pose_h(op) for op in L[u"operators"]), u"channels": {}}
+    for name, ch in L[u"channels"].items():
+        log = ch.GetLog()
+        out[u"channels"][name] = [prod_pose_h(ch), prod_pose_h(log) if log is not None else None] + (
+            [prod_pose_h(log.GetLayer(i)) for i in range(int(log.GetNumLayers()))] if log is not None else [])
+    return out
+
+
+def prod_body_bindings(L, C):
+    """The native objects of every written channel (one layer each, as classified)."""
+    out = {}
+    for name in C[u"written"]:
+        ch = L[u"channels"][name]
+        log = ch.GetLog()
+        out[name] = {u"name": name, u"channel": ch, u"log": log, u"layer": log.GetLayer(0),
+                     u"kind": u"quaternion" if C[u"owners"][name][1] == u"orientation" else u"vector"}
+    return out
+
+
+def prod_body_state(row, profile):
+    """Resolve, read and classify the pinned instance: identities, time triple, discovery, classification,
+    descriptor, and the authored and observed captures."""
+    def read():
+        L = prod_body_live(row, profile)
+        index = prod_pose_writer_index()
+        names = sorted(n for n in profile[u"written_handle_channels"] if n in L[u"channels"])
+        if not names:
+            raise prod_body_error(u"rig-differs", u"no written handle channel is present")
+        time = prod_pose_time_read(L, names)
+        D = prod_body_discover(L, time[u"t_chan"], index)
+        C = prod_body_classify(D, profile)
+        return {u"L": L, u"D": D, u"C": C, u"time": time, u"descriptor": prod_body_descriptor(D, C, profile),
+                u"authored": prod_pose_capture_authored(L), u"observed": prod_pose_capture_observed(L),
+                u"identity": prod_body_identity(L)}
+    return prod_body_wrap(read)
+
+
+def prod_body_resolve_profile(reg, authorization):
+    profile = prod_body_profile(reg, authorization[u"destination"][u"rig_class"])
+    if profile is None or not prod_body_usable(reg, authorization):
+        raise ProdPoseError(u"not-qualified", PROD_BODY_MESSAGES[u"unavailable"])
+    return profile
+
+
+def prod_body_current_time(identity, authorization, reg):
+    """The time triple pinned when the Save or Update dialog opens; every channel's clock must be the mapped tick."""
+    profile = prod_body_resolve_profile(reg, authorization)
+    row = prod_resolve_instance(prod_instance_token(authorization[u"context"]), identity)
+
+    def read():
+        L = prod_body_live(row, profile)
+        names = sorted(n for n in profile[u"written_handle_channels"] if n in L[u"channels"])
+        if not names:
+            raise prod_body_error(u"rig-differs", u"no written handle channel is present")
+        return L, prod_pose_time_read(L, names)
+    L, time = prod_body_wrap(read)
+    prod_pose_capture_clock_check(L, time[u"t_chan"])
+    return time
+
+
+def prod_body_capture(identity, authorization, reg, pinned_time=None, label=u"Save Pose"):
+    """Save New and Update Pose: read-only capture of the complete skeletal pose of the pinned instance at the
+    mapped tick. Never moves the playhead, writes or opens Undo. Refuses whenever the rig is not completely
+    classified, a channel's clock is not the mapped tick, a written layer is unsupported, or the time changed."""
+    refused = PROD_BODY_MESSAGES[u"update-refused" if label == u"Update Pose" else u"save-refused"]
+    profile = prod_body_resolve_profile(reg, authorization)
+    row = prod_resolve_instance(prod_instance_token(authorization[u"context"]), identity)
+    try:
+        st = prod_body_state(row, profile)
+    except ProdPoseError as exc:
+        if exc.code in (u"capture-clock", u"stale", u"time-mapping"):
+            raise
+        raise ProdPoseError(exc.code, refused)
+    t_chan = st[u"time"][u"t_chan"]
+    prod_pose_capture_clock_check(st[u"L"], t_chan)
+    bindings = prod_body_bindings(st[u"L"], st[u"C"])
+    for name in sorted(bindings):
+        snap = prod_body_wrap(lambda: prod_pose_layer_snapshot(bindings[name], t_chan))
+        problems = prod_pose_snapshot_evidence_problems(snap) or prod_pose_layer_problems(
+            snap, PROD_BODY_TRANSFORM_TYPES[st[u"C"][u"owners"][name][1]])
+        if problems:
+            prod_body_error(u"structure-unsupported", u"%s: %s" % (name, problems))
+            raise ProdPoseError(u"structure-unsupported", refused)
+    if pinned_time is not None and (st[u"time"][u"t_doc"], st[u"time"][u"t_shot"], t_chan) != (
+            pinned_time[u"t_doc"], pinned_time[u"t_shot"], pinned_time[u"t_chan"]):
+        raise ProdPoseError(u"stale", PROD_POSE_MESSAGES[u"stale"])
+    try:
+        region = prod_body_payload(st[u"D"], st[u"C"], profile)
+    except ProdPoseError as exc:
+        raise ProdPoseError(exc.code, refused)
+    try:
+        shot_name = prod_pose_text(row["shot"].GetName()) or u"shot"
+    except Exception:
+        shot_name = u"shot"
+    return prod_pose_roundtrip({
+        u"format": PROD_POSE_FORMAT, u"version": PROD_BODY_POSE_VERSION, u"conventions": dict(PROD_POSE_CONVENTIONS),
+        u"registry": {u"profile_set": PROD_BODY_REGISTRY_FORMAT, u"version": 1},
+        u"source": {u"rig_class": authorization[u"destination"][u"rig_class"], u"model_ref": u(identity["model"]),
+                    u"shot_name": shot_name[:256], u"t_doc_ticks": st[u"time"][u"t_doc"],
+                    u"t_shot_ticks": st[u"time"][u"t_shot"]},
+        u"regions": {PROD_BODY_REGION: region}})
+
+
+def prod_body_preflight(identity, authorization, item, reg):
+    """P1: the fresh record, the complete classification and exact compatibility (descriptor, A1 FK positions,
+    proportions, passive values), the Motion Editor gate over every channel, the one deduplicated plan, the
+    combined expected authored state, the expected skeleton and the true no-op decision."""
+    record = item[u"record"]
+    region = record[u"pose"][u"regions"][PROD_BODY_REGION]
+    profile = prod_body_resolve_profile(reg, authorization)
+    source_class, dest_class = record[u"pose"][u"source"][u"rig_class"], authorization[u"destination"][u"rig_class"]
+    if region[u"profile_id"] != profile[u"_id"] or not any(
+            m[u"region"] == PROD_BODY_REGION and m[u"from"] == source_class and m[u"to"] == dest_class
+            for m in authorization[u"mappings"]):
+        raise ProdPoseError(u"not-qualified", PROD_BODY_MESSAGES[u"unavailable"])
+    row = prod_resolve_instance(prod_instance_token(authorization[u"context"]), identity)
+    undo = prod_pose_undo_state(dm())
+    if prod_pose_undo_problems(undo):
+        raise prod_body_error(u"evidence-unreadable", u"the Undo history is unreadable: %s" % prod_pose_undo_problems(undo))
+    st = prod_body_state(row, profile)
+    D, C, L = st[u"D"], st[u"C"], st[u"L"]
+    prod_body_compare_descriptor(region[u"descriptor"], st[u"descriptor"])
+    prod_body_check_fk_positions(region, D, C)
+    t_chan = st[u"time"][u"t_chan"]
+    gate = prod_pose_apply_gate(L, sorted(L[u"channels"]), t_chan)
+    bindings = prod_body_bindings(L, C)
+    snaps = dict((n, prod_body_wrap(lambda n=n: prod_pose_layer_snapshot(bindings[n], t_chan))) for n in bindings)
+    plans = prod_body_wrap(lambda: prod_body_plan(region, D, C, snaps, t_chan))
+    values = dict(region[u"positions"])
+    values.update(region[u"orientations"])
+    expected = prod_body_expected_skeleton(region, D, C, profile)
+    noop = prod_body_noop(plans, D, C, region, profile)
+    handles = dict((n, prod_pose_h(b[u"channel"])) for n, b in bindings.items())
+    return {u"state": st, u"profile": profile, u"undo": undo, u"time": st[u"time"], u"gate": gate,
+            u"bindings": bindings, u"snaps": snaps, u"plans": plans, u"values": values, u"expected": expected,
+            u"noop": noop, u"expected_authored": prod_body_expected_authored(st[u"authored"], plans, handles),
+            u"row": row}
+
+
+def prod_body_same_state(identity, authorization, pre):
+    """P2 / Abort: a fresh read equals the P1 state exactly (identities, time, classification, authored, observed,
+    the planned layers, the gate, Undo). Returns the problems; unreadable evidence is a problem."""
+    problems = []
+    try:
+        row = prod_resolve_instance(prod_instance_token(authorization[u"context"]), identity)
+        st = prod_body_state(row, pre[u"profile"])
+    except Exception as exc:
+        return [u"unreadable: %s" % exc]
+    for key in (u"identity", u"time", u"authored", u"observed", u"descriptor"):
+        if st[key] != pre[u"state"][key]:
+            problems.append(u"%s changed %s" % (key, prod_pose_differences(st[key], pre[u"state"][key])[:4]))
+    if st[u"C"] != pre[u"state"][u"C"]:
+        problems.append(u"classification changed")
+    for name, snap in pre[u"snaps"].items():
+        try:
+            now = prod_pose_layer_snapshot(prod_body_bindings(st[u"L"], st[u"C"])[name], st[u"time"][u"t_chan"])
+        except Exception as exc:
+            problems.append(u"%s unreadable %r" % (name, exc))
+            continue
+        if now[u"unreadable"]:
+            problems.append(u"%s unreadable %s" % (name, now[u"unreadable"]))
+        for f in (u"times", u"values", u"metadata", u"defaults", u"bookmarks", u"curvetypes", u"compressed",
+                  u"curveinfo"):
+            if now[f] != snap[f]:
+                problems.append(u"%s %s changed" % (name, f))
+    try:
+        gate = prod_pose_apply_gate(st[u"L"], sorted(st[u"L"][u"channels"]), st[u"time"][u"t_chan"])
+        if gate != pre[u"gate"]:
+            problems.append(u"gate changed")
+    except Exception as exc:
+        problems.append(u"gate refused %r" % (exc,))
+    undo = prod_pose_undo_state(dm())
+    if prod_pose_undo_problems(undo) or undo != pre[u"undo"]:
+        problems.append(u"Undo history changed or unreadable")
+    return problems
+
+
+def prod_body_apply(identity, authorization, item, reg, phase_callback=None):
+    """P1-P6 of one full-body Apply: one owned Undo transaction over the whole plan. Returns no-op,
+    verification-pending (P7 follows on the shared turn) or not-applied (aborted and verified unchanged); raises a
+    refusal before any write, or ProdRecoveryUnverifiedError when the scene state cannot be confirmed."""
+    mode = authorization[u"mode"]
+    name = item[u"record"][u"name"]
+    pre = prod_body_preflight(identity, authorization, item, reg)
+    prod_pose_log(u"BODY-P1", {u"time": pre[u"time"], u"noop": pre[u"noop"], u"actions": dict(
+        (a, sum(1 for p in pre[u"plans"] if p[u"action"] == a)) for a in (u"none", u"update", u"insert"))})
+    if pre[u"noop"]:
+        if prod_pose_undo_state(dm()) != pre[u"undo"]:
+            raise ProdPoseError(u"stale", PROD_POSE_MESSAGES[u"stale"])
+        return {u"phase": u"no-op"}
+    # P2: final revalidation of the record and the whole state immediately before the transaction.
+    fresh = prod_pose_read_file(item[u"path"], reg)
+    if fresh[1] != item[u"revision"]:
+        raise ProdPoseLibraryError(u"record-changed", PROD_POSE_MESSAGES[u"record-changed"])
+    changed = prod_body_same_state(identity, authorization, pre)
+    if changed:
+        prod_pose_log(u"BODY-P2-refused", {u"problems": changed[:16]})
+        raise ProdPoseError(u"stale", PROD_POSE_MESSAGES[u"stale"])
+    dm_obj = dm()
+    label = u"Apply Pose %s" % name
+    opened = finished = False
+    written = []
+    t_chan = pre[u"time"][u"t_chan"]
+    tol = pre[u"profile"][u"tolerances"]
+    try:
+        dm_obj.StartUndo(prod_pose_native_name(label), prod_pose_native_name(u"Redo " + label))
+        opened = True
+        if phase_callback is not None:
+            phase_callback(u"P3-owned", {u"label": label})
+        for plan in pre[u"plans"]:
+            if plan[u"action"] != u"none":
+                prod_pose_write(pre[u"bindings"][plan[u"name"]], plan)
+                written.append(plan[u"name"])
+        prod_pose_qualification_fault(mode, u"after-writes")
+        problems = []
+        items = getattr(dm_obj, "ItemsAddedToCurrentUndo", None)
+        if written and callable(items) and items() is not True:
+            problems.append(u"the writes were not recorded in the open Undo operation")
+        for plan in pre[u"plans"]:
+            after = prod_pose_layer_snapshot(pre[u"bindings"][plan[u"name"]], t_chan)
+            problems.extend(prod_pose_check_postconditions(pre[u"snaps"][plan[u"name"]], after, plan,
+                                                           PROD_POSE_INSERT_ALLOWED_METADATA))
+            if after[u"metadata"] != pre[u"snaps"][plan[u"name"]][u"metadata"]:
+                problems.append(u"%s: log or layer metadata changed" % plan[u"name"])
+            got = after[u"evaluated_at_t"]
+            if got is None or (prod_pose_angle_deg(got, plan[u"value"]) > tol[u"effective_angle_degrees"]
+                               if len(plan[u"value"]) == 4 else not prod_body_exact(list(got), list(plan[u"value"]))):
+                problems.append(u"%s: the log does not evaluate to the written value at t" % plan[u"name"])
+        L = pre[u"state"][u"L"]
+        if prod_pose_capture_authored(L) != pre[u"expected_authored"]:
+            problems.append(u"the instance's authored state is not exactly the one planned state")
+        if prod_pose_capture_observed(L) != pre[u"state"][u"observed"]:
+            problems.append(u"a constraint or operator attribute changed")
+        if problems:
+            raise ProdPoseError(u"structure-unsupported", u"P5: %s" % problems[:8])
+        finished = True                    # from here on, Abort is never attempted
+        dm_obj.FinishUndo()
+    except Exception as exc:
+        prod_pose_log(u"BODY-P3-P6-failure", {u"error": repr(exc), u"opened": opened, u"finished": finished,
+                                              u"written": len(written)})
+        if not opened:
+            problems = prod_body_same_state(identity, authorization, pre)
+            if problems:
+                raise ProdRecoveryUnverifiedError(PROD_POSE_MESSAGES[u"recovery-unverified"] % {u"name": name})
+            return {u"phase": u"not-applied", u"reason": repr(exc)}
+        if not finished:
+            try:
+                dm_obj.AbortUndoableOperation()
+            except Exception as abort_exc:
+                prod_pose_log(u"BODY-abort-failed", {u"error": repr(abort_exc)})
+                raise ProdRecoveryUnverifiedError(PROD_POSE_MESSAGES[u"recovery-unverified"] % {u"name": name})
+            problems = prod_body_same_state(identity, authorization, pre)
+            prod_pose_log(u"BODY-abort-verified" if not problems else u"BODY-abort-unverified",
+                          {u"problems": problems[:16]})
+            if problems:
+                raise ProdRecoveryUnverifiedError(PROD_POSE_MESSAGES[u"recovery-unverified"] % {u"name": name})
+            return {u"phase": u"not-applied", u"reason": repr(exc)}
+        undo = prod_pose_undo_state(dm_obj)
+        if not prod_pose_undo_problems(undo) and undo[u"can_undo"] is True and undo[u"undo_desc"] == label:
+            if phase_callback is not None:
+                phase_callback(u"native-commit", {u"label": label, u"finish_exception": True})
+            return {u"phase": u"verification-pending",
+                    u"pending": prod_body_pending(pre, label, finish_exception=True)}
+        raise ProdRecoveryUnverifiedError(PROD_POSE_MESSAGES[u"recovery-unverified"] % {u"name": name})
+    if phase_callback is not None:
+        phase_callback(u"native-commit", {u"label": label})
+    undo = prod_pose_undo_state(dm_obj)
+    owned = not prod_pose_undo_problems(undo) and undo[u"can_undo"] is True and undo[u"undo_desc"] == label
+    prod_pose_log(u"BODY-P6", {u"undo": undo, u"owned": owned, u"written": len(written)})
+    if owned:
+        prod_pose_request_refresh(pre[u"time"][u"t_doc"])
+    return {u"phase": u"verification-pending", u"pending": prod_body_pending(pre, label, owned_top=owned)}
+
+
+def prod_body_pending(pre, label, finish_exception=False, owned_top=True):
+    """The P7 record: Python data only (no native object is kept for the deferred turn)."""
+    st = pre[u"state"]
+    return {u"body": True, u"label": label, u"undo_label": label, u"time": pre[u"time"], u"gate": pre[u"gate"],
+            u"profile": pre[u"profile"], u"identity": st[u"identity"], u"expected_authored": pre[u"expected_authored"],
+            u"observed": st[u"observed"], u"baseline": st[u"D"], u"classes": st[u"C"],
+            u"expected": dict((k, [list(v[0]), list(v[1])]) for k, v in pre[u"expected"].items()),
+            u"values": pre[u"values"], u"finish_exception": finish_exception, u"owned_top": owned_top,
+            u"regions": [PROD_BODY_REGION]}
+
+
+def prod_body_verify_applied(pending):
+    """P7 after the context gate: the owned Undo entry, identities, time and gate unchanged, then the one expected
+    authored state, the unchanged constraint attributes and the whole evaluated skeleton. Read-only. Any failed or
+    unreadable item gives committed-unverified with the failing item logged."""
+    if pending.get(u"finish_exception") or not pending.get(u"owned_top"):
+        return prod_apply_deferred_unverified(u"ownership-uncertain")
+    authorization = pending[u"authorization"]
+    profile = pending[u"profile"]
+    try:
+        row = prod_resolve_instance(prod_instance_token(authorization[u"context"]))
+        undo = prod_pose_undo_state(dm())
+        if prod_pose_undo_problems(undo) or undo[u"undo_desc"] != pending[u"undo_label"] or undo[u"can_undo"] is not True:
+            prod_pose_log(u"BODY-P7-unverified", {u"reason": u"undo", u"undo": undo})
+            return prod_apply_deferred_unverified(u"undo-history-changed")
+        L = prod_body_live(row, profile)
+        if prod_body_identity(L) != pending[u"identity"]:
+            return prod_apply_deferred_unverified(u"context-changed")
+        names = sorted(n for n in profile[u"written_handle_channels"] if n in L[u"channels"])
+        time = prod_pose_time_read(L, names)
+        if time != pending[u"time"]:
+            prod_pose_log(u"BODY-P7-unverified", {u"reason": u"context-changed", u"time": time})
+            return prod_apply_deferred_unverified(u"context-changed")
+        try:
+            gate = prod_pose_apply_gate(L, sorted(L[u"channels"]), time[u"t_chan"])
+        except ProdPoseError as exc:
+            gate = repr(exc)
+        if gate != pending[u"gate"]:
+            prod_pose_log(u"BODY-P7-unverified", {u"reason": u"context-changed", u"gate": gate})
+            return prod_apply_deferred_unverified(u"context-changed")
+        problems = []
+        if prod_pose_capture_authored(L) != pending[u"expected_authored"]:
+            problems.append(u"authored keys")
+        if prod_pose_capture_observed(L) != pending[u"observed"]:
+            problems.append(u"constraint or operator attributes")
+        D = prod_body_discover(L, time[u"t_chan"], prod_pose_writer_index())
+        expected = dict((k, (v[0], v[1])) for k, v in pending[u"expected"].items())
+        problems.extend(prod_body_verify_skeleton(D, pending[u"baseline"], expected, pending[u"classes"], profile,
+                                                  pending[u"values"]))
+        if problems:
+            prod_pose_log(u"BODY-P7-unverified", {u"problems": problems[:16]})
+            return prod_apply_deferred_unverified(u"verify-failed")
+    except Exception as exc:
+        prod_pose_log(u"BODY-P7-unverified", {u"reason": u"verify-error", u"error": repr(exc)})
+        return prod_apply_deferred_unverified(u"verify-error")
+    prod_pose_log(u"BODY-P7-verified", {u"time": pending[u"time"]})
+    return {u"phase": u"committed-verified"}
+
 # === end of F-01 stage E block ===

@@ -31,6 +31,7 @@ if _THIS_DIR not in sys.path:
 
 import test_cpm_app_canonical_route as route  # noqa: E402
 import test_cpm_app_f01_pose_core as core  # noqa: E402
+import fake_sfm_body as FB  # noqa: E402
 
 try:
     _TEXT = unicode  # noqa: F821
@@ -505,6 +506,327 @@ def section_planner(ns, reg, fx, pose):
     check("P.expected_skeleton_detects_a_different_posture", len(problems) > 20, len(problems))
 
 
+
+# ---------------------------------------------------------------------------
+# S1-D: capture and the combined P1-P7 transaction on the fake native scene (fake_sfm_body.py)
+# ---------------------------------------------------------------------------
+
+IDENTITY = {"model": MODEL, "checksum": 1234, "animset_name": u"Krystal"}
+WRITTEN_HANDLES = set()
+
+
+class Pin(object):
+    world = None
+    session = u"session-1"
+    valid = [True]
+
+
+def live_namespace(app):
+    ns = build_namespace(app)
+
+    def resolve(token, identity=None):
+        if not Pin.valid[0] or token.get("session") != Pin.session or Pin.world is None:
+            raise RuntimeError("The selected character instance is no longer present (boundary).")
+        return {"shot": Pin.world.shot, "animset": Pin.world.animset, "gm": Pin.world.gm, "instance": token}
+
+    def channels_clip(animset, shot):
+        if Pin.world is None or animset is not Pin.world.animset or shot is not Pin.world.shot:
+            raise RuntimeError("channels clip not identified (boundary)")
+        return Pin.world.chan_clip
+    ns["prod_resolve_instance"] = resolve
+    ns["prod_instance_channels_clip"] = channels_clip
+    ns["prod_validate_context_token"] = lambda token: Pin.valid[0] or (_ for _ in ()).throw(RuntimeError("stale"))
+    ns["prod_context_token_matches"] = lambda token: Pin.valid[0] and token["instance"]["session"] == Pin.session
+    return ns
+
+
+def use_world(ns, world):
+    sfm, vs = world.modules()
+    ns["sfmApp"], ns["vs"] = sfm, vs
+    Pin.world = world
+
+
+def live_context(ns):
+    token = {"kind": ns["PROD_INSTANCE_TOKEN_KIND"], "session": Pin.session, "shot": u"pinned"}
+    return {"instance": token, "library_identity": dict(IDENTITY)}
+
+
+def authorize(ns, reg, label, item=None, mode=u"qualification"):
+    return ns["prod_pose_authorize"](live_context(ns), IDENTITY, reg, mode, label, item)
+
+
+def scene_writes(world):
+    return [c for c in world.calls if c[0] in ("SetKeyValue", "InsertKeyAtTime")]
+
+
+def all_keys(world):
+    return dict((n, world.keys(n)) for n in world.channels)
+
+
+def rotate(q, axis, degrees):
+    h = math.radians(degrees) / 2.0
+    r = [axis[0] * math.sin(h), axis[1] * math.sin(h), axis[2] * math.sin(h), math.cos(h)]
+    return list(FB.qnorm(FB.qmul(r, q)))
+
+
+TOUCHED_FK = (u"tail", u"Ear", u"index")
+
+
+def pose_differently(world):
+    """A distinctly posed destination: every written handle and many FK bones turned or moved (FK bone positions are
+    never touched: A1), the placement moved and turned, and the preserved jaw opened."""
+    for name, ch in world.channels.items():
+        layer = ch.attrs["log"].layer
+        if not layer.keys or layer.value_kind is None:
+            continue
+        fk = name.endswith(u"_o") and (any(t in name for t in TOUCHED_FK) or name == u"jaw_o")
+        if not (name in WRITTEN_HANDLES or fk or name in (u"rig_root_p", u"rig_root_o")):
+            continue
+        for k in layer.keys:
+            v = FB.plain(k[1])
+            if layer.value_kind == "quat":
+                if name == u"rig_root_o":
+                    v = rotate(v, [0.0, 0.0, 1.0], 30.0)
+                else:
+                    v = rotate(v, [1.0, 0.0, 0.0], 25.0)
+            elif name == u"rig_root_p":
+                v = [v[0] + 60.0, v[1] + 25.0, v[2]]
+            else:
+                v = [v[0] + 1.5, v[1] - 1.0, v[2]]
+            k[1] = FB.native(v, layer.value_kind)
+    world.evaluate()
+
+
+def placement_relative(world, root_name=u"rig_root"):
+    root = world.handle_dag[root_name]
+    return dict((n, FB.to_local((root.wp, root.wq), (dag.wp, dag.wq))) for n, dag in world.bone_dag.items())
+
+
+def max_difference(a, b, names=None):
+    names = names or list(a)
+    dp = max(math.sqrt(sum((x - y) ** 2 for x, y in zip(a[n][0], b[n][0]))) for n in names)
+    dq = max(math.degrees(2 * math.acos(min(1.0, abs(sum(x * y for x, y in zip(a[n][1], b[n][1]))))))
+             for n in names)
+    return dp, dq
+
+
+PRESERVED_CHANNELS = (u"rig_root_p", u"rig_root_o", u"jaw_o", u"tongue03_o", u"viewTarget_pos", u"Elbow_l_o",
+                      u"Knee_r_o", u"bip_lowerArm_l_twist2_o", u"bip_head_scale", u"A_flex_channel",
+                      u"Kiss_flex_channel", u"eyes_updown_flex_channel")
+
+
+def section_live(ns, reg, fx, root):
+    profile = profile_of(ns, reg)
+    WRITTEN_HANDLES.update(profile[u"written_handle_channels"])
+    if not os.path.isdir(root):
+        os.makedirs(root)
+    lib = {u"character_key": u"krystal2020", u"char_dir": os.path.join(root, u"Characters", u"krystal2020"),
+           u"library_root": root, u"model_ref": MODEL}
+    # Process A: capture shot15's Krystal.
+    src = FB.World(fx[u"shot15"])
+    use_world(ns, src)
+    auth = authorize(ns, reg, u"Save Pose")
+    head_before = src.head
+    pinned = ns["prod_body_current_time"](IDENTITY, auth, reg)
+    pose = ns["prod_body_capture"](IDENTITY, auth, reg, pinned_time=pinned)
+    check("L.capture_is_read_only", not scene_writes(src) and not src.dm.calls and src.head == head_before)
+    region = pose[u"regions"][u"full_body"]
+    check("L.capture_saves_the_live_position_and_orientation_values",
+          region[u"positions"][u"bip_tail05_p"] == src.keys(u"bip_tail05_p")[0][1] and
+          region[u"orientations"][u"bip_tail05_o"] == src.keys(u"bip_tail05_o")[0][1] and
+          len(region[u"positions"]) == 141 and len(region[u"orientations"]) == 137)
+    row = ns["prod_resolve_instance"](live_context(ns)["instance"])
+    live_D = ns["prod_body_discover"](ns["prod_body_live"](row, profile), fx[u"shot15"][u"t_chan"],
+                                      ns["prod_pose_writer_index"]())
+    check("L.live_discovery_classifies_as_the_native_fixture",
+          ns["prod_body_classify"](live_D, profile)[u"channels"] ==
+          ns["prod_body_classify"](fx[u"shot15"], profile)[u"channels"])
+    saved = ns["prod_pose_save_new"](lib, u"Full Body A", pose, u"20261106-120000-000000", reg)
+    src.timeline_mode = 3
+    refused("L.clip_editor_capture_refuses_on_channel_clocks",
+            outcome(lambda: ns["prod_body_capture"](IDENTITY, auth, reg)), u"capture-clock")
+    src.timeline_mode = 2
+    prod_auth = authorize(ns, reg, u"Save Pose", mode=u"production")
+    refused("L.production_build_has_no_full_body_save_until_qualified",
+            outcome(lambda: ns["prod_body_capture"](IDENTITY, prod_auth, reg)), u"not-qualified")
+    refused("L.capture_with_a_moved_playhead_is_stale", outcome(lambda: ns["prod_body_capture"](
+        IDENTITY, auth, reg, pinned_time=dict(pinned, t_chan=pinned[u"t_chan"] + 1))), u"stale")
+    source_relative = placement_relative(src)
+
+    # Process B: a new process and another instance (shot13), distinctly posed and placed.
+    fresh, _ = registries(ns)
+    item = [i for i in ns["prod_pose_discover"](lib[u"char_dir"], u"krystal2020", fresh)[u"items"]
+            if i[u"preset_id"] == saved[u"preset_id"]][0]
+    check("L.process_b_reloads_the_record_independently", item[u"record"] == saved[u"record"])
+    dst = FB.World(fx[u"shot13"])
+    pose_differently(dst)
+    use_world(ns, dst)
+    dp, dq = max_difference(placement_relative(dst), source_relative)
+    check("L.destination_is_distinctly_posed_before_apply", dq > 10.0, (dp, dq))
+    before = all_keys(dst)
+    model_world = (list(dst.gm.wp), list(dst.gm.wq))
+    jaw_local = dst.local(dst.bone_dag[u"jaw"])
+    auth = authorize(ns, fresh, u"Apply Pose", item)
+    result = ns["prod_body_apply"](IDENTITY, auth, item, fresh)
+    check("L.apply_commits_and_defers_verification", result[u"phase"] == u"verification-pending", result.get(u"phase"))
+    undo_calls = [c[0] for c in dst.dm.calls]
+    check("L.one_owned_undo_transaction", undo_calls == ["StartUndo", "FinishUndo"] and len(dst.dm.stack) == 1 and
+          dst.dm.stack[0]["label"] == u"Apply Pose Full Body A", undo_calls)
+    inserted = [c for c in scene_writes(dst) if c[0] == "InsertKeyAtTime"]
+    check("L.every_written_channel_keyed_once_by_insertion_including_fk_positions",
+          len(inserted) == 278 and len(set(c[1] for c in inserted)) == 278, len(inserted))
+    check("L.refresh_requested_once_outside_the_transaction",
+          [r["in_undo"] for r in dst.refresh_calls] == [False], dst.refresh_calls)
+    verdict = ns["prod_pose_deferred_verify"](dict(result[u"pending"], authorization=auth))
+    check("L.deferred_whole_skeleton_verification_passes", verdict.get(u"phase") == u"committed-verified", verdict)
+    now = placement_relative(dst)
+    posed = [n for n in source_relative if n != u"jaw" and not n.startswith(u"tongue")]
+    dpp, dqp = max_difference(now, source_relative, posed)
+    check("L.destination_takes_the_source_posture_in_its_own_placement", dpp < 1e-3 and dqp < 0.01, (dpp, dqp))
+    after = all_keys(dst)
+    C13 = ns["prod_body_classify"](fx[u"shot13"], profile)
+    planned = sorted(n for n, r in C13[u"channels"].items() if r in (u"handle-written", u"fk-written"))
+    check("L.only_planned_channels_changed", sorted(n for n in after if after[n] != before[n]) == planned)
+    check("L.placement_face_gaze_scale_poles_and_twist_preserved",
+          all(after[n] == before[n] for n in PRESERVED_CHANNELS) and
+          (list(dst.gm.wp), list(dst.gm.wq)) == model_world and dst.local(dst.bone_dag[u"jaw"]) == jaw_local and
+          dst.scale(dst.bone_dag[u"bip_head"]) == float(fx[u"shot13"][u"bones"][u"bip_head"][u"scale"][u"value"]))
+    dst.dm.Undo()
+    check("L.undo_restores_the_whole_baseline", all_keys(dst) == before)
+    dst.dm.Redo()
+    check("L.redo_reapplies_the_whole_pose", all_keys(dst) == after)
+    calls = len(dst.calls)
+    auth = authorize(ns, fresh, u"Apply Pose", item)
+    again = ns["prod_body_apply"](IDENTITY, auth, item, fresh)
+    check("L.verified_repeat_apply_is_a_noop", again == {u"phase": u"no-op"} and len(dst.calls) == calls and
+          len(dst.dm.stack) == 1, again)
+    return fresh, item
+
+
+def apply_fresh(ns, reg, fx, item, prepare=None, name=u"shot13"):
+    world = FB.World(fx[name])
+    pose_differently(world)
+    if prepare is not None:
+        prepare(world)
+        world.evaluate()
+    use_world(ns, world)
+    auth = authorize(ns, reg, u"Apply Pose", item)
+    return world, auth, outcome(lambda: ns["prod_body_apply"](IDENTITY, auth, item, reg))
+
+
+def section_live_refusals(ns, reg, fx, item):
+    def ulp(world):
+        layer = world.channels[u"bip_tail05_p"].attrs["log"].layer
+        v = FB.plain(layer.keys[0][1])
+        layer.keys[0][1] = FB.native([v[0], next_f32(v[1]), v[2]], "vec")
+    world, _, got = apply_fresh(ns, reg, fx, item, ulp)
+    refused("L.A1_fk_position_one_ulp_refuses", got, u"fk-position")
+    check("L.A1_refusal_changes_nothing_and_opens_no_undo", not scene_writes(world) and not world.dm.calls and
+          got[2] == u"This pose uses different bone positions and can't be applied safely.", got)
+    world, _, got = apply_fresh(ns, reg, fx, item, lambda w: setattr(w, "timeline_mode", 3))
+    refused("L.clip_editor_apply_refuses_before_any_write", got, u"editor-mode")
+    check("L.editor_refusal_writes_nothing", not scene_writes(world) and not world.dm.calls)
+
+    def zero_keys(world):
+        world.channels[u"bip_tail05_o"].attrs["log"].layer.keys = []
+    world, _, got = apply_fresh(ns, reg, fx, item, zero_keys)
+    refused("L.zero_key_written_channel_refuses", got)        # unreadable value at t, before any plan
+    check("L.zero_key_refusal_writes_nothing", not scene_writes(world) and not world.dm.calls)
+
+    def duplicate(world):
+        layer = world.channels[u"bip_tail06_o"].attrs["log"].layer
+        t = world.t_chan()
+        layer.keys.append([t, copy.deepcopy(layer.keys[0][1])])
+        layer.keys.append([t, copy.deepcopy(layer.keys[0][1])])
+    world, _, got = apply_fresh(ns, reg, fx, item, duplicate)
+    refused("L.duplicate_keys_at_the_mapped_tick_refuse", got, u"structure-unsupported")
+    check("L.structure_refusals_write_nothing", not scene_writes(world) and not world.dm.calls)
+
+    def unknown_operator(world):
+        op = FB.Element(world, world.new_handle(), "DmeRigAimConstraintOperator", "aim")
+        world.animset.attrs["operators"].items.append(op)
+    world, _, got = apply_fresh(ns, reg, fx, item, unknown_operator)
+    refused("L.unknown_operator_refuses", got, u"structure-unsupported")
+
+    def second_layer(world):
+        log = world.channels[u"bip_tail07_o"].attrs["log"]
+        log.extra_layers.append(FB.Layer(world, world.new_handle(), "DmeQuaternionLogLayer", [], "quat"))
+    world, _, got = apply_fresh(ns, reg, fx, item, second_layer)
+    refused("L.layered_channel_refuses", got, u"structure-unsupported")
+
+    # P1 -> P2: a change after the plan refuses before the transaction.
+    world = FB.World(fx[u"shot13"])
+    pose_differently(world)
+    use_world(ns, world)
+    auth = authorize(ns, reg, u"Apply Pose", item)
+    original = ns["prod_body_preflight"]
+
+    def preflight_then_edit(*args):
+        pre = original(*args)
+        world.channels[u"A_flex_channel"].attrs["log"].layer.keys.append([world.t_chan() + 7, 0.5])
+        return pre
+    ns["prod_body_preflight"] = preflight_then_edit
+    try:
+        got = outcome(lambda: ns["prod_body_apply"](IDENTITY, auth, item, reg))
+    finally:
+        ns["prod_body_preflight"] = original
+    refused("L.revalidation_between_p1_and_p2_refuses", got, u"stale")
+    check("L.revalidation_refusal_opens_no_undo", not world.dm.calls and not scene_writes(world))
+
+    # A late-channel failure: Abort, then the whole operation verified unchanged.
+    last = sorted(n for n, r in ns["prod_body_classify"](fx[u"shot13"], profile_of(ns, reg))[u"channels"].items()
+                  if r in (u"handle-written", u"fk-written"))[-1]
+    world = FB.World(fx[u"shot13"])
+    pose_differently(world)
+    use_world(ns, world)
+    before = all_keys(world)
+    auth = authorize(ns, reg, u"Apply Pose", item)
+    world.fail_on_write = last
+    got = outcome(lambda: ns["prod_body_apply"](IDENTITY, auth, item, reg))
+    check("L.late_channel_failure_aborts_the_whole_operation",
+          got[0] == "ok" and got[1][u"phase"] == u"not-applied" and
+          [c[0] for c in world.dm.calls] == ["StartUndo", "AbortUndoableOperation"] and len(scene_writes(world)) > 270,
+          (got[0], [c[0] for c in world.dm.calls], len(scene_writes(world))))
+    check("L.abort_restores_every_key_and_leaves_no_undo_entry", all_keys(world) == before and not world.dm.stack)
+    check("L.abort_restoration_is_verified_and_logged", any(u"BODY-abort-verified" in l for l in ns["LOG"]))
+    world = FB.World(fx[u"shot13"])
+    pose_differently(world)
+    use_world(ns, world)
+    auth = authorize(ns, reg, u"Apply Pose", item)
+    world.fail_on_write = last
+    world.abort_raises = True
+    got = outcome(lambda: ns["prod_body_apply"](IDENTITY, auth, item, reg))
+    check("L.failed_abort_is_recovery_unverified", got[0] == "ProdRecoveryUnverifiedError", got)
+
+    # P7: authorized descendant motion verifies; an unrelated change does not.
+    world = FB.World(fx[u"shot13"])
+    pose_differently(world)
+    use_world(ns, world)
+    auth = authorize(ns, reg, u"Apply Pose", item)
+    result = ns["prod_body_apply"](IDENTITY, auth, item, reg)
+    world.channels[u"Kiss_flex_channel"].attrs["log"].layer.keys.append([world.t_chan() + 3, 0.25])
+    verdict = ns["prod_pose_deferred_verify"](dict(result[u"pending"], authorization=auth))
+    check("L.p7_detects_an_unrelated_change", verdict.get(u"phase") == u"committed-unverified", verdict)
+    world = FB.World(fx[u"shot13"])
+    pose_differently(world)
+    use_world(ns, world)
+    world.evaluate_on_refresh = False
+    auth = authorize(ns, reg, u"Apply Pose", item)
+    result = ns["prod_body_apply"](IDENTITY, auth, item, reg)
+    pending = dict(result[u"pending"], authorization=auth)
+    verdict = ns["prod_pose_deferred_verify"](pending)
+    check("L.p7_before_evaluation_is_committed_unverified", verdict.get(u"phase") == u"committed-unverified", verdict)
+    world.evaluate()
+    verdict = ns["prod_pose_deferred_verify"](pending)
+    check("L.p7_after_evaluation_verifies_descendant_motion", verdict.get(u"phase") == u"committed-verified", verdict)
+    world.dm.push_foreign(u"Move Control")
+    verdict = ns["prod_pose_deferred_verify"](pending)
+    check("L.p7_with_a_foreign_undo_entry_is_unverified", verdict.get(u"phase") == u"committed-unverified", verdict)
+    world, _, got = apply_fresh(ns, reg, fx, item, name=u"shot10")
+    refused("L.incompatible_instance_refuses_before_any_write", got, u"proportions")
+    check("L.incompatible_refusal_writes_nothing", not scene_writes(world) and not world.dm.calls)
+
+
 def main():
     if "--phase=run" not in sys.argv[1:]:
         print("usage: %s --phase=run" % os.path.basename(sys.argv[0]))
@@ -514,7 +836,7 @@ def main():
     app = route.AppSource(route.APP_PATH)
     root = tempfile.mkdtemp(prefix="cpm_f01e_lib_")
     try:
-        ns = build_namespace(app)
+        ns = live_namespace(app)
         fx = dict((n, fixture("s0_%s.json" % n)) for n in (u"shot15", u"shot13", u"shot10"))
         reg = run("registry", lambda: section_registry(ns))
         if reg:
@@ -522,6 +844,9 @@ def main():
             got = run("records", lambda: section_records(ns, reg, fx, root))
             if got:
                 run("planner", lambda: section_planner(ns, reg, fx, got[0]))
+            lived = run("live", lambda: section_live(ns, reg, fx, os.path.join(root, u"live")))
+            if lived:
+                run("live_refusals", lambda: section_live_refusals(ns, lived[0], fx, lived[1]))
     finally:
         shutil.rmtree(root, True)
     failed = [r for r in RESULTS if not r[1]]

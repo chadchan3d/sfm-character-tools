@@ -369,18 +369,21 @@ F01_STAGED_NEW_METHODS = set(["refresh_pose_view", "selected_pose", "refresh_pos
 # block after stage D (complete-pose core, planner and live layer); stage A and C gain small version 2 hooks.
 F01_STAGEE_NEW_TOP = set([
     "PROD_BODY_BONE_CLASSES", "PROD_BODY_CHANNEL_ROLES", "PROD_BODY_CONTROL_CHANNELS", "PROD_BODY_DESCRIBED_ROLES",
-    "PROD_BODY_FK_POSITION_COPY", "PROD_BODY_FRAME", "PROD_BODY_HANDLE_CLASSES", "PROD_BODY_MAX_RECORD_BYTES",
-    "PROD_BODY_MESSAGES", "PROD_BODY_POSE_VERSION", "PROD_BODY_PRESERVED_OPERATORS", "PROD_BODY_REGION",
-    "PROD_BODY_REGISTRY_FILENAME", "PROD_BODY_REGISTRY_FORMAT", "PROD_BODY_REGISTRY_SHA256",
+    "PROD_BODY_FK_POSITION_COPY", "PROD_BODY_FRAME", "PROD_BODY_HANDLE_CLASSES", "PROD_BODY_MAX_CHANNELS",
+    "PROD_BODY_MAX_RECORD_BYTES", "PROD_BODY_MESSAGES", "PROD_BODY_POSE_VERSION", "PROD_BODY_PRESERVED_OPERATORS",
+    "PROD_BODY_REGION", "PROD_BODY_REGISTRY_FILENAME", "PROD_BODY_REGISTRY_FORMAT", "PROD_BODY_REGISTRY_SHA256",
     "PROD_BODY_SLAVE_SLOTS", "PROD_BODY_SOURCE_ATTRIBUTES", "PROD_BODY_TRANSFORM_TYPES", "PROD_BODY_WRITTEN_ROLES",
-    "prod_body_bone_order", "prod_body_bone_scale", "prod_body_channel_value", "prod_body_check_fk_positions",
-    "prod_body_classify", "prod_body_compare_descriptor", "prod_body_descriptor", "prod_body_effective_inputs",
+    "prod_body_apply", "prod_body_bindings", "prod_body_bone_order", "prod_body_bone_scale", "prod_body_capture",
+    "prod_body_channel_value", "prod_body_check_fk_positions", "prod_body_classify", "prod_body_compare_descriptor",
+    "prod_body_current_time", "prod_body_descriptor", "prod_body_discover", "prod_body_effective_inputs",
     "prod_body_error", "prod_body_exact", "prod_body_expected_authored", "prod_body_expected_skeleton",
-    "prod_body_f32_list", "prod_body_field_value", "prod_body_is_record", "prod_body_label_ok",
-    "prod_body_load_registry", "prod_body_noop", "prod_body_owner_row", "prod_body_payload", "prod_body_plan",
-    "prod_body_profile", "prod_body_record_schema", "prod_body_region_schema", "prod_body_registry_parse",
-    "prod_body_registry_schema", "prod_body_root_world", "prod_body_scaled_compose", "prod_body_typed",
-    "prod_body_usable", "prod_body_validate", "prod_body_verify_skeleton",
+    "prod_body_f32_list", "prod_body_field_value", "prod_body_identity", "prod_body_is_record",
+    "prod_body_label_ok", "prod_body_live", "prod_body_load_registry", "prod_body_noop", "prod_body_owner_row",
+    "prod_body_payload", "prod_body_pending", "prod_body_plan", "prod_body_preflight", "prod_body_profile",
+    "prod_body_record_schema", "prod_body_region_schema", "prod_body_registry_parse", "prod_body_registry_schema",
+    "prod_body_resolve_profile", "prod_body_root_world", "prod_body_same_state", "prod_body_scaled_compose",
+    "prod_body_state", "prod_body_typed", "prod_body_usable", "prod_body_validate", "prod_body_verify_applied",
+    "prod_body_verify_skeleton", "prod_body_wrap",
 ])
 # F-01 UI consistency pass: the application name (TOOL_NAME; the diagnostic log keeps its product literal), Help's
 # preferred height, and the Poses page's state, list-message row and read-only Pose Info.
