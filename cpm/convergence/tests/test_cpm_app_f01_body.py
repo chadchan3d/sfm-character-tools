@@ -1111,6 +1111,78 @@ def section_corrections(app, ns, reg, fx, item, lib):
         got = apply_(world)
         check("X.5_%s_%s_inconsistent_with_its_channel_refuses" % (name, attr), got[0] != "ok" and
               got[1] in (u"evidence-unreadable", u"fk-position") and no_mutation(world), got)
+    # X.6 disabled Undo prevents mutation
+    world = posed_destination(ns, fx, lambda w: setattr(w, "undo_enabled", False))
+    got = apply_(world)
+    refused("X.6_disabled_undo_refuses_before_any_mutation", got, u"evidence-unreadable")
+    check("X.6_no_mutation", no_mutation(world))
+    check("X.6_shared_validator_rejects_disabled_undo", ns["prod_pose_undo_problems"](
+        {u"enabled": False, u"can_undo": False, u"can_redo": False, u"undo_desc": u"", u"redo_desc": u""}) ==
+        [u"enabled (Undo is disabled)"] and ns["prod_pose_undo_problems"](
+        {u"enabled": True, u"can_undo": False, u"can_redo": False, u"undo_desc": u"", u"redo_desc": u""}) == [])
+    # X.7 StartUndo: a refusal before it is plain; a failure of StartUndo itself fails closed
+    world = posed_destination(ns, fx)
+    original_same = ns["prod_body_same_state"]
+
+    def same_then_foreign(*args):
+        problems = original_same(*args)
+        world.dm.push_foreign(u"Move Control")        # the Undo history changes after P2, before StartUndo
+        return problems
+    ns["prod_body_same_state"] = same_then_foreign
+    try:
+        got = apply_(world)
+    finally:
+        ns["prod_body_same_state"] = original_same
+    refused("X.7a_change_just_before_start_undo_is_a_plain_refusal", got, u"stale")
+    check("X.7a_start_undo_never_called_no_writes", not scene_writes(world) and
+          not [c for c in world.dm.calls if c[0] == "StartUndo"])
+    for when in ("before", "after"):
+        world = posed_destination(ns, fx, lambda w, when=when: setattr(w, "start_raises", when))
+        got = apply_(world)
+        check("X.7b_start_undo_failure_%s_opening_fails_closed" % when,
+              got[0] == "ProdRecoveryUnverifiedError" and not scene_writes(world) and
+              [c[0] for c in world.dm.calls] == ["StartUndo"], (got, world.dm.calls))
+    check("X.7c_an_opened_transaction_is_never_aborted_or_claimed_not_applied",
+          world.dm.current is not None and not [c for c in world.dm.calls if c[0] == "AbortUndoableOperation"])
+    # X.8 FinishUndo before and after commitment stays conservative
+    world = posed_destination(ns, fx, lambda w: setattr(w, "finish_raises", "before"))
+    got = apply_(world)
+    check("X.8a_finish_undo_failure_before_commit_is_recovery_unverified",
+          got[0] == "ProdRecoveryUnverifiedError" and not [c for c in world.dm.calls if c[0] ==
+                                                           "AbortUndoableOperation"], got)
+    world = posed_destination(ns, fx, lambda w: setattr(w, "finish_raises", "after"))
+    auth = authorize(ns, reg, u"Apply Pose", item)
+    got = outcome(lambda: ns["prod_body_apply"](IDENTITY, auth, item, reg))
+    pending = got[1].get(u"pending") if got[0] == "ok" else None
+    verdict = ns["prod_pose_deferred_verify"](dict(pending, authorization=auth)) if pending else None
+    check("X.8b_finish_undo_failure_after_commit_is_committed_unverified",
+          got[0] == "ok" and got[1][u"phase"] == u"verification-pending" and pending[u"finish_exception"] is True
+          and verdict.get(u"phase") == u"committed-unverified" and
+          not [x for x in world.dm.calls if x[0] == "AbortUndoableOperation"], (got[0], verdict))
+    # X.9 the qualification-build injected fault, through ProdWindow.pose_guard
+    win = window(app, ns, reg, lib)
+    mode = ns["PROD_POSE_REGISTRY_MODE"]
+    ns["PROD_POSE_REGISTRY_MODE"] = u"qualification"
+    try:
+        world = posed_destination(ns, fx)
+        before = all_keys(world)
+        ns["PROD_POSE_QUAL_FAULT"][0] = u"after-writes"
+        win.apply_pose(item)
+        check("X.9a_injected_fault_aborts_and_verifies_through_pose_guard",
+              win.statuses[-1][1] == ns["PROD_POSE_MESSAGES"][u"not-applied"] and all_keys(world) == before and
+              not world.dm.stack and not win.pose_recovery_blocked, win.statuses[-1])
+        world = posed_destination(ns, fx, lambda w: setattr(w, "abort_raises", True))
+        ns["PROD_POSE_QUAL_FAULT"][0] = u"after-writes"
+        win.apply_pose(item)
+        check("X.9b_failed_abort_sets_the_pose_guard_recovery_lockout", win.pose_recovery_blocked is True and
+              win.statuses[-1][0] == "error", win.statuses[-1])
+        world = posed_destination(ns, fx)
+        win.apply_pose(item)
+        check("X.9c_lockout_refuses_every_later_pose_operation_without_mutation",
+              win.statuses[-1][2] == u"recovery-blocked" and no_mutation(world), win.statuses[-1])
+    finally:
+        ns["PROD_POSE_REGISTRY_MODE"] = mode
+        ns["PROD_POSE_QUAL_FAULT"][0] = None
     # X.10 a late-operation Abort restores the complete baseline (keys and evaluated transforms)
     last = sorted(n for n, r in ns["prod_body_classify"](fx[u"shot13"], profile_of(ns, reg))[u"channels"].items()
                   if r in (u"handle-written", u"fk-written"))[-1]

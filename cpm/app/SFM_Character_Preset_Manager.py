@@ -42910,6 +42910,8 @@ def prod_pose_undo_problems(u):
                 problems.append(k)
         elif not isinstance(v, prod_pose_text_types()):
             problems.append(k)
+    if u.get(u"enabled") is False:
+        problems.append(u"enabled (Undo is disabled)")       # Astra S1: disabled Undo never authorizes a write
     return problems
 
 
@@ -44827,13 +44829,24 @@ def prod_body_apply(identity, authorization, item, reg, phase_callback=None):
         raise ProdPoseError(u"stale", PROD_POSE_MESSAGES[u"stale"])
     dm_obj = dm()
     label = u"Apply Pose %s" % name
-    opened = finished = False
+    finished = False
     written = []
     t_chan = pre[u"time"][u"t_chan"]
     tol = pre[u"profile"][u"tolerances"]
+    # Before StartUndo: anything failing here definitively opens nothing, so it is a plain refusal.
+    native_labels = (prod_pose_native_name(label), prod_pose_native_name(u"Redo " + label))
+    undo_now = prod_pose_undo_state(dm_obj)
+    if prod_pose_undo_problems(undo_now) or undo_now != pre[u"undo"]:
+        prod_pose_log(u"BODY-P2-refused", {u"undo": undo_now})
+        raise ProdPoseError(u"stale", PROD_POSE_MESSAGES[u"stale"])
     try:
-        dm_obj.StartUndo(prod_pose_native_name(label), prod_pose_native_name(u"Redo " + label))
-        opened = True
+        dm_obj.StartUndo(native_labels[0], native_labels[1])
+    except Exception as exc:
+        # StartUndo itself failed: whether a transaction opened is unknown (CPM has no native proof either way).
+        # Fail closed: no write, no Abort of a transaction not proven to be ours, never "not-applied".
+        prod_pose_log(u"BODY-start-undo-uncertain", {u"error": repr(exc)})
+        raise ProdRecoveryUnverifiedError(PROD_POSE_MESSAGES[u"recovery-unverified"] % {u"name": name})
+    try:
         if phase_callback is not None:
             phase_callback(u"P3-owned", {u"label": label})
         for plan in pre[u"plans"]:
@@ -44865,13 +44878,7 @@ def prod_body_apply(identity, authorization, item, reg, phase_callback=None):
         finished = True                    # from here on, Abort is never attempted
         dm_obj.FinishUndo()
     except Exception as exc:
-        prod_pose_log(u"BODY-P3-P6-failure", {u"error": repr(exc), u"opened": opened, u"finished": finished,
-                                              u"written": len(written)})
-        if not opened:
-            problems = prod_body_same_state(identity, authorization, pre)
-            if problems:
-                raise ProdRecoveryUnverifiedError(PROD_POSE_MESSAGES[u"recovery-unverified"] % {u"name": name})
-            return {u"phase": u"not-applied", u"reason": repr(exc)}
+        prod_pose_log(u"BODY-P3-P6-failure", {u"error": repr(exc), u"finished": finished, u"written": len(written)})
         if not finished:
             try:
                 dm_obj.AbortUndoableOperation()
