@@ -30857,7 +30857,7 @@ class ProdWindow(QtGui.QDialog):
         pose_primary.addWidget(self.apply_pose_button)
         self.save_pose_button = QtGui.QPushButton("Save New")
         tool_apply_main_action_button(self.save_pose_button)
-        self.save_pose_button.clicked.connect(lambda: self.save_pose(None, (u"left_arm",)))
+        self.save_pose_button.clicked.connect(lambda: self.save_pose(None, (u"full_body",)))
         pose_primary.addWidget(self.save_pose_button)
         self.update_pose_button = QtGui.QPushButton("Update Pose")
         tool_apply_main_action_button(self.update_pose_button)
@@ -35868,7 +35868,12 @@ class ProdWindow(QtGui.QDialog):
                 u"Apply Pose",
                 fresh,
             )
-            result = prod_pose_apply(
+            apply_fn = (
+                prod_body_apply
+                if fresh[u"record"][u"pose"].get(u"version") == 2
+                else prod_pose_apply
+            )
+            result = apply_fn(
                 ident,
                 authorization,
                 fresh,
@@ -35959,6 +35964,8 @@ class ProdWindow(QtGui.QDialog):
                     regions
                 )
             )
+            # Stage E: Save New creates a complete pose (full_body); the left-arm capture stays for version 1 only.
+            full_body = chosen == [u"full_body"]
             authorization = prod_pose_authorize(
                 self.operation[
                     "context"
@@ -35972,11 +35979,19 @@ class ProdWindow(QtGui.QDialog):
             pose_name = name
 
             if pose_name is None:
-                pinned = prod_pose_current_time(
-                    ident,
-                    authorization,
-                    reg,
-                    chosen,
+                pinned = (
+                    prod_body_current_time(
+                        ident,
+                        authorization,
+                        reg,
+                    )
+                    if full_body
+                    else prod_pose_current_time(
+                        ident,
+                        authorization,
+                        reg,
+                        chosen,
+                    )
                 )
                 pose_name = self.prompt(
                     "Save Pose",
@@ -36002,12 +36017,21 @@ class ProdWindow(QtGui.QDialog):
                     u"Save Pose",
                 )
 
-            pose = prod_pose_capture(
-                ident,
-                authorization,
-                chosen,
-                reg,
-                pinned_time=pinned,
+            pose = (
+                prod_body_capture(
+                    ident,
+                    authorization,
+                    reg,
+                    pinned_time=pinned,
+                )
+                if full_body
+                else prod_pose_capture(
+                    ident,
+                    authorization,
+                    chosen,
+                    reg,
+                    pinned_time=pinned,
+                )
             )
 
             if sorted(
@@ -36258,6 +36282,7 @@ class ProdWindow(QtGui.QDialog):
             self.pose_items_key = None
             self.pose_unusable = 0
             self.pose_rig_class = None
+            self.pose_body_available = False
             self.pose_registry_unavailable = False
             self.pose_library_count = 0
 
@@ -36280,6 +36305,18 @@ class ProdWindow(QtGui.QDialog):
                     self.pose_selection = prod_pose_registry_select(
                         reg,
                         self.pose_registry_mode(),
+                    )
+                    # Stage E: Save New creates complete poses only where a usable full-body mapping exists.
+                    body = reg.get(u"_body")
+                    self.pose_body_available = bool(
+                        body is not None
+                        and self.pose_rig_class in body[u"rig_classes"]
+                        and any(
+                            m[u"region"] == u"full_body"
+                            and m[u"from"] == self.pose_rig_class
+                            and m[u"to"] == self.pose_rig_class
+                            for m in self.pose_selection[u"mappings"]
+                        )
                     )
                 except Exception as exc:
                     try:
@@ -36495,7 +36532,7 @@ class ProdWindow(QtGui.QDialog):
                     (
                         r,
                         u"available"
-                        if r in eligible and r in PROD_POSE_LIVE_REGIONS
+                        if r in eligible and (r in PROD_POSE_LIVE_REGIONS or r == u"full_body")
                         else u"not-qualified",
                     )
                     for r in saved
@@ -36520,6 +36557,7 @@ class ProdWindow(QtGui.QDialog):
                 u"search_active": bool(u(self.pose_search.text()).strip()),
                 u"busy": bool(self.busy),
                 u"recovery_blocked": bool(getattr(self, "pose_recovery_blocked", False)),
+                u"save_available": bool(getattr(self, "pose_body_available", False)),
                 u"selected": selected,
             }
         )
@@ -36567,7 +36605,7 @@ class ProdWindow(QtGui.QDialog):
         def work():
             record = item[u"record"]
             pose = record[u"pose"]
-            saved = [r for r in PROD_POSE_REGIONS if r in pose[u"regions"]]
+            saved = [r for r in PROD_POSE_REGIONS + (u"full_body",) if r in pose[u"regions"]]
             character = u((self.identity or {}).get("animset_name") or u"")
             dialog = QtGui.QDialog(self)
             dialog.setWindowTitle("Pose Info")
@@ -36626,7 +36664,7 @@ class ProdWindow(QtGui.QDialog):
                 if selection is not None
                 else []
             )
-            unavailable = [r for r in saved if not (r in eligible and r in PROD_POSE_LIVE_REGIONS)]
+            unavailable = [r for r in saved if not (r in eligible and (r in PROD_POSE_LIVE_REGIONS or r == u"full_body"))]
             if self.identity is not None and unavailable:
                 note = QtGui.QLabel(
                     u"Can't be applied to %s: %s."
@@ -36800,13 +36838,24 @@ class ProdWindow(QtGui.QDialog):
                 self.pose_registry_mode(),
                 u"Update Pose",
             )
+            # Stage E: a version 2 (full-body) record is replaced by a complete capture; version 1 keeps its
+            # left-arm Update.
+            full_body = fresh[u"record"][u"pose"].get(u"version") == 2
 
             try:
-                pinned = prod_pose_current_time(
-                    ident,
-                    authorization,
-                    reg,
-                    saved,
+                pinned = (
+                    prod_body_current_time(
+                        ident,
+                        authorization,
+                        reg,
+                    )
+                    if full_body
+                    else prod_pose_current_time(
+                        ident,
+                        authorization,
+                        reg,
+                        saved,
+                    )
                 )
             except ProdPoseError as exc:
                 if exc.code == u"capture-clock":
@@ -36844,12 +36893,22 @@ class ProdWindow(QtGui.QDialog):
             )
 
             try:
-                pose = prod_pose_capture(
-                    ident,
-                    authorization,
-                    saved,
-                    reg,
-                    pinned_time=pinned,
+                pose = (
+                    prod_body_capture(
+                        ident,
+                        authorization,
+                        reg,
+                        pinned_time=pinned,
+                        label=u"Update Pose",
+                    )
+                    if full_body
+                    else prod_pose_capture(
+                        ident,
+                        authorization,
+                        saved,
+                        reg,
+                        pinned_time=pinned,
+                    )
                 )
             except ProdPoseError as exc:
                 if exc.code == u"capture-clock":
@@ -41198,7 +41257,9 @@ def prod_pose_ui_state(st):
         return out
     supported = bool(st.get(u"supported"))
     scene_ok = supported and bool(st.get(u"instance_valid")) and not busy and not blocked
-    out[u"buttons"][u"save_new"] = scene_ok
+    out[u"buttons"][u"save_new"] = scene_ok and st.get(u"save_available", True) is not False
+    if supported and st.get(u"save_available", True) is False:
+        out[u"tooltips"][u"save_new"] = u"Full-body poses aren't available for this character yet."
     if not supported:
         out[u"summary"] = [u"Poses aren't available for this character yet."]
         out[u"list_message"] = PROD_POSE_MESSAGES[u"unsupported-character"]

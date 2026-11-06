@@ -827,6 +827,169 @@ def section_live_refusals(ns, reg, fx, item):
     check("L.incompatible_refusal_writes_nothing", not scene_writes(world) and not world.dm.calls)
 
 
+
+# ---------------------------------------------------------------------------
+# S1-E: the Poses window methods (Save New, Update Pose, Apply Pose) on the fake scene
+# ---------------------------------------------------------------------------
+
+WINDOW_METHODS = ["pose_registry_mode", "pose_guard", "apply_pose", "save_pose", "update_pose"]
+
+
+class FakeWindow(object):
+    """The ProdWindow seams the pose methods call (guard, lifecycle, prompts, status); the methods are real."""
+
+    def __init__(self, context):
+        self.identity = dict(IDENTITY)
+        self.operation = {"context": context, "operation_id": 1, "generation": 1}
+        self.statuses, self.pending, self.prompts, self.confirm = [], [], [], True
+        self.pose_recovery_blocked = False
+
+    def guard(self, label, fn):
+        try:
+            return fn()
+        except Exception as exc:
+            self.statuses.append(("error", label, getattr(exc, "code", None), _TEXT(exc)))
+            return None
+
+    def current(self):
+        return self.identity
+
+    def prompt(self, title, default):
+        return self.prompts.pop(0) if self.prompts else None
+
+    def operation_revalidate(self):
+        pass
+
+    def operation_mark_phase(self, phase, detail=None):
+        pass
+
+    def set_status(self, text, kind=None):
+        self.statuses.append(("status", text, kind))
+
+    def refresh_pose_view(self, select_id=None):
+        pass
+
+    def pose_begin_verification(self, label, pending):
+        self.pending.append(pending)
+
+    def confirm_pose_update(self, name, parts):
+        return self.confirm
+
+
+def window(app, ns, reg, lib):
+    methods = {}
+    for name in WINDOW_METHODS:
+        route._run_source(app.method_text("ProdWindow", name), "ProdWindow.%s" % name, ns, methods)
+    for name, fn in methods.items():
+        setattr(FakeWindow, name, fn)
+    ns["prod_pose_load_registry"] = lambda path=None: reg
+    ns["prod_pose_selected_library"] = lambda ident: lib
+    ns["prod_log_outcome"] = lambda *a, **k: None
+    ns["p03_now_stamp"] = lambda: u"20261106-140000-000000"
+    ns["tool_status_name"] = lambda n: n
+    return FakeWindow(live_context(ns))
+
+
+def section_window(app, ns, reg, fx, root):
+    profile = profile_of(ns, reg)
+    WRITTEN_HANDLES.update(profile[u"written_handle_channels"])
+    os.makedirs(root)
+    lib = {u"character_key": u"krystal2020", u"char_dir": os.path.join(root, u"Characters", u"krystal2020"),
+           u"library_root": root, u"model_ref": MODEL, u"checksum": 1234}
+    src = FB.World(fx[u"shot15"])
+    use_world(ns, src)
+    win = window(app, ns, reg, lib)
+    check("W.save_new_button_creates_complete_poses_only",
+          u'self.save_pose(None, (u"full_body",))' in u"\n".join(
+              app.method_text("ProdWindow", m) for m in app.methods("ProdWindow")) and
+          u'self.save_pose(None, (u"left_arm",))' not in u"\n".join(
+              app.method_text("ProdWindow", m) for m in app.methods("ProdWindow")))
+    mode = ns["PROD_POSE_REGISTRY_MODE"]
+    check("W.shipped_build_is_production", mode == u"production")
+    win.prompts = [u"Window Pose"]
+    got = win.save_pose(None, (u"full_body",))
+    check("W.production_save_new_refuses_until_full_body_is_qualified",
+          got is None and win.statuses[-1][2] == u"not-qualified" and
+          win.statuses[-1][3] == u"Full-body poses aren't available for this character yet." and
+          not os.path.isdir(os.path.join(lib[u"char_dir"], u"Poses")), win.statuses[-1])
+    ns["PROD_POSE_REGISTRY_MODE"] = u"qualification"            # the separately built qualification CPM
+    try:
+        win.prompts = [u"Window Pose"]
+        saved = win.save_pose(None, (u"full_body",))
+        check("W.save_new_saves_a_version_2_complete_pose", saved is not None and
+              saved[u"record"][u"pose"][u"version"] == 2 and
+              sorted(saved[u"record"][u"pose"][u"regions"]) == [u"full_body"] and
+              win.statuses[-1][1] == u"Pose saved: Window Pose.", win.statuses[-1])
+        check("W.save_new_writes_nothing_to_the_scene", not scene_writes(src) and not src.dm.calls)
+        src.timeline_mode = 3
+        win.prompts = [u"Clip Pose"]
+        win.save_pose(None, (u"full_body",))
+        check("W.clip_editor_save_refuses_with_the_clock_copy", win.statuses[-1][2] == u"capture-clock" and
+              win.statuses[-1][3] == u"Switch to the Motion Editor and try again.", win.statuses[-1])
+        src.timeline_mode = 2
+        # Apply in another instance, distinctly posed.
+        dst = FB.World(fx[u"shot13"])
+        pose_differently(dst)
+        use_world(ns, dst)
+        item = ns["prod_pose_reread"](lib, saved, reg)
+        win.apply_pose(item)
+        check("W.apply_pose_runs_the_full_body_transaction", len(win.pending) == 1 and win.pending[0].get(u"body")
+              and [c[0] for c in dst.dm.calls] == ["StartUndo", "FinishUndo"], win.statuses[-1:])
+        verdict = ns["prod_pose_deferred_verify"](win.pending[0])
+        check("W.deferred_turn_verifies_the_full_body_pose", verdict.get(u"phase") == u"committed-verified", verdict)
+        check("W.status_parts_phrase_is_full_body", ns["prod_pose_parts_phrase"](win.pending[0][u"regions"]) ==
+              u"Full body")
+        # FK position mismatch: the Owner's wording, nothing written.
+        bad = FB.World(fx[u"shot13"])
+        layer = bad.channels[u"bip_tail05_p"].attrs["log"].layer
+        v = FB.plain(layer.keys[0][1])
+        layer.keys[0][1] = FB.native([v[0], next_f32(v[1]), v[2]], "vec")
+        bad.evaluate()
+        use_world(ns, bad)
+        win.apply_pose(item)
+        check("W.fk_position_mismatch_shows_the_owner_wording", win.statuses[-1][2] == u"fk-position" and
+              win.statuses[-1][3] == u"This pose uses different bone positions and can't be applied safely." and
+              not scene_writes(bad), win.statuses[-1])
+        # Update Pose: a complete recapture of the same record.
+        use_world(ns, src)
+        layer = src.channels[u"Hip_o"].attrs["log"].layer
+        for k in layer.keys:
+            k[1] = FB.native(rotate(FB.plain(k[1]), [0.0, 1.0, 0.0], 15.0), "quat")
+        src.evaluate()
+        win.confirm = False
+        got = win.update_pose(item)
+        check("W.cancelled_update_changes_nothing", got is None and
+              ns["prod_pose_reread"](lib, item, reg)[u"revision"] == item[u"revision"])
+        win.confirm = True
+        updated = win.update_pose(item)
+        check("W.update_pose_recaptures_the_complete_pose_in_place", updated is not None and
+              updated[u"preset_id"] == item[u"preset_id"] and updated[u"path"] == item[u"path"] and
+              updated[u"record"][u"pose"][u"regions"][u"full_body"][u"orientations"][u"Hip_o"] !=
+              item[u"record"][u"pose"][u"regions"][u"full_body"][u"orientations"][u"Hip_o"] and
+              win.statuses[-1][1] == u"Pose updated: Window Pose.", win.statuses[-1])
+        check("W.update_writes_nothing_to_the_scene", not scene_writes(src) and not src.dm.calls)
+        # A legacy version 1 left-arm pose keeps the stage D Apply.
+        legacy = ns["prod_pose_save_new"](lib, u"Legacy Arm", legacy_pose(ns), u"20261106-150000-000000", reg)
+        calls = []
+        real = ns["prod_pose_apply"]
+        ns["prod_pose_apply"] = lambda *a, **k: calls.append(a[2][u"record"][u"pose"][u"version"]) or {
+            u"phase": u"no-op"}
+        try:
+            win.apply_pose(ns["prod_pose_reread"](lib, legacy, reg))
+        finally:
+            ns["prod_pose_apply"] = real
+        check("W.legacy_v1_apply_uses_the_left_arm_path", calls == [1], calls)
+        check("W.ui_state_save_new_needs_a_usable_full_body_mapping",
+              ns["prod_pose_ui_state"]({u"character": u"Krystal", u"supported": True, u"instance_valid": True,
+                                        u"save_available": False})[u"buttons"][u"save_new"] is False and
+              ns["prod_pose_ui_state"]({u"character": u"Krystal", u"supported": True, u"instance_valid": True,
+                                        u"save_available": True})[u"buttons"][u"save_new"] is True and
+              ns["prod_pose_ui_state"]({u"character": u"Krystal", u"supported": True,
+                                        u"instance_valid": True})[u"buttons"][u"save_new"] is True)
+    finally:
+        ns["PROD_POSE_REGISTRY_MODE"] = mode
+
+
 def main():
     if "--phase=run" not in sys.argv[1:]:
         print("usage: %s --phase=run" % os.path.basename(sys.argv[0]))
@@ -847,6 +1010,7 @@ def main():
             lived = run("live", lambda: section_live(ns, reg, fx, os.path.join(root, u"live")))
             if lived:
                 run("live_refusals", lambda: section_live_refusals(ns, lived[0], fx, lived[1]))
+            run("window", lambda: section_window(app, ns, reg, fx, os.path.join(root, u"window")))
     finally:
         shutil.rmtree(root, True)
     failed = [r for r in RESULTS if not r[1]]

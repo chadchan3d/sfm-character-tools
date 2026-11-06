@@ -22,6 +22,11 @@ import test_cpm_app_r15_namespace_isolation as r15  # noqa: E402
 RESULTS = []
 
 
+# Stage E (full body): Save New creates complete poses, so it is enabled only where the registry carries a usable
+# full-body mapping for the selected rig class; these page stubs provide one.
+BODY_REGISTRY = {u"_body": {u"rig_classes": {u"krystal-biped": {}}}}
+BODY_SELECTION = {u"mappings": [{u"region": u"full_body", u"from": u"krystal-biped", u"to": u"krystal-biped"}]}
+
 def check(name, ok, value=None):
     RESULTS.append((name, bool(ok)))
     print("[%s] %s%s" % ("PASS" if ok else "FAIL", name, "" if ok or value is None else "  value=%r" % (value,)))
@@ -180,11 +185,11 @@ def section_ui_pass(window, tabs, env, boxes, QtGui):
                         u"pose": {u"regions": {u"left_arm": {}}, u"source": {
                             u"model_ref": u"models/test/krystal2020.mdl", u"shot_name": u"shot10",
                             u"rig_class": u"krystal-biped"}}}}
-    g["prod_pose_load_registry"] = lambda: {}
+    g["prod_pose_load_registry"] = lambda: dict(BODY_REGISTRY)
     g["prod_pose_selected_library"] = lambda ident: {u"char_dir": u"unused", u"character_key": u"k"}
     g["prod_pose_discover"] = lambda char_dir, key, reg: {u"items": [item], u"unusable": []}
     g["prod_pose_rig_class"] = lambda reg, model, checksum: u"krystal-biped"
-    g["prod_pose_registry_select"] = lambda reg, mode: {}
+    g["prod_pose_registry_select"] = lambda reg, mode: dict(BODY_SELECTION)
     g["prod_pose_browse_eligible"] = lambda sel, rec, cls: [u"left_arm"]
     ident = {"model": u"models/test/krystal2020.mdl", "checksum": 1234, "animset_name": u"Krystal"}
     g["prod_resolve_instance"] = lambda tok, ident=None: {"test_row": True}   # as P7: the guard's context check
@@ -324,11 +329,11 @@ def section_rename_ui(window, tabs, env, boxes, QtGui):
     g["prod_context_token"] = lambda *a, **k: {"test_context": True}
     # The pinned operation context still matches (M-06 revalidation runs for real in the integration suite).
     g["prod_context_token_matches"] = lambda token: token == {"test_context": True}
-    g["prod_pose_load_registry"] = lambda: {}
+    g["prod_pose_load_registry"] = lambda: dict(BODY_REGISTRY)
     g["prod_pose_selected_library"] = lambda i: {u"char_dir": u"unused", u"character_key": u"k"}
     g["prod_pose_discover"] = lambda char_dir, key, reg: {u"items": [pose], u"unusable": []}
     g["prod_pose_rig_class"] = lambda reg, model, checksum: u"krystal-biped"
-    g["prod_pose_registry_select"] = lambda reg, mode: {}
+    g["prod_pose_registry_select"] = lambda reg, mode: dict(BODY_SELECTION)
     g["prod_pose_browse_eligible"] = lambda sel, rec, cls: [u"left_arm"]
     try:
         window.identity = dict(ident)
@@ -446,7 +451,7 @@ def section_rename_ui(window, tabs, env, boxes, QtGui):
         check("N5 missing or damaged pose profiles: the list says so (not 'unsupported')",
               rows == [u"Pose Library files are missing or damaged. Reinstall Character Preset Manager."]
               and not window.save_pose_button.isEnabled(), rows)
-        g["prod_pose_load_registry"] = lambda: {}
+        g["prod_pose_load_registry"] = lambda: dict(BODY_REGISTRY)
         g["prod_pose_rig_class"] = lambda reg, model, checksum: None
         window.refresh_pose_view()
         rows = [plist.item(i).text() for i in range(plist.count())]
@@ -549,12 +554,12 @@ def section_polish(window, tabs, env, boxes, QtGui):
     g["prod_identity_from_row"] = lambda row: dict(ident)
     g["prod_context_token"] = lambda *a, **k: {"test_context": True}
     g["prod_context_token_matches"] = lambda token: token == {"test_context": True}
-    g["prod_pose_load_registry"] = lambda: {}
+    g["prod_pose_load_registry"] = lambda: dict(BODY_REGISTRY)
     g["prod_pose_selected_library"] = lambda i: {u"char_dir": u"C:/unused/char", u"character_key": u"k",
                                                  u"library_root": u"C:/unused"}
     g["prod_pose_discover"] = lambda char_dir, key, reg: {u"items": list(items), u"unusable": []}
     g["prod_pose_rig_class"] = lambda reg, model, checksum: u"krystal-biped"
-    g["prod_pose_registry_select"] = lambda reg, mode: {}
+    g["prod_pose_registry_select"] = lambda reg, mode: dict(BODY_SELECTION)
     g["prod_pose_browse_eligible"] = lambda sel, rec, cls: [u"left_arm"]
     g["prod_pose_reread"] = lambda sel, item, reg: item
     g["prod_pose_assert_contained"] = lambda sel, path: path
@@ -791,11 +796,11 @@ def section_selection_refresh(window, tabs, env, boxes):
     g["prod_probe_semantic_provider"] = lambda ident, **kw: (None, {"status": u"unavailable", "reason": u"test"})
     g["prod_discover"] = lambda ident, kind: []
     g["prod_load_library_meta"] = lambda ident: saved["prod_load_library_meta"](ident)
-    g["prod_pose_load_registry"] = lambda: {}
+    g["prod_pose_load_registry"] = lambda: dict(BODY_REGISTRY)
     g["prod_pose_selected_library"] = lambda ident: {u"char_dir": u"unused", u"character_key": u"k"}
     g["prod_pose_discover"] = lambda char_dir, key, reg: {u"items": [], u"unusable": []}
     g["prod_pose_rig_class"] = lambda reg, model, checksum: u"krystal-biped"
-    g["prod_pose_registry_select"] = lambda reg, mode: {}
+    g["prod_pose_registry_select"] = lambda reg, mode: dict(BODY_SELECTION)
     calls = []
     counter = lambda index: calls.append(index)  # noqa: E731
     tabs.currentChanged.connect(counter)
