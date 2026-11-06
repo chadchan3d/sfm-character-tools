@@ -379,3 +379,8 @@ cpm/pose_profiles/cpm_pose_profiles_v1.json text eol=lf
 # F-01 full-body S0 survey (2026-11-05): the observer SHA-256 is pinned in s0.template.json and PROCEDURE.md;
 # keep exact LF bytes for the whole package on every checkout and archive export.
 real_sfm_qualification/f01_full_body_s0/** text eol=lf
+
+# F-01 full body, stage E (2026-11-06): the body profile registry is SHA-256 pinned in the CPM
+# (PROD_BODY_REGISTRY_SHA256); the S0-derived test fixtures are SHA-256 pinned in test_cpm_app_f01_body.py.
+cpm/pose_profiles/cpm_body_profiles_v1.json text eol=lf
+cpm/convergence/tests/fixtures/f01_body/*.json -text

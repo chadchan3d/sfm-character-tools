@@ -157,11 +157,16 @@ class Names(ast.NodeVisitor):
         self.generic_visit(node)
 
 
+# Stage E (full body): the one stage E name stage A may reach, and only for a version 2 record validated with the
+# body profile registry attached (prod_pose_validate's dispatch); version 1 records never reach it.
+STAGE_E_DISPATCH = set(["prod_body_validate"])
+
+
 def static_check(block):
     v = Names()
     v.visit(ast.parse(block))
     builtin_names = set(dir(__builtins__) if not isinstance(__builtins__, dict) else __builtins__)
-    free = v.loaded - v.bound - builtin_names - ALLOWED_MODULES - set(["unicode", "long"])
+    free = v.loaded - v.bound - builtin_names - ALLOWED_MODULES - set(["unicode", "long"]) - STAGE_E_DISPATCH
     check("static.block_has_only_its_own_and_allowed_free_names", not free, sorted(free))
     check("static.no_forbidden_name_or_attribute_root", not ((v.loaded | v.attr_roots) & FORBIDDEN),
           sorted((v.loaded | v.attr_roots) & FORBIDDEN))

@@ -40274,7 +40274,7 @@ PROD_POSE_CONVENTIONS = {
     u"quaternion_unit_tolerance": 1e-4,
 }
 PROD_POSE_REGIONS = (u"left_arm", u"right_arm")
-PROD_POSE_PART_NAMES = {u"left_arm": u"Left arm", u"right_arm": u"Right arm"}
+PROD_POSE_PART_NAMES = {u"left_arm": u"Left arm", u"right_arm": u"Right arm", u"full_body": u"Full body"}
 PROD_POSE_REGISTRY_FORMAT = u"cpm-pose-profiles"
 PROD_POSE_MAPPING_STATUSES = (u"experimental", u"qualified")
 PROD_POSE_SOLVER_FIELDS = (u"startOffset", u"midOffset", u"poleVector", u"mode")
@@ -40526,7 +40526,13 @@ def prod_pose_registry_select(reg, mode):
         usable = [dict(m) for m in reg[u"mappings"]]
     else:
         raise ProdPoseError(u"registry", u"unknown registry mode %r" % (mode,))
-    return {u"mode": mode, u"mappings": usable, u"registry_sha256": reg[u"_sha256"]}
+    out = {u"mode": mode, u"mappings": usable, u"registry_sha256": reg[u"_sha256"]}
+    body = reg.get(u"_body")
+    if body is not None:                              # stage E: full-body mappings, the same mode rule
+        out[u"mappings"] = usable + [dict(m) for m in body[u"mappings"]
+                                     if mode == u"qualification" or m[u"status"] == u"qualified"]
+        out[u"body_registry_sha256"] = body[u"_sha256"]
+    return out
 
 
 # --- compatibility (C3) ---------------------------------------------------------------------------------------
@@ -40618,6 +40624,8 @@ def prod_pose_payload_digest(pose):
 
 def prod_pose_validate(record, reg):
     """Validate a decoded pose record against the closed schema and the registry's region profiles."""
+    if reg.get(u"_body") is not None and isinstance(record, dict) and isinstance(record.get(u"pose"), dict) and             record[u"pose"].get(u"version") == 2:
+        return prod_body_validate(record, reg)         # stage E: a complete (full-body) pose
     schema = prod_pose_record_schema()
     regions = record.get(u"pose", {}).get(u"regions") if isinstance(record, dict) and \
         isinstance(record.get(u"pose"), dict) else None
@@ -40650,8 +40658,15 @@ def prod_pose_validate(record, reg):
 
 
 def prod_pose_parse(raw, reg):
-    """Strict parse and validation of one pose record file's exact bytes."""
-    return prod_pose_validate(prod_pose_strict_json(raw, PROD_POSE_MAX_BYTES), reg)
+    """Strict parse and validation of one pose record file's exact bytes. A version 1 record keeps its own size
+    limit; only a version 2 (full-body) record, with the body registry attached, may be larger."""
+    body = reg.get(u"_body")
+    if body is None or len(raw) <= PROD_POSE_MAX_BYTES:
+        return prod_pose_validate(prod_pose_strict_json(raw, PROD_POSE_MAX_BYTES), reg)
+    record = prod_pose_strict_json(raw, body[u"_max_record_bytes"])
+    if not (isinstance(record, dict) and isinstance(record.get(u"pose"), dict) and record[u"pose"].get(u"version") == 2):
+        raise ProdPoseError(u"invalid-file", u"file exceeds %d bytes" % PROD_POSE_MAX_BYTES)
+    return prod_pose_validate(record, reg)
 
 
 def prod_pose_serialize(record):
@@ -41154,6 +41169,8 @@ PROD_POSE_MESSAGES = {
 
 
 def prod_pose_parts_phrase(regions):
+    if u"full_body" in regions:                     # stage E: a version 2 complete pose
+        return u"Full body"
     regions = [r for r in PROD_POSE_REGIONS if r in regions]
     if len(regions) == 2:
         return u"Both arms"
@@ -41712,9 +41729,12 @@ def prod_pose_load_registry(path=None):
     except (IOError, OSError):
         raise ProdPoseIntegrationError(u"registry", u"The pose profiles are unavailable. Reinstall CPM.")
     try:
-        return prod_pose_registry_parse(raw, PROD_POSE_REGISTRY_SHA256)
+        reg = prod_pose_registry_parse(raw, PROD_POSE_REGISTRY_SHA256)
     except ProdPoseError:
         raise ProdPoseIntegrationError(u"registry", u"The pose profiles failed their integrity check. Reinstall CPM.")
+    loader = globals().get("prod_body_load_registry")
+    reg[u"_body"] = loader(reg, os.path.dirname(path)) if loader is not None else None
+    return reg
 
 
 def prod_pose_selected_library(identity):
@@ -41800,6 +41820,8 @@ def prod_pose_deferred_verify(pending):
     reason = prod_pose_context_gate((pending or {}).get(u"authorization"))
     if reason is not None:
         return prod_apply_deferred_unverified(reason)
+    if (pending or {}).get(u"body"):
+        return prod_body_verify_applied(pending)
     return prod_pose_verify_applied(pending)
 
 # === end of F-01 stage C block ===
@@ -43434,3 +43456,638 @@ def prod_pose_verify_applied(pending):
     return {u"phase": u"committed-verified"}
 
 # === end of F-01 stage D block ===
+
+
+# ===========================================================================
+# F-01 Pose Library full body, stage E: complete skeletal poses (cpm/qualification/F01_FULL_BODY_CONSOLIDATED_DESIGN.md
+# Rev 2 with Astra's A1 ruling and the Owner's A2/A3 decisions; cpm/qualification/F01_FULL_BODY_S0_ASSESSMENT.md;
+# Owner S1 authorization 2026-11-06). Version 2 records hold one region, full_body, for one validated rig class
+# (Krystal first). Part 1, pure functions over discovery data: the hash-pinned body profile registry, the structural
+# classification and complete coverage of a discovered instance, the compatibility descriptor and the version 2
+# record. Part 2 is the combined planner; part 3 the live layer (discovery, capture and the P1-P7 transaction).
+# Version 1 left-arm records keep the stage A-D paths unchanged.
+# ===========================================================================
+
+PROD_BODY_REGION = u"full_body"
+PROD_BODY_POSE_VERSION = 2
+PROD_BODY_REGISTRY_FORMAT = u"cpm-body-profiles"
+PROD_BODY_REGISTRY_FILENAME = u"cpm_body_profiles_v1.json"
+PROD_BODY_REGISTRY_SHA256 = u"22dcd1599c0556bcb71df0a9b9d14657684173b3bbf557250710a8104a6baa26"
+PROD_BODY_MAX_RECORD_BYTES = 4 << 20
+PROD_BODY_FRAME = u"placement-relative-at-capture"
+PROD_BODY_SLAVE_SLOTS = (u"slave", u"startJoint", u"midJoint", u"endJoint")
+PROD_BODY_BONE_CLASSES = (u"constrained", u"fk", u"fk-preserved", u"passive")
+PROD_BODY_HANDLE_CLASSES = (u"placement", u"core", u"helper")
+# Channel roles (S0 assessment section 4). Only the two written roles are ever keyed.
+PROD_BODY_CHANNEL_ROLES = (u"handle-written", u"handle-preserved", u"fk-written", u"fk-preserved", u"slave-base",
+                           u"ik-offset", u"passive", u"weight", u"operator-output", u"preserved")
+PROD_BODY_WRITTEN_ROLES = (u"handle-written", u"fk-written")
+# Roles compared exactly between a record and a destination (preserved flex, eye and other inputs are only kept).
+PROD_BODY_DESCRIBED_ROLES = tuple(r for r in PROD_BODY_CHANNEL_ROLES if r != u"preserved")
+PROD_BODY_PRESERVED_OPERATORS = (u"DmeExpressionOperator",)
+PROD_BODY_TRANSFORM_TYPES = {u"position": (u"DmeVector3Log", u"DmeVector3LogLayer"),
+                             u"orientation": (u"DmeQuaternionLog", u"DmeQuaternionLogLayer")}
+PROD_BODY_SOURCE_ATTRIBUTES = {u"position": u"valuePosition", u"orientation": u"valueOrientation"}
+PROD_BODY_CONTROL_CHANNELS = {u"position": u"positionChannel", u"orientation": u"orientationChannel"}
+PROD_BODY_FK_POSITION_COPY = u"This pose uses different bone positions and can't be applied safely."
+PROD_BODY_MESSAGES = {
+    u"unavailable": u"Full-body poses aren't available for this character yet.",
+    u"rig-differs": u"This character's rig differs from the one this pose was saved on. Nothing was changed.",
+    u"proportions": u"This pose was saved with different body proportions and can't be applied safely. Nothing was "
+                    u"changed.",
+    u"fk-position": PROD_BODY_FK_POSITION_COPY,
+    u"structure-unsupported": u"This character's animation isn't in a form CPM can change safely. Nothing was "
+                              u"changed.",
+    u"shared-authority": u"This character's animation is driven in a way CPM can't change safely. Nothing was "
+                         u"changed.",
+    u"evidence-unreadable": u"CPM couldn't read everything it needs to check this character safely. Nothing was "
+                            u"changed.",
+    u"save-refused": u"The pose wasn't saved: this character's rig can't be read completely. Nothing was saved.",
+    u"update-refused": u"The pose wasn't updated: this character's rig can't be read completely. Nothing was "
+                       u"changed.",
+}
+
+
+def prod_body_error(code, detail, copy=None):
+    """A body refusal: the user-facing copy as the message, the technical detail in the diagnostic log only."""
+    try:
+        prod_pose_log(u"BODY-refused", {u"code": code, u"detail": detail})
+    except Exception:
+        pass
+    return ProdPoseError(code, copy or PROD_BODY_MESSAGES.get(code) or PROD_BODY_MESSAGES[u"structure-unsupported"])
+
+
+def prod_body_f32_list(values):
+    return [prod_pose_f32(c) for c in values]
+
+
+def prod_body_exact(a, b):
+    """Exact equality of finite native float32 vectors (A1: no tolerance)."""
+    if not isinstance(a, list) or not isinstance(b, list) or len(a) != len(b):
+        return False
+    for x, y in zip(a, b):
+        if not prod_pose_is_number(x) or not prod_pose_is_number(y):
+            return False
+        fx, fy = float(x), float(y)
+        if math.isnan(fx) or math.isinf(fx) or math.isnan(fy) or math.isinf(fy):
+            return False
+        if prod_pose_f32(fx) != fx or prod_pose_f32(fy) != fy or fx != fy:
+            return False
+    return True
+
+
+# --- body profile registry ------------------------------------------------------------------------------------------
+
+def prod_body_registry_schema():
+    s = (u"str",)
+    names = (u"list", s, 0, 1024)
+    pair = (u"list", s, 2, 2)
+    constraint = (u"obj", {u"type": (u"enum", PROD_POSE_CONSTRAINT_TYPES),
+                           u"slaves": (u"map", PROD_BODY_SLAVE_SLOTS, s, False),
+                           u"targets": (u"list", s, 1, 1), u"pole": (u"nullable", s)})
+    profile = (u"obj", {
+        u"region": (u"const", PROD_BODY_REGION), u"rig_name": s, u"placement_handle": s,
+        u"handles": (u"map", None, s, False), u"helper_handles": names,
+        u"written_handle_channels": (u"map", None, pair, False),
+        u"preserved_handle_channels": (u"map", None, pair, False),
+        u"constraints": (u"list", constraint, 1, 512), u"preserved_fk_bones": names,
+        u"passive_channel_bones": names,
+        u"tolerances": (u"map", (u"angle_degrees", u"position", u"effective_angle_degrees"), (u"num",), True)})
+    model = (u"obj", {u"model_ref": s, u"checksum": (u"nullable", s)})
+    return (u"obj", {
+        u"format": (u"const", PROD_BODY_REGISTRY_FORMAT), u"version": (u"const", 1),
+        u"profiles": (u"map", None, profile, False),
+        u"rig_classes": (u"map", None, (u"obj", {u"models": (u"list", model, 1, 256),
+                                                 u"profiles": (u"list", s, 1, 16)}), False),
+        u"mappings": (u"list", (u"obj", {u"region": (u"const", PROD_BODY_REGION), u"from": s, u"to": s,
+                                         u"status": (u"enum", PROD_POSE_MAPPING_STATUSES),
+                                         u"evidence": (u"nullable", s)}), 0, 1024)})
+
+
+def prod_body_label_ok(label):
+    if label == u"model":
+        return True
+    kind, _, name = label.partition(u":")
+    return kind in (u"bone", u"handle") and bool(name)
+
+
+def prod_body_registry_parse(raw, expected_sha256, arm_reg=None):
+    """Parse the hash-pinned body profile registry. Every structural rule is enforced; anything else refuses. A rig
+    class it shares with the arm registry must list exactly the same models."""
+    if hashlib.sha256(raw).hexdigest() != expected_sha256:
+        raise ProdPoseError(u"registry", u"body profile registry is not the pinned file")
+    reg = prod_pose_strict_json(raw, 1 << 20)
+    prod_pose_check(prod_body_registry_schema(), reg, u"body-registry")
+    for pid, p in reg[u"profiles"].items():
+        handles = p[u"handles"]
+        if handles.get(p[u"placement_handle"]) != u"@rig":
+            raise ProdPoseError(u"registry", u"profile %s: the placement handle must be a child of the rig" % pid)
+        for name, parent in handles.items():
+            if parent != u"@rig" and parent not in handles:
+                raise ProdPoseError(u"registry", u"profile %s: handle %s has an unknown parent" % (pid, name))
+            seen, node = set(), name
+            while node != u"@rig":
+                if node in seen:
+                    raise ProdPoseError(u"registry", u"profile %s: handle hierarchy has a cycle" % pid)
+                seen.add(node)
+                node = handles[node]
+        helpers = set(p[u"helper_handles"])
+        if not helpers <= set(handles) or p[u"placement_handle"] in helpers or len(helpers) != len(p[u"helper_handles"]):
+            raise ProdPoseError(u"registry", u"profile %s: helper handles are invalid" % pid)
+        written, preserved = p[u"written_handle_channels"], p[u"preserved_handle_channels"]
+        if set(written) & set(preserved):
+            raise ProdPoseError(u"registry", u"profile %s: a handle channel is both written and preserved" % pid)
+        pairs = set()
+        for cname, (handle, attr) in list(written.items()) + list(preserved.items()):
+            if handle not in handles or handle in helpers or attr not in PROD_BODY_TRANSFORM_TYPES:
+                raise ProdPoseError(u"registry", u"profile %s: channel %s names no core handle attribute" % (pid, cname))
+            if (handle, attr) in pairs:
+                raise ProdPoseError(u"registry", u"profile %s: handle attribute %s.%s listed twice" % (pid, handle, attr))
+            pairs.add((handle, attr))
+        if any(h == p[u"placement_handle"] for h, _ in written.values()):
+            raise ProdPoseError(u"registry", u"profile %s: the placement handle is never written" % pid)
+        for c in p[u"constraints"]:
+            labels = list(c[u"slaves"].values()) + list(c[u"targets"]) + ([c[u"pole"]] if c[u"pole"] else [])
+            if not all(prod_body_label_ok(x) for x in labels):
+                raise ProdPoseError(u"registry", u"profile %s: a constraint names an invalid element" % pid)
+            slots = sorted(c[u"slaves"])
+            ik = c[u"type"] == u"DmeRigIKConstraintOperator"
+            if slots != (sorted([u"endJoint", u"midJoint", u"startJoint"]) if ik else [u"slave"]) or \
+                    (c[u"pole"] is not None) != ik:
+                raise ProdPoseError(u"registry", u"profile %s: constraint slots are invalid" % pid)
+        keys = [json.dumps(c, sort_keys=True) for c in p[u"constraints"]]
+        if len(set(keys)) != len(keys):
+            raise ProdPoseError(u"registry", u"profile %s: a constraint is listed twice" % pid)
+        if set(p[u"preserved_fk_bones"]) & set(p[u"passive_channel_bones"]):
+            raise ProdPoseError(u"registry", u"profile %s: preserved and passive bones overlap" % pid)
+        for t in p[u"tolerances"].values():
+            if not 0 < t < 1:
+                raise ProdPoseError(u"registry", u"profile %s: a tolerance is invalid" % pid)
+    for cid, cls in reg[u"rig_classes"].items():
+        for pid in cls[u"profiles"]:
+            if pid not in reg[u"profiles"]:
+                raise ProdPoseError(u"registry", u"rig class %s lists unknown profile %s" % (cid, pid))
+        if arm_reg is not None and cid in arm_reg[u"rig_classes"]:
+            mine = sorted(prod_pose_model_key(m[u"model_ref"]) for m in cls[u"models"])
+            theirs = sorted(prod_pose_model_key(m[u"model_ref"]) for m in arm_reg[u"rig_classes"][cid][u"models"])
+            if mine != theirs:
+                raise ProdPoseError(u"registry", u"rig class %s lists other models than the pose registry" % cid)
+    pairs = set()
+    for m in reg[u"mappings"]:
+        for end in (u"from", u"to"):
+            if m[end] not in reg[u"rig_classes"]:
+                raise ProdPoseError(u"registry", u"mapping names unknown rig class %s" % m[end])
+        if (m[u"status"] == u"qualified") != (m[u"evidence"] is not None):
+            raise ProdPoseError(u"registry", u"a qualified mapping needs evidence; an experimental one has none")
+        key = (m[u"from"], m[u"to"])
+        if key in pairs:
+            raise ProdPoseError(u"registry", u"duplicate mapping %s" % (key,))
+        pairs.add(key)
+    reg[u"_sha256"] = expected_sha256
+    reg[u"_max_record_bytes"] = PROD_BODY_MAX_RECORD_BYTES
+    return reg
+
+
+def prod_body_profile(reg, rig_class):
+    """The rig class's full-body profile (with its id), or None."""
+    body = (reg or {}).get(u"_body")
+    if body is None:
+        return None
+    cls = body[u"rig_classes"].get(rig_class) or {}
+    found = [pid for pid in cls.get(u"profiles", []) if body[u"profiles"][pid][u"region"] == PROD_BODY_REGION]
+    if len(found) != 1:
+        return None
+    profile = dict(body[u"profiles"][found[0]])
+    profile[u"_id"] = found[0]
+    return profile
+
+
+def prod_body_usable(reg, authorization):
+    """Whether the authorization's mappings include full_body for its destination class (production: qualified)."""
+    cls = authorization[u"destination"][u"rig_class"]
+    return prod_body_profile(reg, cls) is not None and any(
+        m[u"region"] == PROD_BODY_REGION and m[u"from"] == cls and m[u"to"] == cls for m in authorization[u"mappings"])
+
+
+# --- classification and coverage of one discovered instance --------------------------------------------------------
+
+def prod_body_field_value(f):
+    return f.get(u"value") if isinstance(f, dict) and f.get(u"status") == u"READ" else None
+
+
+def prod_body_classify(D, profile):
+    """Give every bone, rig handle and channel of the discovered instance exactly one supported role, from binding
+    evidence (which channel writes which attribute, from which source; which operator slaves which element) and the
+    profile's explicit rig core. Anything unresolved refuses (ProdPoseError, detail logged)."""
+    fail = prod_body_error
+    bones, handles, channels = D[u"bones"], D[u"rig"][u"handles"], D[u"channels"]
+    if D[u"rig"][u"registrations"] != 1 or D[u"rig"][u"names"] != [profile[u"rig_name"]]:
+        raise fail(u"rig-differs", u"rig registration %r (%d)" % (D[u"rig"][u"names"], D[u"rig"][u"registrations"]))
+    if sorted(handles) != sorted(profile[u"handles"]):
+        raise fail(u"rig-differs", u"rig handles differ: missing %s, extra %s" % (
+            sorted(set(profile[u"handles"]) - set(handles)), sorted(set(handles) - set(profile[u"handles"]))))
+    for name, parent in profile[u"handles"].items():
+        h = handles[name]
+        p = h[u"parent"]
+        ok = h[u"parent_count"] == 1 and p is not None and (
+            (parent == u"@rig" and p[u"type"] == u"DmeRig" and p[u"name"] == profile[u"rig_name"]) or
+            (parent != u"@rig" and p[u"handle"] == handles[parent][u"handle"]))
+        if not ok:
+            raise fail(u"rig-differs", u"handle %s is not parented to %s" % (name, parent))
+    label = {D[u"model"][u"handle"]: u"model"}
+    owner_of = {D[u"model"][u"transform"]: (u"model", u"model")}   # transform handle -> (kind, name)
+    for n, b in bones.items():
+        if b[u"handle"] in label or b[u"parent_count"] != 1:
+            raise fail(u"structure-unsupported", u"bone %s is not one scene element with one parent" % n)
+        label[b[u"handle"]] = u"bone:" + n
+        owner_of[b[u"transform"]] = (u"bone", n)
+    for n, h in handles.items():
+        label[h[u"handle"]] = u"handle:" + n
+        owner_of[h[u"transform"]] = (u"handle", n)
+    constraints, slave_elements, target_elements, slaved, roles_of_handle = [], {}, {}, {}, {}
+    for op in D[u"operators"]:
+        kind = op[u"type"]
+        if kind in PROD_BODY_PRESERVED_OPERATORS:
+            continue
+        if kind not in PROD_POSE_CONSTRAINT_TYPES:
+            raise fail(u"structure-unsupported", u"unsupported operator %s (%s)" % (op[u"name"], kind))
+        slaves = {}
+        for slot, s in op[u"slaves"].items():
+            if s is not None and s.get(u"target") is None and kind == u"DmeRigIKConstraintOperator" and                     slot == u"slave":
+                # Native S0: every IK operator also has an unused 'slave' slot (a slave element without a target).
+                if s.get(u"slave") is not None:
+                    slave_elements[s[u"slave"]] = u"inert:" + op[u"name"]
+                continue
+            if s is None or s.get(u"target") not in label:
+                raise fail(u"rig-differs", u"constraint %s slot %s drives an unknown element" % (op[u"name"], slot))
+            slaves[slot] = label[s[u"target"]]
+            slave_elements[s[u"slave"]] = slaves[slot]
+            slaved.setdefault(slaves[slot], []).append((kind, slot))
+        if len(op[u"targets"]) != 1:
+            raise fail(u"rig-differs", u"constraint %s does not have exactly one target" % op[u"name"])
+        t = op[u"targets"][0]
+        weight = prod_body_field_value(t[u"weight"])
+        if t[u"target"] not in label or isinstance(weight, bool) or not prod_pose_is_number(weight) or \
+                float(weight) != 1.0:
+            raise fail(u"rig-differs", u"constraint %s target or weight (%r) is not as qualified" % (op[u"name"], weight))
+        target_elements[t[u"handle"]] = op[u"name"]
+        pole = label.get(op[u"pole"]) if op[u"pole"] is not None else None
+        if op[u"pole"] is not None and pole is None:
+            raise fail(u"rig-differs", u"constraint %s pole is an unknown element" % op[u"name"])
+        for x in [label[t[u"target"]]] + ([pole] if pole else []):
+            roles_of_handle.setdefault(x, []).append(op[u"name"])
+        constraints.append({u"type": kind, u"slaves": slaves, u"targets": [label[t[u"target"]]], u"pole": pole})
+    key = lambda c: json.dumps(c, sort_keys=True)  # noqa: E731
+    if sorted(constraints, key=key) != sorted(profile[u"constraints"], key=key):
+        mine = set(key(c) for c in constraints)
+        theirs = set(key(c) for c in profile[u"constraints"])
+        raise fail(u"rig-differs", u"constraints differ: missing %s, extra %s" % (sorted(theirs - mine)[:4],
+                                                                               sorted(mine - theirs)[:4]))
+    if D.get(u"unknown_operator_types"):
+        raise fail(u"structure-unsupported", u"unsupported operators in the document: %s" % D[u"unknown_operator_types"])
+    driven = {}
+    for c in constraints:
+        attrs = [u"position"] if c[u"type"] == u"DmeRigPointConstraintOperator" else [u"orientation"]
+        for slave in c[u"slaves"].values():
+            driven.setdefault(slave, set()).update(attrs)
+    control_of = {}
+    for cname, c in D[u"controls"].items():
+        for attr, ch in c[u"channels"].items():
+            if ch is not None:
+                control_of[ch] = (cname, c[u"type"], attr)
+    roles, owners, by_owner = {}, {}, {}
+    for name in sorted(channels):
+        ch = channels[name]
+        to, attr = ch[u"to"], ch[u"to_attribute"]
+        if ch[u"mode"] != 3 or len(ch[u"layers"]) != 1:
+            raise fail(u"structure-unsupported", u"channel %s is not one Play-mode layer" % name)
+        if to is None or not attr:
+            raise fail(u"structure-unsupported", u"channel %s has no destination" % name)
+        if D[u"writers"].get(u"%d:%s" % (to[u"handle"], attr)) != 1:
+            raise fail(u"shared-authority", u"channel %s is not the only writer of its destination" % name)
+        if to[u"handle"] in slave_elements:
+            roles[name], owners[name] = u"slave-base", [slave_elements[to[u"handle"]], attr]
+        elif attr == u"targetWeight" and to[u"handle"] in target_elements:
+            roles[name], owners[name] = u"weight", [target_elements[to[u"handle"]], attr]
+        elif to[u"handle"] in owner_of:
+            kind, owner = owner_of[to[u"handle"]]
+            by_owner.setdefault((kind, owner, attr), []).append(name)
+        elif ch[u"from"] is None:
+            raise fail(u"structure-unsupported", u"channel %s has no source and drives no bone" % name)
+        else:
+            roles[name], owners[name] = u"preserved", [u"%s:%s" % (to[u"type"], to[u"name"]), attr]
+    for key2 in sorted(by_owner):
+        if len(by_owner[key2]) != 1:
+            raise fail(u"shared-authority", u"%s %s.%s has several channels" % key2)
+
+    def control_channel(cname, owner, attr):
+        """The channel is the named control's own position/orientation channel, from its value attribute."""
+        ch = channels[cname]
+        ctl = control_of.get(ch[u"handle"])
+        return (ctl is not None and ctl[1] == u"DmeTransformControl" and ctl[2] == PROD_BODY_CONTROL_CHANNELS[attr]
+                and ch[u"from"] is not None and ch[u"from"][u"handle"] == D[u"controls"][ctl[0]][u"handle"]
+                and ch[u"from_attribute"] == PROD_BODY_SOURCE_ATTRIBUTES[attr]
+                and (ch[u"log_type"], ch[u"layers"][0]) == PROD_BODY_TRANSFORM_TYPES[attr])
+    handle_classes = {}
+    listed = dict((tuple(v), (k, u"handle-written")) for k, v in profile[u"written_handle_channels"].items())
+    listed.update(dict((tuple(v), (k, u"handle-preserved")) for k, v in profile[u"preserved_handle_channels"].items()))
+    for name in sorted(handles):
+        lab = u"handle:" + name
+        cls = (u"placement" if name == profile[u"placement_handle"] else
+               u"helper" if name in profile[u"helper_handles"] else u"core")
+        handle_classes[name] = cls
+        if cls == u"helper":
+            if lab not in slaved or lab in roles_of_handle:
+                raise fail(u"rig-differs", u"helper %s is not a constrained follower" % name)
+        elif lab in slaved:
+            raise fail(u"shared-authority", u"a constraint drives rig handle %s" % name)
+        for attr in (u"position", u"orientation"):
+            got = by_owner.pop((u"handle", name, attr), [])
+            want = listed.get((name, attr))
+            if want is None:
+                if got:
+                    raise fail(u"rig-differs", u"handle %s.%s has an unexpected channel" % (name, attr))
+                continue
+            if got != [want[0]] or not control_channel(want[0], name, attr):
+                raise fail(u"rig-differs", u"handle %s.%s is not driven by its control channel %s" %
+                           (name, attr, want[0]))
+            roles[want[0]], owners[want[0]] = want[1], [lab, attr]
+    bone_classes = {}
+    for name in sorted(bones):
+        lab = u"bone:" + name
+        writers = dict((attr, by_owner.pop((u"bone", name, attr), [])) for attr in (u"position", u"orientation"))
+        for (kind, owner, attr) in [k for k in by_owner if k[0] == u"bone" and k[1] == name]:
+            for cname in by_owner.pop((kind, owner, attr)):
+                ch = channels[cname]
+                if attr != u"scale" or ch[u"from"] is None or ch[u"from"][u"type"] not in PROD_BODY_PRESERVED_OPERATORS:
+                    raise fail(u"structure-unsupported", u"bone %s.%s is written by %s" % (name, attr, cname))
+                roles[cname], owners[cname] = u"operator-output", [lab, attr]
+        if lab in slaved:
+            bone_classes[name] = u"constrained"
+            for attr, ws in writers.items():
+                if attr in driven[lab] and ws:
+                    raise fail(u"shared-authority", u"constrained bone %s.%s is also written by %s" % (name, attr, ws))
+                for cname in ws:
+                    if not control_channel(cname, name, attr):
+                        raise fail(u"structure-unsupported", u"bone offset %s is not a control channel" % cname)
+                    roles[cname], owners[cname] = u"ik-offset", [lab, attr]
+        elif name in profile[u"passive_channel_bones"]:
+            bone_classes[name] = u"passive"
+            for attr, ws in writers.items():
+                if len(ws) != 1 or channels[ws[0]][u"from"] is not None or \
+                        (channels[ws[0]][u"log_type"], channels[ws[0]][u"layers"][0]) != PROD_BODY_TRANSFORM_TYPES[attr]:
+                    raise fail(u"structure-unsupported", u"passive bone %s.%s is not one source-less channel" %
+                               (name, attr))
+                roles[ws[0]], owners[ws[0]] = u"passive", [lab, attr]
+        else:
+            preserved = name in profile[u"preserved_fk_bones"]
+            bone_classes[name] = u"fk-preserved" if preserved else u"fk"
+            for attr, ws in writers.items():
+                if len(ws) != 1 or not control_channel(ws[0], name, attr):
+                    raise fail(u"structure-unsupported", u"bone %s.%s is not driven by exactly one control channel" %
+                               (name, attr))
+                roles[ws[0]], owners[ws[0]] = (u"fk-preserved" if preserved else u"fk-written"), [lab, attr]
+    if by_owner:
+        raise fail(u"structure-unsupported", u"unclassified channels %s" % sorted(by_owner)[:8])
+    for name in profile[u"preserved_fk_bones"]:
+        if bone_classes.get(name) != u"fk-preserved":
+            raise fail(u"rig-differs", u"preserved bone %s is not a directly animated bone" % name)
+    for name in profile[u"passive_channel_bones"]:
+        if bone_classes.get(name) != u"passive":
+            raise fail(u"rig-differs", u"passive bone %s is missing" % name)
+    for cname in list(profile[u"written_handle_channels"]) + list(profile[u"preserved_handle_channels"]):
+        if cname not in roles:
+            raise fail(u"rig-differs", u"handle channel %s is missing" % cname)
+    if sorted(roles) != sorted(channels):
+        raise fail(u"structure-unsupported", u"channels without a role: %s" % sorted(set(channels) - set(roles))[:8])
+    written = sorted(n for n, r in roles.items() if r in PROD_BODY_WRITTEN_ROLES)
+    return {u"bones": bone_classes, u"handles": handle_classes, u"channels": roles, u"owners": owners,
+            u"constraints": constraints, u"written": written}
+
+
+# --- the compatibility descriptor --------------------------------------------------------------------------------
+
+def prod_body_typed(field, path):
+    return prod_pose_portable_value(field, path)
+
+
+def prod_body_channel_value(D, name):
+    """A channel's log value at the mapped tick as exact float32 components (refuses when unreadable)."""
+    v = D[u"channels"][name].get(u"value")
+    if not isinstance(v, list) or len(v) not in (3, 4):
+        raise prod_body_error(u"evidence-unreadable", u"channel %s value at the mapped tick is unreadable" % name)
+    out = prod_body_f32_list(v)
+    if len(out) == 4:
+        prod_pose_quaternion_input(out, name, u"evidence-unreadable")
+    else:
+        prod_pose_finite_vector(out, 3, name, u"evidence-unreadable")
+    return out
+
+
+def prod_body_descriptor(D, C, profile):
+    """The portable compatibility descriptor: names, roles and typed values, never runtime handles. Compared exactly
+    (prod_body_compare_descriptor)."""
+    bones = sorted(({u"name": n, u"index": b[u"index"], u"parent": b[u"parent"], u"class": C[u"bones"][n]}
+                    for n, b in D[u"bones"].items()), key=lambda r: (r[u"index"], r[u"name"]))
+    constraints = []
+    for c, op in zip(C[u"constraints"], [op for op in D[u"operators"] if op[u"type"] in PROD_POSE_CONSTRAINT_TYPES]):
+        row = dict(c)
+        t = op[u"targets"][0]
+        row[u"solver"] = dict((n, prod_body_typed(v, op[u"name"] + u"." + n)) for n, v in sorted(op[u"solver"].items())
+                              if n in PROD_POSE_SOLVER_FIELDS)
+        row[u"offsets"] = {u"oOffset": prod_body_typed(t[u"oOffset"], op[u"name"] + u".oOffset"),
+                           u"vecOffset": prod_body_typed(t[u"vecOffset"], op[u"name"] + u".vecOffset")}
+        constraints.append(row)
+    constraints.sort(key=lambda r: json.dumps(r, sort_keys=True))
+    channels, positions, orientations = {}, {}, {}
+    for name, role in C[u"channels"].items():
+        if role not in PROD_BODY_DESCRIBED_ROLES:
+            continue
+        ch = D[u"channels"][name]
+        channels[name] = {u"role": role, u"owner": C[u"owners"][name][0], u"attribute": C[u"owners"][name][1],
+                          u"log_type": ch[u"log_type"] or u"none", u"layer_type": ch[u"layers"][0]}
+        if role in (u"ik-offset", u"passive"):
+            v = prod_body_channel_value(D, name)
+            (orientations if len(v) == 4 else positions)[name] = v
+    scale = {u"bones": dict((n, prod_body_typed(b[u"scale"], n + u".scale")) for n, b in D[u"bones"].items()),
+             u"handles": dict((n, prod_body_typed(h[u"scale"], n + u".scale")) for n, h in D[u"rig"][u"handles"].items()),
+             u"model": prod_body_typed(D[u"model"][u"scale"], u"model.scale")}
+    return prod_pose_roundtrip({
+        u"rig_name": profile[u"rig_name"], u"model_ref": D[u"model"][u"model_ref"] or u"",
+        u"bones": bones, u"handles": dict((n, {u"parent": profile[u"handles"][n], u"class": C[u"handles"][n]})
+                                          for n in D[u"rig"][u"handles"]),
+        u"constraints": constraints, u"channels": channels, u"structural_positions": positions,
+        u"structural_orientations": orientations, u"scale": scale})
+
+
+def prod_body_compare_descriptor(saved, live):
+    """Exact equality. Structural values (IK bone offsets, source-less twist channels) and scale differences are
+    proportions or passive state and refuse with their own reason; everything else is a different rig."""
+    roles = saved.get(u"channels") or {}
+    for key in (u"structural_positions", u"structural_orientations"):
+        a, b = saved.get(key) or {}, live.get(key) or {}
+        if sorted(a) != sorted(b):
+            raise prod_body_error(u"rig-differs", u"%s names differ" % key)
+        bad = [n for n in sorted(a) if not prod_body_exact(a[n], b[n])]
+        offsets = [n for n in bad if (roles.get(n) or {}).get(u"role") == u"ik-offset"]
+        if offsets:                                   # IK bone lengths: body proportions
+            raise prod_body_error(u"proportions", u"%s differ: %s" % (key, offsets[:8]))
+        if bad:                                       # A3: passive (source-less) twist values
+            raise prod_body_error(u"rig-differs", u"passive values differ: %s" % bad[:8])
+    if saved.get(u"scale") != live.get(u"scale"):
+        raise prod_body_error(u"proportions", u"scale state differs: %s" % prod_pose_differences(
+            saved.get(u"scale"), live.get(u"scale"), u"scale")[:8])
+    rest = lambda d: dict((k, v) for k, v in d.items() if k not in (  # noqa: E731
+        u"structural_positions", u"structural_orientations", u"scale"))
+    problems = prod_pose_differences(rest(saved), rest(live))
+    if problems:
+        raise prod_body_error(u"rig-differs", u"descriptor differs: %s" % problems[:16])
+
+
+# --- version 2 record ------------------------------------------------------------------------------------------------
+
+def prod_body_region_schema():
+    s, i = (u"str",), (u"int", 1000000)
+    v3, q, typed = (u"vec", 3), (u"quat",), (u"typed",)
+    bone = (u"obj", {u"name": s, u"index": i, u"parent": (u"nullable", s), u"class": (u"enum", PROD_BODY_BONE_CLASSES)})
+    constraint = (u"obj", {u"type": (u"enum", PROD_POSE_CONSTRAINT_TYPES),
+                           u"slaves": (u"map", PROD_BODY_SLAVE_SLOTS, s, False), u"targets": (u"list", s, 1, 1),
+                           u"pole": (u"nullable", s), u"solver": (u"map", PROD_POSE_SOLVER_FIELDS, typed, False),
+                           u"offsets": (u"obj", {u"oOffset": typed, u"vecOffset": typed})})
+    channel = (u"obj", {u"role": (u"enum", PROD_BODY_DESCRIBED_ROLES), u"owner": s, u"attribute": s,
+                        u"log_type": s, u"layer_type": s})
+    return (u"obj", {
+        u"profile_id": s, u"frame": (u"const", PROD_BODY_FRAME),
+        u"positions": (u"map", None, v3, False), u"orientations": (u"map", None, q, False),
+        u"oracle": (u"obj", {u"bones": (u"map", None, (u"obj", {u"position": v3, u"orientation": q,
+                                                                 u"local_position": v3, u"local_orientation": q}),
+                                        False)}),
+        u"descriptor": (u"obj", {
+            u"rig_name": s, u"model_ref": s, u"bones": (u"list", bone, 1, 4096),
+            u"handles": (u"map", None, (u"obj", {u"parent": s, u"class": (u"enum", PROD_BODY_HANDLE_CLASSES)}), False),
+            u"constraints": (u"list", constraint, 1, 512), u"channels": (u"map", None, channel, False),
+            u"structural_positions": (u"map", None, v3, False), u"structural_orientations": (u"map", None, q, False),
+            u"scale": (u"obj", {u"bones": (u"map", None, typed, False), u"handles": (u"map", None, typed, False),
+                                u"model": typed})})})
+
+
+def prod_body_record_schema():
+    s = (u"str",)
+    return (u"obj", {
+        u"schema_version": (u"const", 3), u"record_kind": (u"const", u"preset"), u"kind": (u"const", u"pose"),
+        u"character_key": s, u"model_ref": s, u"preset_id": s, u"name": s, u"created_at": s, u"updated_at": s,
+        u"payload_sha256": s,
+        u"pose": (u"obj", {
+            u"format": (u"const", PROD_POSE_FORMAT), u"version": (u"const", PROD_BODY_POSE_VERSION),
+            u"conventions": (u"obj", dict((k, (u"const", v)) for k, v in PROD_POSE_CONVENTIONS.items())),
+            u"registry": (u"obj", {u"profile_set": (u"const", PROD_BODY_REGISTRY_FORMAT), u"version": (u"const", 1)}),
+            u"source": (u"obj", {u"rig_class": s, u"model_ref": s, u"shot_name": s,
+                                 u"t_doc_ticks": (u"int", 1 << 40), u"t_shot_ticks": (u"int", 1 << 40)}),
+            u"regions": (u"obj", {PROD_BODY_REGION: prod_body_region_schema()})})})
+
+
+def prod_body_is_record(record):
+    return isinstance(record, dict) and isinstance(record.get(u"pose"), dict) and \
+        record[u"pose"].get(u"version") == PROD_BODY_POSE_VERSION
+
+
+def prod_body_validate(record, reg):
+    """Validate a decoded version 2 record: the closed schema, its profile, and the internal consistency of the
+    written values, the oracle and the descriptor."""
+    body = (reg or {}).get(u"_body")
+    if body is None:
+        raise ProdPoseError(u"invalid-file", u"full-body poses need the body profile registry")
+    prod_pose_check(prod_body_record_schema(), record, u"")
+    if len(record[u"preset_id"]) != 32 or any(c not in u"0123456789abcdef" for c in record[u"preset_id"]):
+        raise ProdPoseError(u"invalid-file", u"preset_id is not 32 lowercase hex digits")
+    region = record[u"pose"][u"regions"][PROD_BODY_REGION]
+    profile = body[u"profiles"].get(region[u"profile_id"])
+    if profile is None or profile[u"region"] != PROD_BODY_REGION:
+        raise ProdPoseError(u"invalid-file", u"the full-body region names no body profile")
+    d = region[u"descriptor"]
+    names = [b[u"name"] for b in d[u"bones"]]
+    if len(set(names)) != len(names) or sorted(region[u"oracle"][u"bones"]) != sorted(names):
+        raise ProdPoseError(u"invalid-file", u"the oracle must cover every described bone exactly once")
+    written = dict((n, c) for n, c in d[u"channels"].items() if c[u"role"] in PROD_BODY_WRITTEN_ROLES)
+    pos = sorted(n for n, c in written.items() if c[u"attribute"] == u"position")
+    ori = sorted(n for n, c in written.items() if c[u"attribute"] == u"orientation")
+    if sorted(region[u"positions"]) != pos or sorted(region[u"orientations"]) != ori or len(pos) + len(ori) != \
+            len(written):
+        raise ProdPoseError(u"invalid-file", u"the saved values must be exactly the written channels")
+    for n, v in list(region[u"positions"].items()) + list(region[u"orientations"].items()):
+        if not prod_body_exact(v, prod_body_f32_list(v)):
+            raise ProdPoseError(u"invalid-file", u"%s is not a native float32 value" % n)
+    if record[u"payload_sha256"] != prod_pose_payload_digest(record[u"pose"]):
+        raise ProdPoseError(u"invalid-file", u"payload digest does not match")
+    return record
+
+
+
+def prod_body_load_registry(arm_reg, folder):
+    """The hash-pinned body profile registry beside the pose registry, or None (logged) when it is missing or
+    fails its checks: full-body poses are then unavailable; left-arm poses are unaffected."""
+    path = os.path.join(folder, PROD_BODY_REGISTRY_FILENAME)
+    try:
+        raw = prod_pose_read_bytes(path)
+    except (IOError, OSError) as exc:
+        prod_pose_log(u"BODY-registry-unavailable", {u"error": repr(exc)})
+        return None
+    try:
+        return prod_body_registry_parse(raw, PROD_BODY_REGISTRY_SHA256, arm_reg)
+    except ProdPoseError as exc:
+        prod_pose_log(u"BODY-registry-refused", {u"error": u"%s" % exc})
+        return None
+
+
+# --- part 2: capture payload, A1 compatibility, the combined planner and the expected skeleton -------------------
+
+def prod_body_root_world(D, profile):
+    h = D[u"rig"][u"handles"][profile[u"placement_handle"]]
+    return (list(h[u"world_position"]), prod_pose_unit(h[u"world_orientation"]))
+
+
+def prod_body_owner_row(D, label):
+    kind, _, name = label.partition(u":")
+    return D[u"bones"][name] if kind == u"bone" else D[u"rig"][u"handles"][name]
+
+
+def prod_body_effective_inputs(D, C, profile):
+    """Every written channel's log value at the mapped tick is its owner's evaluated parent-local value: positions
+    exactly (finite native float32, A1), orientations within the effective tolerance. Returns the values."""
+    tol = profile[u"tolerances"]
+    positions, orientations, bad = {}, {}, []
+    for name in C[u"written"]:
+        owner, attr = C[u"owners"][name]
+        row = prod_body_owner_row(D, owner)
+        v = prod_body_channel_value(D, name)
+        if attr == u"position":
+            if not prod_body_exact(v, prod_body_f32_list(row[u"local_position"])) or \
+                    not prod_body_exact(prod_body_f32_list(row[u"local_position"]), list(row[u"local_position"])):
+                bad.append(name)
+            positions[name] = v
+        else:
+            if prod_pose_angle_deg(v, row[u"local_orientation"]) > tol[u"effective_angle_degrees"]:
+                bad.append(name)
+            orientations[name] = v
+    if bad:
+        raise prod_body_error(u"evidence-unreadable", u"not evaluated at their log values: %s" % bad[:8])
+    return positions, orientations
+
+
+def prod_body_payload(D, C, profile):
+    """The full_body region of Save New / Update: the written channels' effective parent-local values, the
+    placement-relative oracle of every bone and the compatibility descriptor."""
+    positions, orientations = prod_body_effective_inputs(D, C, profile)
+    inv = prod_pose_invert(prod_body_root_world(D, profile))
+    bones = {}
+    for name, b in D[u"bones"].items():
+        p, q = prod_pose_compose(inv, (b[u"world_position"], prod_pose_unit(b[u"world_orientation"])))
+        bones[name] = {u"position": [float(c) for c in p], u"orientation": prod_pose_unit(q),
+                       u"local_position": prod_body_f32_list(b[u"local_position"]),
+                       u"local_orientation": prod_pose_unit(b[u"local_orientation"])}
+    return prod_pose_roundtrip({u"profile_id": profile[u"_id"], u"frame": PROD_BODY_FRAME, u"positions": positions,
+                                u"orientations": orientations, u"oracle": {u"bones": bones},
+                                u"descriptor": prod_body_descriptor(D, C, profile)})
+
+
+# === end of F-01 stage E block ===

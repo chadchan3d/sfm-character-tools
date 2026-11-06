@@ -365,6 +365,21 @@ F01_STAGED_NEW_TOP = set([
 ])
 F01_STAGED_CHANGED_METHODS = set(["__init__", "tab_changed", "render", "clear_model_selection", "operation_end"])  # NQ-1: Poses refresh
 F01_STAGED_NEW_METHODS = set(["refresh_pose_view", "selected_pose", "refresh_pose_buttons", "apply_selected_pose"])
+# F-01 full body, stage E (F01_FULL_BODY_CONSOLIDATED_DESIGN.md Rev 2; S1 authorization 2026-11-06): one appended
+# block after stage D (complete-pose core, planner and live layer); stage A and C gain small version 2 hooks.
+F01_STAGEE_NEW_TOP = set([
+    "PROD_BODY_BONE_CLASSES", "PROD_BODY_CHANNEL_ROLES", "PROD_BODY_CONTROL_CHANNELS", "PROD_BODY_DESCRIBED_ROLES",
+    "PROD_BODY_FK_POSITION_COPY", "PROD_BODY_FRAME", "PROD_BODY_HANDLE_CLASSES", "PROD_BODY_MAX_RECORD_BYTES",
+    "PROD_BODY_MESSAGES", "PROD_BODY_POSE_VERSION", "PROD_BODY_PRESERVED_OPERATORS", "PROD_BODY_REGION",
+    "PROD_BODY_REGISTRY_FILENAME", "PROD_BODY_REGISTRY_FORMAT", "PROD_BODY_REGISTRY_SHA256",
+    "PROD_BODY_SLAVE_SLOTS", "PROD_BODY_SOURCE_ATTRIBUTES", "PROD_BODY_TRANSFORM_TYPES", "PROD_BODY_WRITTEN_ROLES",
+    "prod_body_channel_value", "prod_body_classify", "prod_body_compare_descriptor", "prod_body_descriptor",
+    "prod_body_effective_inputs", "prod_body_error", "prod_body_exact", "prod_body_f32_list",
+    "prod_body_field_value", "prod_body_is_record", "prod_body_label_ok", "prod_body_load_registry",
+    "prod_body_owner_row", "prod_body_payload", "prod_body_profile", "prod_body_record_schema",
+    "prod_body_region_schema", "prod_body_registry_parse", "prod_body_registry_schema", "prod_body_root_world",
+    "prod_body_typed", "prod_body_usable", "prod_body_validate",
+])
 # F-01 UI consistency pass: the application name (TOOL_NAME; the diagnostic log keeps its product literal), Help's
 # preferred height, and the Poses page's state, list-message row and read-only Pose Info.
 F01_UI_CHANGED_TOP = set(["TOOL_NAME", "StartCharacterSliderPresetTool",
@@ -475,7 +490,7 @@ def section_derivation(app):
     check("derivation.added_top_level_is_bounded",
           added == EXPECTED_NEW_TOP | R15_NEW_TOP | ITEM6_NEW_TOP | UIPASS_NEW_TOP | LOGFIX_NEW_TOP | M05_NEW_TOP
           | M06_NEW_TOP | M06W1_NEW_TOP | F01_STAGEA_NEW_TOP | F01_STAGEB_NEW_TOP | F01_STAGEC_NEW_TOP | F01_STAGED_NEW_TOP
-          | F01_UI_NEW_TOP,
+          | F01_UI_NEW_TOP | F01_STAGEE_NEW_TOP,
           sorted(added))
     check("derivation.removed_is_exactly_item6_and_item7", removed == ITEM6_REMOVED_TOP | ITEM7_REMOVED_TOP
           | LOGFIX_REMOVED_TOP, sorted(removed ^ (ITEM6_REMOVED_TOP | ITEM7_REMOVED_TOP | LOGFIX_REMOVED_TOP)))

@@ -1,9 +1,14 @@
 # F-01 Full-Body Architecture — Consolidated Design
 
-**Revision 1, 2026-11-05.** Branch `feature/f01-pose-library`, based on `8634e2c`.
-**Status:** the Owner accepted this architecture on 2026-11-05 ("F-01 — Consolidate Architecture and Prepare S0
-Native Survey"). **Full-body implementation is not authorized.** The next step is the read-only S0 survey
-(section 9), which needs the Owner's execution authorization.
+**Revision 2, 2026-11-06** (section 14: approved amendments A1–A3 and the implemented S0 refinements). Branch
+`feature/f01-pose-library`.
+**Status:** offline S1 implementation authorized by the Owner on 2026-11-06 ("F-01 Full-Body Pose Library — S1
+Implementation"). Native full-body qualification, installation and release are **not** authorized.
+
+| Revision | Date | Change |
+|---|---|---|
+| 1 | 2026-11-05 | Owner-accepted architecture (sections 1–13, unchanged below) |
+| 2 | 2026-11-06 | Section 14 added: Astra's A1 ruling and the Owner's A2/A3 decisions as approved amendments; the S0 assessment's refinements R1–R6 as implemented in S1; S1 implementation facts |
 
 This document **supersedes** `cpm/qualification/F01_FULL_BODY_DESIGN_PROPOSAL.md` (SHA-256 `b6e37e7d…`). That
 proposal is kept unchanged as the historical record. Nothing here modifies the frozen R15 Blueprint
@@ -353,3 +358,42 @@ Each stage needs its own authorization.
 5. **Proportions:** Body Presets own flexes and bone scale (M-05/M-06), not bone position or orientation channels. A
    full-body pose therefore never overwrites them. A scale-state difference changes child world offsets, so it
    refuses (F) until retargeting exists.
+
+## 14. Revision 2: approved amendments and S1 implementation facts (2026-11-06)
+
+Sections 1–13 are Revision 1 as accepted; where they conflict with this section, this section governs.
+
+### Approved amendments
+
+| # | Amendment | Authority |
+|---|---|---|
+| **A1** | **FK translation.** For every included writable FK control, capture both the effective parent-local position and orientation at the mapped time, with the skeletal and compatibility evidence. Structural rest offsets are never inferred from values that merely appear constant. At Apply, the source's and the destination's effective FK positions must match as finite native float32 values, **exactly**; any difference refuses the whole operation before a write ("This pose uses different bone positions and can't be applied safely."). Compatibility and state are revalidated immediately before the Undo transaction. Compatible FK position channels are in the exact-time key plan even when the evaluated positions match: a missing key is inserted, a correct key is left unchanged, an unsupported or inconsistent state refuses. A visible match with missing keys is not a no-op. Purpose: an ambiguous FK translation transfer must never change body proportions. Supersedes the A1 options of the S0 assessment. | Astra's ruling, approved by the Owner |
+| **A2** | **Pole orientations.** `Elbow_l/r_o` and `Knee_l/r_o` are preserved and observed (compatibility, clock, unchanged keys); never written without separately qualified evidence. | Owner |
+| **A3** | **Source-less twist channels.** `bip_lowerArm_l/r_twist2` are preserved, never written; their captured values are part of the compatibility descriptor and Apply refuses when they differ. | Owner |
+
+### S0 refinements implemented in S1
+
+R1–R6 of `F01_FULL_BODY_S0_ASSESSMENT.md` section 6 are implemented as specified there (dormant slave-base channels
+defined by binding; IK bone-offset class; channel-driven-without-control class; the unchanged clock rule applied to
+every channel the operation reads or writes; passive foot helpers; scale controls and operators in the scale state).
+They follow from the native evidence and were not separately adjudicated.
+
+### Implementation facts (S1, offline)
+
+- **Profile registry.** A separate hash-pinned file, `cpm/pose_profiles/cpm_body_profiles_v1.json`, generated from
+  the native S0 bindings: the rig core (22 handles with parents, 36 constraints, 30 written and 6 preserved handle
+  channels), the preserved face bones and the two passive twist bones. The left-arm registry `f445d5ef…` is
+  unchanged; a missing or damaged body file makes full-body poses unavailable and never affects left-arm poses.
+  The `krystal-v1` full-body mapping is **experimental**: in the production build Save New refuses until native
+  qualification promotes it; the qualification build enables it.
+- **Written set on Krystal:** 278 channels (30 handle channels; orientation and position of 124 FK bones).
+- **Bone scale.** Natively a child's offset is scaled by the product of its ancestors' scales (`bip_head` 1.13 moves
+  the jaw and tongue); the expected skeleton applies it. Checked against SFM's own evaluated transforms in the S0
+  fixtures.
+- **A1 on native data:** shot15 and shot13's FK positions are bit-identical; shot10's differ by 1–2 float32 ULP in
+  19 FK channels, so a pose between those instances refuses (shot10 also differs in scale state).
+- **The combined-state correction.** The left-arm per-region loop compared each region's own expectation with the
+  whole instance, so a second region's writes would read as unrelated changes. Full body uses one instance-wide
+  baseline, one deduplicated plan, one expected authored state and one expected skeleton in which posed bones take
+  the saved placement-relative posture and preserved or passive bones follow their parents with their own unchanged
+  local transforms.

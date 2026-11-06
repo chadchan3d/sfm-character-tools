@@ -1,0 +1,601 @@
+{
+ "format": "cpm-body-profiles",
+ "mappings": [
+  {
+   "evidence": null,
+   "from": "krystal-v1",
+   "region": "full_body",
+   "status": "experimental",
+   "to": "krystal-v1"
+  }
+ ],
+ "profiles": {
+  "body_krystal_v1": {
+   "constraints": [
+    {
+     "pole": "handle:Elbow_l",
+     "slaves": {
+      "endJoint": "bone:bip_hand_l",
+      "midJoint": "bone:bip_lowerArm_l",
+      "startJoint": "bone:bip_UpperArm_l"
+     },
+     "targets": [
+      "handle:Hand_l"
+     ],
+     "type": "DmeRigIKConstraintOperator"
+    },
+    {
+     "pole": "handle:Elbow_r",
+     "slaves": {
+      "endJoint": "bone:bip_hand_r",
+      "midJoint": "bone:bip_lowerArm_r",
+      "startJoint": "bone:bip_UpperArm_r"
+     },
+     "targets": [
+      "handle:Hand_r"
+     ],
+     "type": "DmeRigIKConstraintOperator"
+    },
+    {
+     "pole": "handle:Knee_l",
+     "slaves": {
+      "endJoint": "bone:bip_foot_l",
+      "midJoint": "bone:bip_knee_l",
+      "startJoint": "bone:bip_hip_l"
+     },
+     "targets": [
+      "handle:Foot_l"
+     ],
+     "type": "DmeRigIKConstraintOperator"
+    },
+    {
+     "pole": "handle:Knee_r",
+     "slaves": {
+      "endJoint": "bone:bip_foot_r",
+      "midJoint": "bone:bip_knee_r",
+      "startJoint": "bone:bip_hip_r"
+     },
+     "targets": [
+      "handle:Foot_r"
+     ],
+     "type": "DmeRigIKConstraintOperator"
+    },
+    {
+     "pole": null,
+     "slaves": {
+      "slave": "bone:bip_collar_l"
+     },
+     "targets": [
+      "handle:CollarL"
+     ],
+     "type": "DmeRigOrientConstraintOperator"
+    },
+    {
+     "pole": null,
+     "slaves": {
+      "slave": "bone:bip_collar_l"
+     },
+     "targets": [
+      "handle:CollarL"
+     ],
+     "type": "DmeRigPointConstraintOperator"
+    },
+    {
+     "pole": null,
+     "slaves": {
+      "slave": "bone:bip_collar_r"
+     },
+     "targets": [
+      "handle:CollarR"
+     ],
+     "type": "DmeRigOrientConstraintOperator"
+    },
+    {
+     "pole": null,
+     "slaves": {
+      "slave": "bone:bip_collar_r"
+     },
+     "targets": [
+      "handle:CollarR"
+     ],
+     "type": "DmeRigPointConstraintOperator"
+    },
+    {
+     "pole": null,
+     "slaves": {
+      "slave": "bone:bip_foot_l"
+     },
+     "targets": [
+      "handle:Foot_l"
+     ],
+     "type": "DmeRigOrientConstraintOperator"
+    },
+    {
+     "pole": null,
+     "slaves": {
+      "slave": "bone:bip_foot_r"
+     },
+     "targets": [
+      "handle:Foot_r"
+     ],
+     "type": "DmeRigOrientConstraintOperator"
+    },
+    {
+     "pole": null,
+     "slaves": {
+      "slave": "bone:bip_hand_l"
+     },
+     "targets": [
+      "handle:Hand_l"
+     ],
+     "type": "DmeRigOrientConstraintOperator"
+    },
+    {
+     "pole": null,
+     "slaves": {
+      "slave": "bone:bip_hand_r"
+     },
+     "targets": [
+      "handle:Hand_r"
+     ],
+     "type": "DmeRigOrientConstraintOperator"
+    },
+    {
+     "pole": null,
+     "slaves": {
+      "slave": "bone:bip_head"
+     },
+     "targets": [
+      "handle:Head"
+     ],
+     "type": "DmeRigOrientConstraintOperator"
+    },
+    {
+     "pole": null,
+     "slaves": {
+      "slave": "bone:bip_head"
+     },
+     "targets": [
+      "handle:Head"
+     ],
+     "type": "DmeRigPointConstraintOperator"
+    },
+    {
+     "pole": null,
+     "slaves": {
+      "slave": "bone:bip_neck"
+     },
+     "targets": [
+      "handle:Neck"
+     ],
+     "type": "DmeRigOrientConstraintOperator"
+    },
+    {
+     "pole": null,
+     "slaves": {
+      "slave": "bone:bip_neck"
+     },
+     "targets": [
+      "handle:Neck"
+     ],
+     "type": "DmeRigPointConstraintOperator"
+    },
+    {
+     "pole": null,
+     "slaves": {
+      "slave": "bone:bip_pelvis"
+     },
+     "targets": [
+      "handle:Hip"
+     ],
+     "type": "DmeRigOrientConstraintOperator"
+    },
+    {
+     "pole": null,
+     "slaves": {
+      "slave": "bone:bip_pelvis"
+     },
+     "targets": [
+      "handle:Hip"
+     ],
+     "type": "DmeRigPointConstraintOperator"
+    },
+    {
+     "pole": null,
+     "slaves": {
+      "slave": "bone:bip_spine_0"
+     },
+     "targets": [
+      "handle:spine_1"
+     ],
+     "type": "DmeRigOrientConstraintOperator"
+    },
+    {
+     "pole": null,
+     "slaves": {
+      "slave": "bone:bip_spine_0"
+     },
+     "targets": [
+      "handle:spine_1"
+     ],
+     "type": "DmeRigPointConstraintOperator"
+    },
+    {
+     "pole": null,
+     "slaves": {
+      "slave": "bone:bip_spine_1"
+     },
+     "targets": [
+      "handle:spine_2"
+     ],
+     "type": "DmeRigOrientConstraintOperator"
+    },
+    {
+     "pole": null,
+     "slaves": {
+      "slave": "bone:bip_spine_1"
+     },
+     "targets": [
+      "handle:spine_2"
+     ],
+     "type": "DmeRigPointConstraintOperator"
+    },
+    {
+     "pole": null,
+     "slaves": {
+      "slave": "bone:bip_spine_2"
+     },
+     "targets": [
+      "handle:spine_3"
+     ],
+     "type": "DmeRigOrientConstraintOperator"
+    },
+    {
+     "pole": null,
+     "slaves": {
+      "slave": "bone:bip_spine_2"
+     },
+     "targets": [
+      "handle:spine_3"
+     ],
+     "type": "DmeRigPointConstraintOperator"
+    },
+    {
+     "pole": null,
+     "slaves": {
+      "slave": "bone:bip_spine_3"
+     },
+     "targets": [
+      "handle:spine_4"
+     ],
+     "type": "DmeRigOrientConstraintOperator"
+    },
+    {
+     "pole": null,
+     "slaves": {
+      "slave": "bone:bip_spine_3"
+     },
+     "targets": [
+      "handle:spine_4"
+     ],
+     "type": "DmeRigPointConstraintOperator"
+    },
+    {
+     "pole": null,
+     "slaves": {
+      "slave": "handle:rig_footHelper0"
+     },
+     "targets": [
+      "bone:bip_hand_r"
+     ],
+     "type": "DmeRigOrientConstraintOperator"
+    },
+    {
+     "pole": null,
+     "slaves": {
+      "slave": "handle:rig_footHelper0"
+     },
+     "targets": [
+      "bone:bip_hand_r"
+     ],
+     "type": "DmeRigPointConstraintOperator"
+    },
+    {
+     "pole": null,
+     "slaves": {
+      "slave": "handle:rig_footHelper1"
+     },
+     "targets": [
+      "bone:bip_hand_l"
+     ],
+     "type": "DmeRigOrientConstraintOperator"
+    },
+    {
+     "pole": null,
+     "slaves": {
+      "slave": "handle:rig_footHelper1"
+     },
+     "targets": [
+      "bone:bip_hand_l"
+     ],
+     "type": "DmeRigPointConstraintOperator"
+    },
+    {
+     "pole": null,
+     "slaves": {
+      "slave": "handle:rig_footHelper2"
+     },
+     "targets": [
+      "bone:bip_foot_l"
+     ],
+     "type": "DmeRigOrientConstraintOperator"
+    },
+    {
+     "pole": null,
+     "slaves": {
+      "slave": "handle:rig_footHelper2"
+     },
+     "targets": [
+      "bone:bip_foot_l"
+     ],
+     "type": "DmeRigPointConstraintOperator"
+    },
+    {
+     "pole": null,
+     "slaves": {
+      "slave": "handle:rig_footHelper3"
+     },
+     "targets": [
+      "bone:bip_foot_r"
+     ],
+     "type": "DmeRigOrientConstraintOperator"
+    },
+    {
+     "pole": null,
+     "slaves": {
+      "slave": "handle:rig_footHelper3"
+     },
+     "targets": [
+      "bone:bip_foot_r"
+     ],
+     "type": "DmeRigPointConstraintOperator"
+    },
+    {
+     "pole": null,
+     "slaves": {
+      "slave": "model"
+     },
+     "targets": [
+      "handle:rig_root"
+     ],
+     "type": "DmeRigOrientConstraintOperator"
+    },
+    {
+     "pole": null,
+     "slaves": {
+      "slave": "model"
+     },
+     "targets": [
+      "handle:rig_root"
+     ],
+     "type": "DmeRigPointConstraintOperator"
+    }
+   ],
+   "handles": {
+    "CollarL": "spine_4",
+    "CollarR": "spine_4",
+    "Elbow_l": "rig_root",
+    "Elbow_r": "rig_root",
+    "Foot_l": "rig_root",
+    "Foot_r": "rig_root",
+    "Hand_l": "rig_root",
+    "Hand_r": "rig_root",
+    "Head": "Neck",
+    "Hip": "spine_1",
+    "Knee_l": "Foot_l",
+    "Knee_r": "Foot_r",
+    "Neck": "spine_4",
+    "rig_footHelper0": "@rig",
+    "rig_footHelper1": "@rig",
+    "rig_footHelper2": "@rig",
+    "rig_footHelper3": "@rig",
+    "rig_root": "@rig",
+    "spine_1": "rig_root",
+    "spine_2": "spine_1",
+    "spine_3": "spine_2",
+    "spine_4": "spine_3"
+   },
+   "helper_handles": [
+    "rig_footHelper0",
+    "rig_footHelper1",
+    "rig_footHelper2",
+    "rig_footHelper3"
+   ],
+   "passive_channel_bones": [
+    "bip_lowerArm_l_twist2",
+    "bip_lowerArm_r_twist2"
+   ],
+   "placement_handle": "rig_root",
+   "preserved_fk_bones": [
+    "jaw",
+    "tongue00",
+    "tongue01",
+    "tongue02",
+    "tongue03",
+    "tongue04",
+    "tongue05",
+    "tongue06",
+    "tongue07"
+   ],
+   "preserved_handle_channels": {
+    "Elbow_l_o": [
+     "Elbow_l",
+     "orientation"
+    ],
+    "Elbow_r_o": [
+     "Elbow_r",
+     "orientation"
+    ],
+    "Knee_l_o": [
+     "Knee_l",
+     "orientation"
+    ],
+    "Knee_r_o": [
+     "Knee_r",
+     "orientation"
+    ],
+    "rig_root_o": [
+     "rig_root",
+     "orientation"
+    ],
+    "rig_root_p": [
+     "rig_root",
+     "position"
+    ]
+   },
+   "region": "full_body",
+   "rig_name": "rig_biped_Krystal45",
+   "tolerances": {
+    "angle_degrees": 0.01,
+    "effective_angle_degrees": 0.001,
+    "position": 0.001
+   },
+   "written_handle_channels": {
+    "CollarL_o": [
+     "CollarL",
+     "orientation"
+    ],
+    "CollarL_p": [
+     "CollarL",
+     "position"
+    ],
+    "CollarR_o": [
+     "CollarR",
+     "orientation"
+    ],
+    "CollarR_p": [
+     "CollarR",
+     "position"
+    ],
+    "Elbow_l_p": [
+     "Elbow_l",
+     "position"
+    ],
+    "Elbow_r_p": [
+     "Elbow_r",
+     "position"
+    ],
+    "Foot_l_o": [
+     "Foot_l",
+     "orientation"
+    ],
+    "Foot_l_p": [
+     "Foot_l",
+     "position"
+    ],
+    "Foot_r_o": [
+     "Foot_r",
+     "orientation"
+    ],
+    "Foot_r_p": [
+     "Foot_r",
+     "position"
+    ],
+    "Hand_l_o": [
+     "Hand_l",
+     "orientation"
+    ],
+    "Hand_l_p": [
+     "Hand_l",
+     "position"
+    ],
+    "Hand_r_o": [
+     "Hand_r",
+     "orientation"
+    ],
+    "Hand_r_p": [
+     "Hand_r",
+     "position"
+    ],
+    "Head_o": [
+     "Head",
+     "orientation"
+    ],
+    "Head_p": [
+     "Head",
+     "position"
+    ],
+    "Hip_o": [
+     "Hip",
+     "orientation"
+    ],
+    "Hip_p": [
+     "Hip",
+     "position"
+    ],
+    "Knee_l_p": [
+     "Knee_l",
+     "position"
+    ],
+    "Knee_r_p": [
+     "Knee_r",
+     "position"
+    ],
+    "Neck_o": [
+     "Neck",
+     "orientation"
+    ],
+    "Neck_p": [
+     "Neck",
+     "position"
+    ],
+    "spine_1_o": [
+     "spine_1",
+     "orientation"
+    ],
+    "spine_1_p": [
+     "spine_1",
+     "position"
+    ],
+    "spine_2_o": [
+     "spine_2",
+     "orientation"
+    ],
+    "spine_2_p": [
+     "spine_2",
+     "position"
+    ],
+    "spine_3_o": [
+     "spine_3",
+     "orientation"
+    ],
+    "spine_3_p": [
+     "spine_3",
+     "position"
+    ],
+    "spine_4_o": [
+     "spine_4",
+     "orientation"
+    ],
+    "spine_4_p": [
+     "spine_4",
+     "position"
+    ]
+   }
+  }
+ },
+ "rig_classes": {
+  "krystal-v1": {
+   "models": [
+    {
+     "checksum": null,
+     "model_ref": "models/fursonas/starfox/krystal/bodies/krystal2020.mdl"
+    }
+   ],
+   "profiles": [
+    "body_krystal_v1"
+   ]
+  }
+ },
+ "version": 1
+}
