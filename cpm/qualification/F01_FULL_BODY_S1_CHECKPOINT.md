@@ -132,3 +132,61 @@ The S0 observer records before and after each step; it is read-only and unchange
 
 Pass criteria are the offline acceptance items above, measured natively. The run needs a short procedure and a
 comparator built on the S0 analyzer; both need authorization.
+
+## 7. Astra S1 review corrections (2026-11-06)
+
+Astra's disposition of the reviewed checkpoint `03a1e334` was **ACCEPT WITH CORRECTIONS**. The corrections are offline
+only and add no architecture or feature.
+
+| Commit | Correction |
+|---|---|
+| `8323469b6da3637b066ab9e99fff31f02d884b4f` | P1 ownership, P7 authority, P2 A1 and evaluated-state recheck, bindings once per comparison, descriptor pairing by handle |
+| `82997bda027c219b7ae93ed6255b4690376ca14e` | The shared Undo validator refuses disabled Undo; full-body `StartUndo` outcomes |
+
+CPM after the corrections: `90cf0987322144bab8445dca01ca516c9c7994654fcf0d0120b4ef68af2ad0ce`. The registries are
+unchanged.
+
+| Finding | Correction |
+|---|---|
+| **P1, ownership** | Discovery records the document-wide authority over the instance from the writer index: every channel writing an instance element, every channel sharing a written channel's log, every log sharing its layer, and every operator slaving an instance DAG. Before any write, Apply refuses an outside writer, a shared log or layer, a driven control, or a constraint outside the animation set. It also reconciles each DAG's slaves exactly with the approved classification. These are the stage D rules applied instance-wide; the version 1 code is untouched |
+| **P7, deferred authority** | Fresh discovery reclassifies the instance, and its authority must equal the authority admitted at P1. A newly conflicting writer, shared log or layer, or constraint gives `committed-unverified`, never verified; nothing is undone or aborted |
+| **P2, A1** | Immediately before Undo, and again when verifying an Abort, Apply rechecks two things: the A1 predicate against the saved FK positions (exact float32), and that every written channel's owner is evaluated at the same channel value as at P1. After an Abort the reference is the restored original state, never the applied one. P1 also refuses a transform that is inconsistent with its channel |
+| **Undo startup** | `prod_pose_undo_problems` (shared) reports disabled Undo. A failure before the native `StartUndo` call is a plain refusal. A failure of `StartUndo` itself is uncertain: recovery-unverified and the `pose_guard` lockout, with no write, no Abort, and never `not-applied`. `FinishUndo` handling is unchanged |
+| **Performance** | Bindings are resolved once per comparison phase: P1, P2, Abort verification and P7 each resolve them freshly, exactly once. Previously they were resolved once per planned channel |
+| **Ordering** | The descriptor pairs constraints with operators by handle |
+
+Focused counterexamples (suite section `X.*`, 31 checks):
+- shared log and shared layer;
+- external constraints;
+- a conflict appearing after commit;
+- a one-ULP evaluated FK change between P1 and P2;
+- transform/channel inconsistencies;
+- disabled Undo;
+- a refusal before `StartUndo` compared with `StartUndo` failing before and after opening;
+- `FinishUndo` failing before and after commit;
+- the injected qualification fault through the real `pose_guard`, its lockout and refusal of later operations;
+- a late Abort restoring keys, transforms and Undo;
+- a single binding resolution per comparison;
+- constraint-order permutation.
+
+Against the reviewed CPM `03a1e33`, 21 of these checks fail (X.1–X.7 and X.11): those are the defects. The others
+confirm behaviour that was already correct.
+
+Results after the corrections, on Python 3.10.6 and 2.7.5:
+- full-body suite 189/189;
+- pose core 255/255, library 87/87, integration 202/202, live 79/79;
+- Poses page 97/97 (2.7.5);
+- M-06 179/179 and 334/334, M-05 115/115;
+- empty states 15/15 (2.7.5);
+- canonical route: historical row only.
+
+Remaining concerns:
+1. **Version 1 `StartUndo`.** The qualified left-arm path still treats an exception from `StartUndo` as "not opened"
+   and verifies the state. It was deliberately left unchanged (only the shared validator changed), and needs the
+   Owner's or Astra's decision.
+2. **Cost.** P1, P2 and P7 each traverse the whole document for the writer index; S0's document has about 10,000
+   channels. Native cost is unmeasured.
+3. **Evaluation during the transaction.** If SFM evaluates during the transaction, verifying an Abort compares the
+   transforms with the restored state. A transform that still holds applied values then fails closed (recovery
+   unverified) rather than passing.
+4. **Native verification still needed.** The limitations in section 4 stand: solver, Undo size, single-rig evidence.

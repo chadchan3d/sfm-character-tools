@@ -9,6 +9,8 @@
 - **F-01 full-body architecture (Owner-accepted 2026-11-05):** `cpm/qualification/F01_FULL_BODY_CONSOLIDATED_DESIGN.md` Rev 1 — Astra's hybrid architecture with Argon's adversarial corrections, as stated in the Owner's authorization; the review texts are external records (not in this repository). It supersedes `F01_FULL_BODY_DESIGN_PROPOSAL.md`, which is kept unchanged. It does not modify the R15 Blueprint or the Stage D design.
 
 ## Current milestone and done criteria
+**F-01 Full-Body S1 — Astra ACCEPT WITH CORRECTIONS; corrections complete offline (2026-11-06); not natively qualified.** Corrections `8323469` (ownership, P7 authority, P2 A1, bindings) and `82997bd` (Undo startup and recovery); CPM `90cf0987…`; full-body suite 189/189 on both interpreters; left-arm, M-05 and M-06 regressions unchanged PASS. Record: `F01_FULL_BODY_S1_CHECKPOINT.md` section 7. Version 1 `StartUndo` handling unchanged (for adjudication).
+
 **F-01 Full-Body S1 — OFFLINE IMPLEMENTATION COMPLETE (2026-11-06); not natively qualified.** Record: `cpm/qualification/F01_FULL_BODY_S1_CHECKPOINT.md`. Design: `F01_FULL_BODY_CONSOLIDATED_DESIGN.md` Rev 2 (A1 Astra ruling, A2/A3 Owner decisions approved). Commits `da70d47` (S1-A/B), `6f845d0` (S1-C), `02b4406` (S1-D), `20363f3` (S1-E). CPM `947d4a11…`; body profile registry `cpm/pose_profiles/cpm_body_profiles_v1.json` `22dcd159…` (full-body mapping experimental); left-arm registry `f445d5ef…` unchanged.
 - **Scope:** stage E block: complete coverage of Krystal's rig by binding evidence (278 written channels), exact compatibility with A1 float32 FK positions, version 2 records, one combined plan and expected state, the P1-P7 transaction and deferred whole-skeleton verification; Save New creates complete poses only (disabled in the production build until qualification); version 1 left-arm records keep their stage D paths.
 - **Offline:** `test_cpm_app_f01_body.py` 158/158 (Python 2.7.5 and 3.10.6; S0-derived fixtures and a fake scene built from them); pose core 255/255, library 87/87, integration 202/202, live 79/79, page 97/97; M-06, M-05 and empty-states unchanged PASS.
@@ -62,4 +64,4 @@
 - **Public reception:** owner-reported downloads/subscriptions versus anti-AI comments are sentiment observations, not evidence of software success or failure.
 
 ## One next bounded action
-**Independent technical review of the S1 implementation** (stage E block, body registry, tests), then the Owner's decision on the minimal native full-body qualification. No installation, native run, release packaging, deployment or merge to `master` before separate authorization.
+**Independent review of the S1 corrections** (`8323469`, `82997bd`), then the Owner's decision on preparing the minimal native full-body qualification. No installation, native run, release packaging, deployment or merge to `master` before separate authorization.
