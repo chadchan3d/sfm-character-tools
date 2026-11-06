@@ -25,7 +25,13 @@ save during the survey.
 
 `… s0_tool.py … pre` → `PRE PASS`. It checks that SFM is closed, the published CPM is installed with no pose registry
 beside it, the fixture and the observer match their pins; records the four protected inventories; backs up SFM's
-housekeeping and `.pyc` files; creates the session copy. On any refusal it changes nothing: stop and report.
+housekeeping and `.pyc` files; creates the session copy. It takes a few minutes (the inventories); wait for
+`PRE PASS`. On any refusal it changes nothing: stop and report.
+
+`pre` runs **once per run folder** and never again. Before starting SFM, and whenever unsure whether `pre` already
+completed, run `… s0_tool.py … status` (read-only): `STATUS FRESH` means the completed `pre` is still a valid
+baseline (SFM closed, published CPM, no registry, unsaved session copy, empty `observations` and `evidence`, no
+housekeeping, `.pyc` or inventory change). Anything else is `STATUS NOT FRESH`: do not start the survey; report.
 
 ## 2. Survey (one SFM process)
 

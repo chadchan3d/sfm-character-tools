@@ -11,6 +11,7 @@ usage: python -I s0_tool.py S0.json COMMAND
   post     verify SFM closed; put back any housekeeping or .pyc file SFM rewrote; verify the session copy is
            byte-identical to the fixture (never saved), the published CPM and no registry, the observer unchanged,
            and every inventory equal to its baseline; write Q/evidence/post.json
+  status   read-only: report whether a completed pre is still a fresh baseline (pre is never run twice)
   analyze  validate every Q/observations/S0-NN.json and write Q/evidence/S0_REPORT.json and S0_REPORT.md
 """
 from __future__ import print_function
@@ -82,7 +83,11 @@ def cmd_pre(c):
             problems.append("%s already exists" % d)
     if problems:
         print(json.dumps({"problems": problems}, indent=1))
+        if os.path.isfile(os.path.join(pre_dir, "pre.json")):
+            print("A previous pre already completed in %s. pre never runs twice; run the `status` command to check "
+                  "whether that run is still a fresh, usable baseline." % q)
         raise SystemExit("PRE NOT PERFORMED (nothing was changed)")
+    print("pre: recording backups and four inventories; this takes a few minutes. Wait for PRE PASS.")
     os.makedirs(os.path.join(pre_dir, "backup", "housekeeping"))
     for d in ("sessions", "observations", "evidence"):
         os.makedirs(os.path.join(q, d))
@@ -164,17 +169,62 @@ def cmd_post(c):
     return 0 if result["pass"] else 1
 
 
+def cmd_status(c):
+    """Read-only: is the completed pre still a fresh baseline from which the survey may start?"""
+    q = p(c, "Q")
+    pre_path = os.path.join(q, "pre_run", "pre.json")
+    if not os.path.isfile(pre_path):
+        print("STATUS: no completed pre in %s; run pre" % q)
+        return 1
+    pre = T.read_json(pre_path)
+    problems = []
+    if pre.get("pass") is not True:
+        problems.append("pre.json does not record a pass")
+    running = T.sfm_running()
+    if running:
+        problems.append(running)
+    problems += installation_problems(c)
+    if T.sha(p(c, "R2_FIXTURE")) != c["pins"]["r2_fixture_sha256"]:
+        problems.append("the R2 fixture is not %s" % c["pins"]["r2_fixture_sha256"])
+    if not (T.sha(observer(c)) == pre["observer_sha256"] == c["pins"]["observer_sha256"]):
+        problems.append("the observer differs from the pin recorded by pre")
+    sessions = sorted(os.listdir(os.path.join(q, "sessions")))
+    if sessions != [SESSION] or T.sha(os.path.join(q, "sessions", SESSION)) != c["pins"]["r2_fixture_sha256"]:
+        problems.append("the sessions folder is not exactly an unsaved %s (%s)" % (SESSION, sessions))
+    for d in ("observations", "evidence"):
+        if os.listdir(os.path.join(q, d)):
+            problems.append("%s is not empty: the survey has started; this is not a fresh run" % d)
+    changed = []
+    for rel, digest in pre["housekeeping"].items():
+        target = os.path.join(p(c, "GAME"), "usermod", rel)
+        if digest is not None and (not os.path.isfile(target) or T.sha(target) != digest):
+            changed.append(rel.replace("\\", "/"))
+    for rel, digest in pre["pyc"].items():
+        target = os.path.join(p(c, "SCRIPTS_ROOT"), rel)
+        if not os.path.isfile(target) or T.sha(target) != digest:
+            changed.append("scripts/" + rel.replace("\\", "/"))
+    if changed:
+        problems.append("files changed since pre (SFM was started?): %s" % changed[:10])
+    for k in INVENTORIES:
+        if T.inventory(p(c, k))["sha256"] != pre["inventories"][k]["sha256"]:
+            problems.append("inventory %s differs from the pre baseline" % k)
+    print(json.dumps({"pre_at": pre.get("at"), "problems": problems}, indent=1))
+    print("STATUS FRESH: the completed pre is a valid baseline; start the survey (PROCEDURE step 2)" if not problems
+          else "STATUS NOT FRESH: do not start the survey; report the problems above")
+    return 0 if not problems else 1
+
+
 def cmd_analyze(c):
     q = p(c, "Q")
     return s0_analyze.main(["s0_analyze.py", os.path.join(q, "observations"), os.path.join(q, "evidence")])
 
 
 def main(argv):
-    if len(argv) != 3 or argv[2] not in ("pre", "post", "analyze"):
+    if len(argv) != 3 or argv[2] not in ("pre", "status", "post", "analyze"):
         print(__doc__)
         return 2
     c = load(argv[1])
-    return {"pre": cmd_pre, "post": cmd_post, "analyze": cmd_analyze}[argv[2]](c) or 0
+    return {"pre": cmd_pre, "status": cmd_status, "post": cmd_post, "analyze": cmd_analyze}[argv[2]](c) or 0
 
 
 if __name__ == "__main__":

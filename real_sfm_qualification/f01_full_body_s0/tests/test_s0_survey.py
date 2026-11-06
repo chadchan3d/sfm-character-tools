@@ -315,6 +315,25 @@ class ToolTests(Base):
         self.assertTrue(post["pass"])
         self.assertEqual(sorted(post["put_back"]), ["cfg/config.cfg", "scripts/sfm/mainmenu/x.pyc"])
 
+    def test_status_reports_a_fresh_completed_pre(self):
+        self.assertEqual(self.run_tool("status"), 1)  # no pre yet
+        self.run_tool("pre")
+        self.assertEqual(self.run_tool("status"), 0)
+        self.assertRaises(SystemExit, self.run_tool, "pre")  # the second pre still refuses
+        self.assertEqual(self.run_tool("status"), 0)  # and changed nothing
+
+    def test_status_is_not_fresh_after_a_change(self):
+        self.run_tool("pre")
+        with io.open(self.files["cfg"], "wb") as f:  # SFM started after pre
+            f.write(b"rewritten by SFM\n")
+        self.assertEqual(self.run_tool("status"), 1)
+        with io.open(self.files["cfg"], "wb") as f:
+            f.write(b"content of cfg\n")
+        self.assertEqual(self.run_tool("status"), 0)
+        with io.open(os.path.join(self.q, "observations", "S0-01.json"), "wb") as f:
+            f.write(b"{}")
+        self.assertEqual(self.run_tool("status"), 1)
+
     def test_saved_session_fails_post(self):
         self.run_tool("pre")
         with io.open(os.path.join(self.q, "sessions", "S0_SURVEY.dmx"), "ab") as f:
