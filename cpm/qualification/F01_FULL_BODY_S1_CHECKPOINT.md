@@ -293,3 +293,73 @@ allow-list row). All pass corrected.
 
 **S3 kit.** `real_sfm_qualification/f01_full_body_s3/` holds the procedure, tool, observer wrapper, comparator and
 tests. `F01_FULL_BODY_S3_NATIVE_PLAN.md` section 7 records it. It is prepared, **not executed**.
+## 10. S3 run 1 and the revised A1 (2026-11-07)
+
+**S3 run 1** (`E:\SFM_U0B_Scratch\f01-full-body-s3`; first native qualification, qualification CPM `45cbaf95…`):
+- **Process A passed** (Save New, Update Pose, the records, no scene writes).
+- **Process B stopped after B1.** The approved read-only A1 pre-check found four FK positions differing:
+  - `Ear_r_p` by 1.6e-5;
+  - `bip_index_0_l_p` by 1.2e-7;
+  - `bip_tail00_p` by 1.0e-7;
+  - `bip_tail02_p` by 2.6e-5.
+- **Cause:** SFM's rotate tool rewrites positions with float32 noise, on both the source and the destination.
+- **Outcome:** no Apply was attempted. The published installation was restored, and all inventories equal their
+  baselines.
+- **Evidence:** `evidence\A1_PRECHECK.json`.
+
+**Revised A1** (Astra's bounded revision; commit `381c071fbf3ff1912b3c0725a452f86497c241fd`, candidate
+`aca2bb0666631b294c332781163479ba8aa298de0a611ea1abcfc648de0320bc`):
+- **Tolerance:** for `body_krystal_v1` only, a saved/destination FK-position Euclidean distance of at most 0.00005
+  SFM units is compatible. It is evaluated from exact float32 components and compared as float32. Every other
+  profile stays exact.
+- **Evidence requirements:** the saved and destination vectors must be finite float32, and the destination transform
+  must equal its channel exactly. A larger distance refuses (`fk-position`); incoherent or non-finite evidence also
+  refuses (`evidence-unreadable`).
+- **One planned-value map (P1):**
+  - FK positions hold the pinned destination values; every other written channel holds its saved value;
+  - the plan, the no-op decision, the expected authored state, P5 and P7 all use it;
+  - source FK positions are never written;
+  - a missing FK-position key is inserted with the destination value, and that value must equal the log's value at
+    t;
+  - a correct key is left unchanged;
+  - a contradictory existing key refuses.
+- **P2 and Abort verification:** repeat the check and require the P1 pins exactly, so a 1-ULP change refuses.
+- **P7:** verifies every pin (channel and evaluated transform) exactly, plus the unchanged skeletal oracle and its
+  tolerances, ownership and classification.
+- **Unchanged:** Undo ownership, the recovery pause and the version 1 path.
+
+**Tests:** section `Z`, 27 checks covering Astra's 11 cases with the native S3 values through the real capture path:
+- the four native discrepancies are accepted with the destination values kept;
+- a distance exactly at the limit is accepted, and the next float32 above refuses;
+- non-finite, non-float32 and incoherent evidence refuses;
+- a missing key is inserted with the destination value;
+- a correct key is left unchanged;
+- a contradictory key refuses;
+- a repeated Apply is a verified no-op;
+- a 1-ULP change between P1 and P2 refuses;
+- Abort and Undo restore the exact original state;
+- P7 refuses a 1-ULP drift and a transferred source value.
+
+Planner, live, window and X.4 tests moved to the revised contract. Against `459885a` the revised-contract checks fail
+and section Z cannot run.
+
+**Results** on Python 3.10.6 and 2.7.5 (both interpreters unless marked):
+- full body 238/238;
+- legacy live 100/100;
+- integration 204/204, pose core 255/255, library 87/87;
+- Poses page 98/98 (2.7.5);
+- M-06 179/179 and 334/334, M-05 115/115;
+- empty states 15/15 (2.7.5);
+- canonical route 84/85 (the historical row only; the unexplained names are still only `PROD_EMPTY_STATE_GUIDANCE`
+  and `prod_model_candidates`).
+
+**Native replay (offline, read-only):** the revised P1 checks were run on run 1's B1 observation and `S3 Pose A`:
+- descriptor: OK;
+- revised A1: OK, with 124 pins and the four discrepancies kept at the destination's values (largest 2.58e-5);
+- effective inputs: coherent;
+- plan: 278 insertions, every FK position at its destination value.
+
+The exact rule refuses on the same evidence.
+
+**Process B retest kit:** `real_sfm_qualification/f01_full_body_s3/PROCEDURE_B_RETEST.md` (run 2, a continuation of
+run 1), described in `F01_FULL_BODY_S3_NATIVE_PLAN.md` section 8. Prepared, not executed.

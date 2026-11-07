@@ -294,8 +294,8 @@ def record(name, region, created, updated):
 class Synthetic(object):
     """One complete, correct S3 run; `faults` names the counterexample to inject."""
 
-    def __init__(self, folder, faults=()):
-        self.q, self.faults = folder, set(faults)
+    def __init__(self, folder, faults=(), continuation=False):
+        self.q, self.faults, self.continuation = folder, set(faults), continuation
         for d in ("staged", "observations", "evidence", "sessions", os.path.join("evidence", "logs"),
                   os.path.join("evidence", "library_poses", CHAR)):
             os.makedirs(os.path.join(folder, d))
@@ -333,6 +333,8 @@ class Synthetic(object):
         f = self.faults
         src = Scene(100, "e:/q/sessions/S3_SOURCE.dmx", 0.0, posture(1.0))
         src.shot, src.head = "shot15", 0.2083
+        if self.continuation:
+            src.cpm = "a" * 64                          # Process A ran in the source run, on its own build
         self.observe(src, "A1")
         src.angles = posture(20.0)
         self.observe(src, "A2")
@@ -348,7 +350,9 @@ class Synthetic(object):
         self.observe(src, "A7")
         records = {"S3 Pose A--aaaa.json": record("S3 Pose A", reg_a, "t1", "t1"),
                    "S3 Pose B--bbbb.json": record("S3 Pose B", reg_b, "t2", "t3"),
-                   "NQ1 Pose A--5273df2209ca.json": {"name": "NQ1 Pose A", "pose": {"version": 1, "regions": {}}}}
+                   "NQ1 Pose A--5273df2209ca.json": {"name": "NQ1 Pose A", "pose": {"version": 1, "regions": {}}},
+                   "S3 Pose B--bbbb.json.bak": record("S3 Pose B", reg_a if "bak-wrong" in f else b_saved, "t2",
+                                                      "t2")}
         lib = os.path.join(self.q, "evidence", "library_poses", CHAR)
         for name, r in records.items():
             with open(os.path.join(lib, name), "wb") as fh:
@@ -430,7 +434,14 @@ class Synthetic(object):
         self.dump(os.path.join("evidence", "destination.json"),
                   {"destination_sha256": C.s0_hash(os.path.join(self.q, "sessions", "S3_DESTINATION.dmx"))})
         self.dump(os.path.join("evidence", "restore.json"), {"restored": True})
-        return {"paths": {"Q": self.q}, "character_dir": CHAR}
+        c = {"paths": {"Q": self.q}, "character_dir": CHAR}
+        if self.continuation:
+            c["continuation"] = {"process_a_qualification_cpm_sha256": "a" * 64}
+            if "no-precheck" not in f:
+                self.dump(os.path.join("evidence", "A1_PRECHECK.json"), {
+                    "compatible": "precheck-incompatible" not in f, "qualification_cpm_sha256": QUAL,
+                    "observation": {"label": "S0-08"}, "revised_A1": "ok"})
+        return c
 
 
 if PY3:
@@ -441,8 +452,8 @@ if PY3:
         def tearDown(self):
             shutil.rmtree(self.dir, True)
 
-        def verdict(self, *faults):
-            c = Synthetic(os.path.join(self.dir, "Q"), faults).build()
+        def verdict(self, *faults, **kw):
+            c = Synthetic(os.path.join(self.dir, "Q"), faults, kw.get("continuation", False)).build()
             saved = sys.stdout
             sys.stdout = io.StringIO()
             try:
@@ -466,6 +477,24 @@ if PY3:
             for cid in ids:
                 self.assertIn(cid, out["failed"], (fault, out["failed"]))
             return out
+
+        def test_update_pose_backup_is_accepted_only_as_the_replaced_record(self):
+            out = self.verdict()
+            self.assertNotIn("library.update_backups_are_the_replaced_records", out["failed"])
+            self.assertNotIn("library.records_unchanged_by_the_apply_process", out["failed"])
+            shutil.rmtree(os.path.join(self.dir, "Q"))
+            self.fails("bak-wrong", "library.update_backups_are_the_replaced_records")
+
+        def test_a_continuation_passes_with_a_compatible_precheck_and_the_source_build(self):
+            out = self.verdict(continuation=True)
+            self.assertEqual((out["verdict"], out["failed"]), ("PASS", []))
+            self.assertIn("precheck.revised_A1_compatible_before_apply", [x["id"] for x in out["checks"]])
+
+        def test_a_continuation_without_a_compatible_precheck_fails(self):
+            for fault in ("no-precheck", "precheck-incompatible"):
+                shutil.rmtree(os.path.join(self.dir, "Q"), True)
+                out = self.verdict(fault, continuation=True)
+                self.assertIn("precheck.revised_A1_compatible_before_apply", out["failed"], fault)
 
         def test_an_apply_that_moves_nothing_fails(self):
             self.fails("destination-matches", "distinct.destination_differs_from_A_in_every_group")
@@ -525,6 +554,114 @@ if PY3:
                 self.assertRaises(OSError, C.run, c)
             finally:
                 sys.stdout = saved
+
+
+if PY3:
+    class ContinuationLifecycleTests(unittest.TestCase):
+        """build, pre, status, inspect, install, seed, check, library, restore on a temporary installation: the
+        source run is only read, the run is isolated, and restore returns every inventory to its baseline."""
+
+        def setUp(self):
+            self.dir = tempfile.mkdtemp(prefix="s3life")
+            d = lambda *p: os.path.join(self.dir, *p)  # noqa: E731
+            for sub in (("game", "usermod", "scripts", "ChadChan3D_CPM"), ("game", "usermod", "scripts",
+                                                                          "SFM Character Tools"),
+                        ("game", "usermod", "cfg"), ("library", "Characters", CHAR), ("sessions",),
+                        ("src", "sessions"), ("src", "observations"), ("src", "evidence", "library_poses", CHAR)):
+                os.makedirs(d(*sub))
+            self.published = d("game", "usermod", "scripts", "ChadChan3D_CPM", "SFM_Character_Preset_Manager.py")
+            with open(self.published, "wb") as f:
+                f.write(b"published cpm\n")
+            with open(d("game", "usermod", "cfg", "config.cfg"), "wb") as f:
+                f.write(b"cfg\n")
+            with open(d("library", "Characters", CHAR, "character.json"), "wb") as f:
+                f.write(b"{}")
+            self.src = {}
+            for rel, data in ((("sessions", "S3_DESTINATION.dmx"), b"destination"),
+                              (("evidence", "library_poses", CHAR, "S3 Pose A--a.json"), b"A"),
+                              (("evidence", "library_poses", CHAR, "S3 Pose B--b.json"), b"B"),
+                              (("evidence", "library_poses", CHAR, "S3 Pose B--b.json.bak"), b"B0"),
+                              (("observations", "S0-01.json"), b"o1"), (("observations", "S0-01.s3.json"), b"s1"),
+                              (("observations", "S0-08.json"), b"run 1 B1, not copied")):
+                with open(d("src", *rel), "wb") as f:
+                    f.write(data)
+                self.src[rel[-1]] = sha_bytes(data)
+            with open(os.path.join(ROOT, "s3.template.json"), "rb") as f:
+                c = json.loads(f.read().decode("utf-8"))
+            cand = os.path.join(REPO, "cpm", "app", "SFM_Character_Preset_Manager.py")
+            c["paths"].update(Q=d("Q"), REPO=REPO, GAME=d("game"), LIBRARY=d("library"), SESSIONS=d("sessions"),
+                              CANDIDATE=cand, R2_FIXTURE=d("none.dmx"), LEGACY_POSE=d("none.json"),
+                              LOG_DIR=d("logs"))
+            c["pins"].update(candidate_cpm_sha256=T3.T.sha(cand), published_cpm_sha256=T3.T.sha(self.published))
+            c["housekeeping"] = ["cfg\\config.cfg"]
+            c["continuation"] = {"source_run": d("src"), "destination_sha256": self.src["S3_DESTINATION.dmx"],
+                                 "process_a_qualification_cpm_sha256": "a" * 64,
+                                 "records": dict((n, self.src[n]) for n in ("S3 Pose A--a.json", "S3 Pose B--b.json",
+                                                                            "S3 Pose B--b.json.bak")),
+                                 "observations": dict((n, self.src[n]) for n in ("S0-01.json", "S0-01.s3.json"))}
+            self.cfg = d("s3.json")
+            with open(self.cfg, "wb") as f:
+                f.write(json.dumps(c).encode("utf-8"))
+            os.makedirs(d("Q"))
+            self.d = d
+
+        def tearDown(self):
+            shutil.rmtree(self.dir, True)
+
+        def run_tool(self, *args):
+            saved = sys.stdout
+            sys.stdout = io.StringIO()
+            try:
+                return T3.main(["s3_tool", self.cfg] + list(args))
+            finally:
+                sys.stdout = saved
+
+        def source_state(self):
+            return T3.T.inventory(self.d("src"))["sha256"]
+
+        def test_the_continuation_lifecycle_reads_the_source_and_restores_everything(self):
+            d = self.d
+            src_before = self.source_state()
+            self.assertEqual(self.run_tool("build"), 0)
+            self.assertEqual(self.run_tool("pre"), 0)
+            self.assertEqual(sorted(os.listdir(d("Q", "sessions"))), ["S3_DESTINATION.dmx"])
+            self.assertEqual(self.run_tool("status"), 0)
+            self.assertEqual(self.run_tool("inspect"), 0)
+            self.assertEqual(self.run_tool("install"), 0)
+            self.assertEqual(self.run_tool("check"), 0)
+            ids = T3.T.read_json(d("Q", "staged", "IDENTITIES.json"))
+            self.assertEqual(T3.T.sha(self.published), ids["qualification_cpm_sha256"])
+            self.assertEqual(self.run_tool("seed"), 0)
+            poses = d("library", "Characters", CHAR, "Poses")
+            self.assertEqual(sorted(os.listdir(poses)), ["S3 Pose A--a.json", "S3 Pose B--b.json",
+                                                         "S3 Pose B--b.json.bak"])
+            self.assertEqual(sorted(os.listdir(d("Q", "observations"))), ["S0-01.json", "S0-01.s3.json"])
+            lib_a = T3.T.read_json(d("Q", "evidence", "library_A.json"))
+            self.assertEqual(len(lib_a["files"]), 3)
+            self.assertEqual(self.run_tool("library", "B"), 0)
+            self.assertEqual(self.run_tool("restore"), 0)
+            restore = T3.T.read_json(d("Q", "evidence", "restore.json"))
+            self.assertTrue(restore["restored"], restore)
+            self.assertEqual(T3.T.sha(self.published), T3.T.read_json(self.cfg)["pins"]["published_cpm_sha256"])
+            self.assertFalse(os.path.exists(poses))
+            self.assertEqual(sorted(os.listdir(d("Q", "evidence", "library_poses", CHAR))),
+                             ["S3 Pose A--a.json", "S3 Pose B--b.json", "S3 Pose B--b.json.bak"])
+            self.assertEqual(self.source_state(), src_before)
+
+        def test_a_changed_source_file_refuses_pre(self):
+            with open(self.d("src", "evidence", "library_poses", CHAR, "S3 Pose B--b.json.bak"), "ab") as f:
+                f.write(b"x")
+            self.assertEqual(self.run_tool("build"), 0)
+            self.assertRaises(SystemExit, self.run_tool, "pre")
+            self.assertFalse(os.path.exists(self.d("Q", "pre_run")))
+
+        def test_the_source_run_folder_cannot_be_the_run_folder(self):
+            c = T3.T.read_json(self.cfg)
+            c["continuation"]["source_run"] = c["paths"]["Q"]
+            with open(self.cfg, "wb") as f:
+                f.write(json.dumps(c).encode("utf-8"))
+            self.run_tool("build")
+            self.assertRaises(SystemExit, self.run_tool, "pre")
 
 
 if __name__ == "__main__":

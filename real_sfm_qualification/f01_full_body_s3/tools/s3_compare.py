@@ -365,8 +365,10 @@ def evaluate(R):
             continue
         problems = s0_analyze.validate(o[step]) + list(o[step].get("problems") or []) + list(R.side[step]["mismatch"])
         chk("valid.%s" % step, not problems and o[step]["readonly"]["unchanged"], problems[:5])
-        chk("cpm.%s" % step, (o[step].get("cpm_loaded") or {}).get("build_sha256") == R.ids["qualification_cpm_sha256"],
-            o[step].get("cpm_loaded"))
+        want = R.ids["qualification_cpm_sha256"]
+        if step.startswith("A") and R.c.get("continuation"):      # Process A ran in the source run, on its build
+            want = R.c["continuation"]["process_a_qualification_cpm_sha256"]
+        chk("cpm.%s" % step, (o[step].get("cpm_loaded") or {}).get("build_sha256") == want, o[step].get("cpm_loaded"))
     if len(o) != len(LABELS):
         chk("complete", False, "missing observations: %s" % sorted(set(LABELS) - set(o)))
         return
@@ -403,12 +405,23 @@ def evaluate(R):
     chk("update.writes_nothing_to_the_scene", R.doc_unchanged(o["A6"], o["A7"]))
     lib = dict((t, read_json(os.path.join(R.q, "evidence", "library_%s.json" % t))) for t in ("A", "B")
                if os.path.isfile(os.path.join(R.q, "evidence", "library_%s.json" % t)))
-    final = {}
-    for name, rows in R.records.items():
-        for path, _ in rows:
-            final[os.path.basename(path)] = s0_hash(path)
+    final = {}                        # every file, including the .bak Update Pose keeps of the replaced record
+    folder = os.path.join(R.q, "evidence", "library_poses", R.c["character_dir"])
+    for name in sorted(os.listdir(folder)) if os.path.isdir(folder) else []:
+        final[name] = s0_hash(os.path.join(folder, name))
+    baks = [n for n in final if n.endswith(".bak")]
+    chk("library.update_backups_are_the_replaced_records", all(
+        n.startswith("S3 Pose B--") and R.oracle_problems(o["A4"], read_json(os.path.join(folder, n))["pose"][
+            "regions"]["full_body"]) == [] for n in baks) and len(baks) <= 1, baks)
     chk("library.records_unchanged_by_the_apply_process", len(lib) == 2 and lib["A"]["files"] == lib["B"]["files"] ==
         final, sorted(final))
+
+    if R.c.get("continuation"):
+        pre = os.path.join(R.q, "evidence", "A1_PRECHECK.json")
+        pc = read_json(pre) if os.path.isfile(pre) else {}
+        chk("precheck.revised_A1_compatible_before_apply", pc.get("compatible") is True and
+            pc.get("qualification_cpm_sha256") == R.ids["qualification_cpm_sha256"] and
+            (pc.get("observation") or {}).get("label") == "S0-08", {k: pc.get(k) for k in ("revised_A1", "compatible")})
 
     # Distinct postures (an Apply that changes nothing proves nothing: PS-1b5)
     d_dest = R.distinct_groups(reg_a, o["B1"])

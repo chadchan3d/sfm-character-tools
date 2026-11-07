@@ -14,13 +14,20 @@ usage: python -I s3_tool.py S3.json COMMAND
   status        read-only: is the completed pre still a fresh baseline
   inspect       read-only: after preparation step 0, pin Q/sessions/S3_DESTINATION.dmx (saved by the Owner)
   install       journal first; then install the qualification CPM and both registries (temporary)
-  seed          copy the pinned legacy left-arm pose (version 1) into the run's character Poses folder
+  seed          copy the pinned legacy left-arm pose (version 1) into the run's character Poses folder; in a
+                continuation run, every pinned record and Process A observation of the source run instead
+  precheck      read-only, after B1: the staged qualification CPM's own revised A1 compatibility check on the B1
+                observation and S3 Pose A; writes Q/evidence/A1_PRECHECK.json (Apply only when COMPATIBLE)
   check         report the installation state (published | qualification | other)
   library TAG   read-only: hash every file of the run's Poses folder into Q/evidence/library_TAG.json
   collect-logs  copy the CPM log files written since pre into Q/evidence/logs (verified copies; sources untouched)
   restore       put the published CPM back, remove both registries, restore housekeeping and .pyc, move the run's
                 Poses folder into Q/evidence/library_poses; verify every inventory equals its pre-run baseline
   compare       run tools/s3_compare.py on this run (writes Q/evidence/S3_VERDICT.json and S3_VERDICT.md)
+
+A continuation run (config section "continuation") starts at Process B: pre copies the source run's pinned
+destination session instead of creating fixture copies, inspect verifies that pin, and seed restores the source
+run's pinned pose records (including Update Pose's .bak) and Process A observations. The source run is only read.
 """
 from __future__ import print_function
 
@@ -92,6 +99,22 @@ def targets(c):
 
 def poses_dir(c):
     return os.path.join(p(c, "LIBRARY"), "Characters", c["character_dir"], "Poses")
+
+
+def cont(c):
+    return c.get("continuation")
+
+
+def source_files(c):
+    """The continuation's pinned source files: (group, name, path, sha256)."""
+    k = cont(c)
+    lib = os.path.join(k["source_run"], "evidence", "library_poses", c["character_dir"])
+    out = [("destination", DESTINATION, os.path.join(k["source_run"], "sessions", DESTINATION),
+            k["destination_sha256"])]
+    out += [("records", n, os.path.join(lib, n), d) for n, d in sorted(k["records"].items())]
+    out += [("observations", n, os.path.join(k["source_run"], "observations", n), d)
+            for n, d in sorted(k["observations"].items())]
+    return out
 
 
 def identities(c):
@@ -173,11 +196,18 @@ def cmd_pre(c):
     if st != "published":
         problems.append("the installation is not the published state (CPM %s, registries %s)" % (
             cpm, dict((k, os.path.lexists(v)) for k, v in targets(c).items())))
-    if not os.path.isfile(p(c, "R2_FIXTURE")) or T.sha(p(c, "R2_FIXTURE")) != c["pins"]["r2_fixture_sha256"]:
+    if cont(c):
+        if os.path.normcase(os.path.abspath(cont(c)["source_run"])) == os.path.normcase(os.path.abspath(p(c, "Q"))):
+            problems.append("a continuation run needs its own run folder")
+        for group, name, path, digest in source_files(c):
+            if not os.path.isfile(path) or T.sha(path) != digest:
+                problems.append("source %s %s is missing or not %s" % (group, name, digest))
+    elif not os.path.isfile(p(c, "R2_FIXTURE")) or T.sha(p(c, "R2_FIXTURE")) != c["pins"]["r2_fixture_sha256"]:
         problems.append("the R2 fixture is not %s" % c["pins"]["r2_fixture_sha256"])
     if ids and (T.sha(observer(c)) != ids["observer_sha256"] or T.sha(wrapper(c)) != ids["wrapper_sha256"]):
         problems.append("the observer or the S3 wrapper changed after build")
-    if not os.path.isfile(p(c, "LEGACY_POSE")) or T.sha(p(c, "LEGACY_POSE")) != c["pins"]["legacy_pose_sha256"]:
+    if not cont(c) and (not os.path.isfile(p(c, "LEGACY_POSE")) or
+                        T.sha(p(c, "LEGACY_POSE")) != c["pins"]["legacy_pose_sha256"]):
         problems.append("the legacy pose is not %s" % c["pins"]["legacy_pose_sha256"])
     chars = os.path.join(p(c, "LIBRARY"), "Characters")
     existing = [n for n in (sorted(os.listdir(chars)) if os.path.isdir(chars) else [])
@@ -213,8 +243,11 @@ def cmd_pre(c):
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
                 T.copy_verified(src, dst, T.sha(src))
                 pyc[rel] = T.sha(src)
-    for name in SESSIONS:
-        T.copy_verified(p(c, "R2_FIXTURE"), q(c, "sessions", name), c["pins"]["r2_fixture_sha256"])
+    if cont(c):
+        T.copy_verified(source_files(c)[0][2], q(c, "sessions", DESTINATION), cont(c)["destination_sha256"])
+    else:
+        for name in SESSIONS:
+            T.copy_verified(p(c, "R2_FIXTURE"), q(c, "sessions", name), c["pins"]["r2_fixture_sha256"])
     inv = dict((k, T.inventory(p(c, k))) for k in INVENTORIES)
     for k, v in inv.items():
         with open(os.path.join(pre_dir, "inventory_%s.txt" % k), "w") as f:
@@ -224,8 +257,8 @@ def cmd_pre(c):
         "installed_cpm_sha256": cpm, "identities": ids, "housekeeping": house, "pyc": pyc,
         "inventories": dict((k, {"files": v["files"], "sha256": v["sha256"]}) for k, v in inv.items()),
         "pass": True}, exclusive=True)
-    print("PRE PASS: backups, inventories and the session copies %s are in place. Next: preparation step 0"
-          % ", ".join(SESSIONS))
+    print("PRE PASS: backups, inventories and the session copies %s are in place. Next: %s"
+          % (DESTINATION if cont(c) else ", ".join(SESSIONS), "inspect" if cont(c) else "preparation step 0"))
 
 
 def cmd_status(c):
@@ -261,6 +294,18 @@ def cmd_inspect(c):
     if running:
         problems.append(running)
     dest = q(c, "sessions", DESTINATION)
+    if cont(c):
+        if sorted(os.listdir(q(c, "sessions"))) != [DESTINATION] or T.sha(dest) != cont(c)["destination_sha256"]:
+            problems.append("the sessions folder is not exactly the pinned %s" % DESTINATION)
+        if os.path.exists(q(c, "evidence", "destination.json")):
+            problems.append("the destination was already pinned")
+        refuse(problems, "INSPECT")
+        result = {"at": time.strftime("%Y-%m-%d %H:%M:%S"), "destination_sha256": T.sha(dest),
+                  "continuation_of": cont(c)["source_run"], "pass": True}
+        T.write_json(q(c, "evidence", "destination.json"), result, exclusive=True)
+        print(json.dumps(result, indent=1))
+        print("INSPECTED: the source run's destination is pinned. Next: install")
+        return
     if not os.path.isfile(dest):
         problems.append("%s does not exist (preparation step 0 saves it)" % dest)
     elif T.sha(dest) == c["pins"]["r2_fixture_sha256"]:
@@ -327,6 +372,27 @@ def cmd_seed(c):
         problems.append("the qualification build is not installed (run install first)")
     if os.path.lexists(poses_dir(c)):
         problems.append("%s already exists" % poses_dir(c))
+    if cont(c):
+        for group, name, path, digest in source_files(c):
+            if not os.path.isfile(path) or T.sha(path) != digest:
+                problems.append("source %s %s is missing or not %s" % (group, name, digest))
+        if os.listdir(q(c, "observations")):
+            problems.append("Q/observations is not empty")
+        refuse(problems, "SEED")
+        os.makedirs(poses_dir(c))
+        for group, name, path, digest in source_files(c)[1:]:
+            target = os.path.join(poses_dir(c) if group == "records" else q(c, "observations"), name)
+            T.copy_verified(path, target, digest)
+        records = dict((n, d) for g, n, _, d in source_files(c) if g == "records")
+        result = {"at": time.strftime("%Y-%m-%d %H:%M:%S"), "poses_dir": poses_dir(c), "files": records,
+                  "observations": dict((n, d) for g, n, _, d in source_files(c) if g == "observations"),
+                  "continuation_of": cont(c)["source_run"]}
+        T.write_json(q(c, "evidence", "seed.json"), result, exclusive=True)
+        T.write_json(q(c, "evidence", "library_A.json"), {"at": result["at"], "tag": "A", "files": records,
+                                                          "seeded_from": cont(c)["source_run"]}, exclusive=True)
+        print("SEEDED: %d records and %d Process A observations from %s. Next: Process B" % (
+            len(records), len(result["observations"]), cont(c)["source_run"]))
+        return
     if T.sha(p(c, "LEGACY_POSE")) != c["pins"]["legacy_pose_sha256"]:
         problems.append("the legacy pose is not %s" % c["pins"]["legacy_pose_sha256"])
     refuse(problems, "SEED")
@@ -456,6 +522,27 @@ def cmd_restore(c):
     return 0 if result["restored"] else 1
 
 
+def cmd_precheck(c):
+    import s3_precheck
+    ids = identities(c)
+    staged = q(c, "staged", "SFM_Character_Preset_Manager.py")
+    problems = []
+    if ids is None or T.sha(staged) != ids["qualification_cpm_sha256"]:
+        problems.append("the staged qualification CPM does not verify")
+    obs = q(c, "observations", "S0-08.json")
+    if not os.path.isfile(obs) or not os.path.isfile(q(c, "observations", "S0-08.s3.json")):
+        problems.append("observe B1 first")
+    records = [n for n in (os.listdir(poses_dir(c)) if os.path.isdir(poses_dir(c)) else [])
+               if n.startswith("S3 Pose A--") and n.endswith(".json")]
+    if len(records) != 1:
+        problems.append("S3 Pose A is not in the run's Poses folder exactly once (%s)" % records)
+    out = q(c, "evidence", "A1_PRECHECK.json")
+    if os.path.lexists(out):
+        problems.append("%s exists" % out)
+    refuse(problems, "PRECHECK")
+    return s3_precheck.main(["s3_precheck", staged, obs, os.path.join(poses_dir(c), records[0]), out])
+
+
 def cmd_compare(c):
     import s3_compare
     return s3_compare.run(c)
@@ -464,7 +551,7 @@ def cmd_compare(c):
 def main(argv):
     commands = {"build": cmd_build, "pre": cmd_pre, "status": cmd_status, "inspect": cmd_inspect,
                 "install": cmd_install, "seed": cmd_seed, "check": cmd_check, "collect-logs": cmd_collect_logs,
-                "restore": cmd_restore, "compare": cmd_compare}
+                "restore": cmd_restore, "compare": cmd_compare, "precheck": cmd_precheck}
     if len(argv) == 4 and argv[2] == "library":
         return cmd_library(load(argv[1]), argv[3]) or 0
     if len(argv) != 3 or argv[2] not in commands:

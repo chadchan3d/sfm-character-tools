@@ -167,3 +167,25 @@ The kit in `real_sfm_qualification/f01_full_body_s3/` implements this plan, refi
     and 3.10.6;
   - the build derivation;
   - a complete synthetic run (PASS) and 13 counterexamples (each FAIL), on 3.10.6.
+## 8. Run 1 result and the Process B retest (2026-11-07)
+
+**Run 1:** Process A passed. Process B stopped after B1, on the A1 pre-check: four FK positions differed by float32
+noise from SFM's rotate tool. Nothing was applied, and the installation was restored. The record is in
+`F01_FULL_BODY_S1_CHECKPOINT.md` section 10.
+
+**Run 2** (`PROCEDURE_B_RETEST.md`) uses the revised-A1 candidate `aca2bb06…` (qualification `32486723…`) and starts
+at Process B in a new run folder. Run 1's destination, records (including the Update Pose `.bak`) and Process A
+observations are reused read-only, pinned by hash in `s3_continuation.template.json`.
+
+Kit changes:
+- **Continuation mode:** `pre`, `inspect` and `seed` reuse run 1's pinned files.
+- **`s3_tool precheck`:** after B1, the staged qualification CPM's own revised A1 check runs on the B1 observation
+  and `S3 Pose A`, through `s3_precheck.py` (read-only). Apply is allowed only on `COMPATIBLE`.
+- **Comparator:**
+  - Process A is checked against run 1's build;
+  - a compatible pre-check is required;
+  - the library check now covers the `.bak`, which must be the replaced record.
+- **B12:** the expected refusal is the proportions copy.
+- **Performance:** anything above 5 s is reported as a usability finding.
+- **Tests:** 29 kit tests on 3.10.6, including the continuation lifecycle on a temporary installation (the source run
+  is unchanged and restore returns every inventory); the wrapper tests pass on 2.7.5.
