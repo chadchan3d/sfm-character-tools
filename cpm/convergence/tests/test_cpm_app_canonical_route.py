@@ -327,6 +327,7 @@ F01_STAGEC_NEW_TOP = set([
     "PROD_POSE_REGISTRY_MODE", "PROD_POSE_REGISTRY_SHA256", "PROD_POSE_SCENE_LABELS", "ProdPoseIntegrationError",
     "PROD_POSE_EDITOR_NOTE_COPY",  # F-01 UI consistency pass: the Poses page's one line above the list
     "PROD_POSE_REGISTRY_UNAVAILABLE_COPY",  # F-01 UI completion: the list message for missing/damaged profiles
+    "PROD_POSE_RECOVERY_BLOCK",  # F-01 S1 recovery: the process-wide pause (survives CPM window recreation)
     "prod_pose_authorize", "prod_pose_context_gate", "prod_pose_deferred_verify", "prod_pose_load_registry",
     "prod_pose_registry_path", "prod_pose_reread", "prod_pose_selected_library",
 ])

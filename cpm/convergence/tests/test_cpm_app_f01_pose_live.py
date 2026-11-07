@@ -761,6 +761,7 @@ def legacy_window(app, ns, reg, lib):
 
 
 def section_final_undo(app, ns, F, reg, lib):
+    ns.setdefault("PROD_POSE_RECOVERY_BLOCK", [None])   # no effect on a CPM that defines it (old-code runs)
     real_load, real_selected = ns.get("prod_pose_load_registry"), ns.get("prod_pose_selected_library")
     name = u"Arms Out"
     label = u"Apply Pose %s" % name
@@ -786,6 +787,7 @@ def section_final_undo(app, ns, F, reg, lib):
         return got, phases
 
     def through_guard(prepare=None):
+        ns["PROD_POSE_RECOVERY_BLOCK"][0] = None       # each scenario starts as a fresh SFM process
         win = legacy_window(app, ns, reg, lib)
         world = destination(prepare)
         win.apply_pose(item())
@@ -807,8 +809,14 @@ def section_final_undo(app, ns, F, reg, lib):
         world = destination()
         before = authored(ns, reg, u"shot10")
         win.apply_pose(item())
-        return bool(win.statuses) and win.statuses[-1][2] == u"recovery-blocked" and not world.dm.calls and \
-            not win.pending and \
+        same = bool(win.statuses) and win.statuses[-1][2] == u"recovery-blocked" and not world.dm.calls and \
+            not win.pending and authored(ns, reg, u"shot10") == before
+        # Closing and reopening CPM: a new window in the same SFM process (same module state) stays paused.
+        reopened = legacy_window(app, ns, reg, lib)
+        world = destination()
+        reopened.apply_pose(item())
+        return same and reopened.pose_recovery_blocked is False and bool(reopened.statuses) and \
+            reopened.statuses[-1][2] == u"recovery-blocked" and not world.dm.calls and not reopened.pending and \
             authored(ns, reg, u"shot10") == before
 
     try:
@@ -847,7 +855,7 @@ def section_final_undo(app, ns, F, reg, lib):
             win, gworld = through_guard(lambda w, when=when: setattr(w, "start_raises", when))
             check("U.2_start_undo_raises_%s_opening_locks_out_through_pose_guard" % when, locked(win, gworld),
                   win.statuses[-1:])
-        check("U.5_start_undo_lockout_refuses_the_next_apply", blocks_next(win), win.statuses[-1:])
+        check("U.5_start_undo_lockout_holds_after_reopening_cpm", blocks_next(win), win.statuses[-1:])
 
         # U.3 Astra's counterexample: an older Undo entry has the identical description; FinishUndo raises before
         # closing the current transaction. The matching description is never evidence of commitment.
@@ -869,7 +877,7 @@ def section_final_undo(app, ns, F, reg, lib):
               u"undo_desc" in evidence[0] and u"pre_undo" in evidence[0], evidence)
         win, gworld = through_guard(older_and_open)
         check("U.3_locks_out_through_pose_guard_no_p7_scheduled", locked(win, gworld), win.statuses[-1:])
-        check("U.5_finish_undo_lockout_refuses_the_next_apply", blocks_next(win), win.statuses[-1:])
+        check("U.5_finish_undo_lockout_holds_after_reopening_cpm", blocks_next(win), win.statuses[-1:])
         # U.4 FinishUndo raises after simulated commitment: still uncertain.
         world = destination(lambda w: setattr(w, "finish_raises", "after"))
         got, phases = direct(world)
@@ -879,7 +887,7 @@ def section_final_undo(app, ns, F, reg, lib):
               (got, phases))
         win, gworld = through_guard(lambda w: setattr(w, "finish_raises", "after"))
         check("U.4_locks_out_through_pose_guard_no_p7_scheduled", locked(win, gworld), win.statuses[-1:])
-        check("U.5_after_commit_lockout_refuses_the_next_apply", blocks_next(win), win.statuses[-1:])
+        check("U.5_after_commit_lockout_holds_after_reopening_cpm", blocks_next(win), win.statuses[-1:])
         # U.6 no uncertain branch above performed an Abort or Undo (checked per case). U.7 the normal path.
         win, world = through_guard()
         check("U.7_normal_apply_commits_and_schedules_p7", len(win.pending) == 1 and
@@ -900,8 +908,28 @@ def section_final_undo(app, ns, F, reg, lib):
         check("U.7_owned_abort_restores_and_verifies", result.get("phase") == u"not-applied" and
               authored(ns, reg, u"shot10") == before and not world.dm.stack and world.dm.current is None and
               recovery_calls(world) == ["AbortUndoableOperation"], result)
+        # U.8 a fresh SFM process: the private module is loaded anew (a new namespace from the same source), so no
+        # earlier transaction and no pause carry over, while the old process stays paused.
+        through_guard(lambda w: setattr(w, "finish_raises", "after"))
+        held = ns["PROD_POSE_RECOVERY_BLOCK"][0]
+        ns2 = build_namespace(app, F)
+        ns2.setdefault("PROD_POSE_RECOVERY_BLOCK", [None])
+        win2 = legacy_window(app, ns2, reg, lib)
+        world = F.World(u"apply.dmx", handle_base=500000, poison_source=True)
+        use_world(ns2, F, world, u"shot10")
+        world.set_frame(10)
+        win2.apply_pose(item())
+        world.run_events()
+        world.evaluate(world.shots[u"shot10"])
+        verdict = ns2["prod_pose_deferred_verify"](win2.pending[0]) if win2.pending else None
+        check("U.8_fresh_sfm_process_applies_normally", held == u"Apply Pose" and
+              ns2["PROD_POSE_RECOVERY_BLOCK"][0] is None and len(win2.pending) == 1 and
+              verdict == {u"phase": u"committed-verified"}, (held, win2.statuses[-1:], verdict))
+        legacy_window(app, ns, reg, lib)                # rebind the window methods to this namespace
+        use_world(ns, F, world, u"shot10")
     finally:
         ns["PROD_POSE_QUAL_FAULT"][0] = None
+        ns["PROD_POSE_RECOVERY_BLOCK"][0] = None       # the later sections model a fresh SFM process
         ns["prod_pose_load_registry"], ns["prod_pose_selected_library"] = real_load, real_selected
 
 

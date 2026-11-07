@@ -35774,11 +35774,13 @@ class ProdWindow(QtGui.QDialog):
             )
 
         def work():
+            # The pause is process-wide (PROD_POSE_RECOVERY_BLOCK): closing and reopening CPM recreates this window
+            # but not the SFM process, so an uncertain native transaction may still exist.
             if getattr(
                 self,
                 "pose_recovery_blocked",
                 False,
-            ):
+            ) or PROD_POSE_RECOVERY_BLOCK[0] is not None:
                 raise ProdPoseIntegrationError(
                     u"recovery-blocked",
                     PROD_POSE_MESSAGES[u"blocked-after-recovery"],
@@ -35806,6 +35808,11 @@ class ProdWindow(QtGui.QDialog):
                 return fn()
             except ProdRecoveryUnverifiedError:
                 self.pose_recovery_blocked = True
+                PROD_POSE_RECOVERY_BLOCK[0] = label
+                try:
+                    log_line("PROD_POSE_RECOVERY_BLOCKED label=%r process-wide=True" % (label,))
+                except Exception:
+                    pass
                 raise
             except (RuntimeError, ProdPoseError):
                 # CPM and pose refusals: their messages are user-facing copy.
@@ -36556,7 +36563,8 @@ class ProdWindow(QtGui.QDialog):
                 u"visible_count": len(getattr(self, "pose_items", [])),
                 u"search_active": bool(u(self.pose_search.text()).strip()),
                 u"busy": bool(self.busy),
-                u"recovery_blocked": bool(getattr(self, "pose_recovery_blocked", False)),
+                u"recovery_blocked": bool(getattr(self, "pose_recovery_blocked", False)) or
+                PROD_POSE_RECOVERY_BLOCK[0] is not None,
                 u"save_available": bool(getattr(self, "pose_body_available", False)),
                 u"selected": selected,
             }
@@ -41210,12 +41218,11 @@ PROD_POSE_MESSAGES = {
     u"invalid-file": u"This pose file can't be read. It won't be applied.",
     u"not-applied": u"The pose couldn't be applied. Nothing was changed.",
     u"recovery-unverified": u"CPM couldn't confirm the state of the scene after a problem applying \"%(name)s\". "
-                            u"Check the character's arms in SFM. Pose changes are paused until CPM is closed and "
-                            u"reopened.",
+                            u"Check the character's pose in SFM. Pose changes are paused until SFM is restarted.",
     u"blocked-after-recovery": u"Pose changes are paused because CPM couldn't confirm an earlier result. Check the "
-                               u"arms in SFM, then close and reopen CPM.",
-    u"committed-unverified": u"Pose keys were written, but CPM couldn't verify the result. Check the arms before "
-                             u"applying another pose. SFM Undo shows this change as \"Apply Pose %(name)s\".",
+                               u"character's pose in SFM, then restart SFM to use poses again.",
+    u"committed-unverified": u"Pose keys were written, but CPM couldn't verify the result. Check the character's pose "
+                             u"before applying another pose. SFM Undo shows this change as \"Apply Pose %(name)s\".",
     u"shared-authority": u"This pose can't be applied: the arms on %(character)s share animation data CPM can't "
                          u"safely change separately. Nothing was changed.",
     u"no-op": u"Already matches this pose.",
@@ -41764,6 +41771,10 @@ PROD_POSE_REGISTRY_SHA256 = u"f445d5ef7fb183e6bcae3099b3812ffd236321391160513423
 PROD_POSE_AUTH_SCHEMA = u"cpm-pose-operation-authorization-v1"
 PROD_POSE_SCENE_LABELS = (u"Apply Pose", u"Save Pose", u"Update Pose")
 PROD_POSE_REGISTRY_MODE = u"production"
+# The recovery pause (ProdWindow.pose_guard): set on recovery-unverified, never cleared. Module state lives for the
+# SFM process (R15: loaded once, never reloaded), so reopening CPM keeps the pause and a fresh SFM process, in which
+# no earlier native transaction can exist, starts without it.
+PROD_POSE_RECOVERY_BLOCK = [None]
 PROD_POSE_CHECKING_COPY = u"Checking the applied pose..."
 PROD_POSE_EDITOR_NOTE_COPY = u"You must be in the Motion Editor to apply poses."
 PROD_POSE_REGISTRY_UNAVAILABLE_COPY = u"Pose Library files are missing or damaged. Reinstall Character Preset Manager."

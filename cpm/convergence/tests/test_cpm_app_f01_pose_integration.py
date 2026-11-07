@@ -572,6 +572,7 @@ def section_apply(ns, app, Window, reg):
 
 
 def section_recovery(ns, Window, reg):
+    ns.setdefault("PROD_POSE_RECOVERY_BLOCK", [None])   # no effect on a CPM that defines it (old-code runs)
     s = w1.twin_scene()
     w1.fresh_library()
     win = window(ns, Window, s, s.target)
@@ -588,6 +589,15 @@ def section_recovery(ns, Window, reg):
     check("C6.block_refuses_apply_and_save_before_scene_paths", not Fakes.applies and not Fakes.captures
           and win.statuses[-2:] == [(blocked, u"error"), (blocked, u"error")], win.statuses[-2:])
     check("C6.block_leaves_library_metadata_available", len(own_items(ns, win, reg)) == 1)
+    # Closing and reopening CPM recreates the window, not the SFM process: the pause holds.
+    check("C6.block_is_process_wide", ns["PROD_POSE_RECOVERY_BLOCK"][0] == u"Apply Pose")
+    reopened = window(ns, Window, s, s.target)
+    reopened.apply_pose(item)
+    check("C6.reopened_cpm_window_stays_paused_in_the_same_sfm_process",
+          getattr(reopened, "pose_recovery_blocked", False) is False and not Fakes.applies and
+          last_status(reopened) == (blocked, u"error"), reopened.statuses[-1:])
+    # The later sections each model a fresh SFM process, in which the private module is loaded anew.
+    ns["PROD_POSE_RECOVERY_BLOCK"][0] = None
 
 
 def section_independent_persistence(ns, Window, reg):

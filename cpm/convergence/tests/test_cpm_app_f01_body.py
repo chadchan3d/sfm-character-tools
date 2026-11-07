@@ -1237,6 +1237,7 @@ def recovery_calls(world):
 
 
 def section_final_undo(app, ns, reg, fx, item, lib):
+    ns.setdefault("PROD_POSE_RECOVERY_BLOCK", [None])   # no effect on a CPM that defines it (old-code runs)
     label = u"Apply Pose %s" % item[u"record"][u"name"]
     mode = ns["PROD_POSE_REGISTRY_MODE"]
     ns["PROD_POSE_REGISTRY_MODE"] = u"qualification"           # full body is applied only by the qualification CPM
@@ -1249,6 +1250,7 @@ def section_final_undo(app, ns, reg, fx, item, lib):
         return got, phases
 
     def through_guard(prepare=None):
+        ns["PROD_POSE_RECOVERY_BLOCK"][0] = None       # each scenario starts as a fresh SFM process
         win = window(app, ns, reg, lib)
         world = posed_destination(ns, fx, prepare)
         win.apply_pose(item)
@@ -1263,8 +1265,14 @@ def section_final_undo(app, ns, reg, fx, item, lib):
     def blocks_next(win):
         world = posed_destination(ns, fx)
         win.apply_pose(item)
-        return bool(win.statuses) and win.statuses[-1][2] == u"recovery-blocked" and no_mutation(world) and \
+        same = bool(win.statuses) and win.statuses[-1][2] == u"recovery-blocked" and no_mutation(world) and \
             not win.pending
+        # Closing and reopening CPM: a new window in the same SFM process (same module state) stays paused.
+        reopened = window(app, ns, reg, lib)
+        world = posed_destination(ns, fx)
+        reopened.apply_pose(item)
+        return same and reopened.pose_recovery_blocked is False and bool(reopened.statuses) and \
+            reopened.statuses[-1][2] == u"recovery-blocked" and no_mutation(world) and not reopened.pending
 
     try:
         # Y.1 StartUndo fails before native invocation (its arguments cannot be prepared): a plain refusal.
@@ -1300,7 +1308,7 @@ def section_final_undo(app, ns, reg, fx, item, lib):
             win, gworld = through_guard(lambda w, when=when: setattr(w, "start_raises", when))
             check("Y.2_start_undo_raises_%s_opening_locks_out_through_pose_guard" % when, locked(win, gworld),
                   win.statuses[-1:])
-        check("Y.5_start_undo_lockout_refuses_the_next_apply", blocks_next(win), win.statuses[-1:])
+        check("Y.5_start_undo_lockout_holds_after_reopening_cpm", blocks_next(win), win.statuses[-1:])
 
         # Y.3 Astra's counterexample: an older Undo entry has the identical description; FinishUndo raises before
         # closing the current transaction. The matching description is never evidence of commitment.
@@ -1322,7 +1330,7 @@ def section_final_undo(app, ns, reg, fx, item, lib):
               u"undo_desc" in evidence[0] and u"pre_undo" in evidence[0], evidence)
         win, gworld = through_guard(older_and_open)
         check("Y.3_locks_out_through_pose_guard_no_p7_scheduled", locked(win, gworld), win.statuses[-1:])
-        check("Y.5_finish_undo_lockout_refuses_the_next_apply", blocks_next(win), win.statuses[-1:])
+        check("Y.5_finish_undo_lockout_holds_after_reopening_cpm", blocks_next(win), win.statuses[-1:])
         # Y.4 FinishUndo raises after simulated commitment: still uncertain (no optimistic classification).
         world = posed_destination(ns, fx, lambda w: setattr(w, "finish_raises", "after"))
         got, phases = direct(world)
@@ -1332,7 +1340,7 @@ def section_final_undo(app, ns, reg, fx, item, lib):
               (got, phases))
         win, gworld = through_guard(lambda w: setattr(w, "finish_raises", "after"))
         check("Y.4_locks_out_through_pose_guard_no_p7_scheduled", locked(win, gworld), win.statuses[-1:])
-        check("Y.5_after_commit_lockout_refuses_the_next_apply", blocks_next(win), win.statuses[-1:])
+        check("Y.5_after_commit_lockout_holds_after_reopening_cpm", blocks_next(win), win.statuses[-1:])
         # Y.6 every uncertain branch above performed no automatic Abort or Undo (checked per case by locked() and
         # recovery_calls()); the shipped fault-free path below is unchanged.
         # Y.7 normal Apply, FinishUndo, P7 and repeat no-op through the guard; the owned Abort.
@@ -1355,9 +1363,25 @@ def section_final_undo(app, ns, reg, fx, item, lib):
             u"not-applied"] and all_keys(world) == before and not world.dm.stack and world.dm.current is None and
             win.pose_recovery_blocked is False and recovery_calls(world) == ["AbortUndoableOperation"],
             win.statuses[-1:])
+        # Y.8 a fresh SFM process: the private module is loaded anew (a new namespace from the same source), so no
+        # earlier transaction and no pause carry over, while the old process stays paused.
+        through_guard(lambda w: setattr(w, "finish_raises", "after"))
+        held = ns["PROD_POSE_RECOVERY_BLOCK"][0]
+        ns2 = live_namespace(app)
+        ns2.setdefault("PROD_POSE_RECOVERY_BLOCK", [None])
+        ns2["PROD_POSE_REGISTRY_MODE"] = u"qualification"
+        win2 = window(app, ns2, reg, lib)
+        world = posed_destination(ns2, fx)
+        win2.apply_pose(item)
+        verdict = ns2["prod_pose_deferred_verify"](win2.pending[0]) if win2.pending else None
+        check("Y.8_fresh_sfm_process_applies_normally", held == u"Apply Pose" and
+              ns2["PROD_POSE_RECOVERY_BLOCK"][0] is None and len(win2.pending) == 1 and
+              verdict == {u"phase": u"committed-verified"}, (held, win2.statuses[-1:], verdict))
+        window(app, ns, reg, lib)                       # rebind the window methods to this namespace
     finally:
         ns["PROD_POSE_REGISTRY_MODE"] = mode
         ns["PROD_POSE_QUAL_FAULT"][0] = None
+        ns["PROD_POSE_RECOVERY_BLOCK"][0] = None       # the later sections model a fresh SFM process
 
 
 def main():

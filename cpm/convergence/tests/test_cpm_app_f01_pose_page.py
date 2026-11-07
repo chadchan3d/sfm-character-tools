@@ -224,6 +224,14 @@ def section_ui_pass(window, tabs, env, boxes, QtGui):
               not window.apply_pose_button.isEnabled() and not window.update_pose_button.isEnabled()
               and window.delete_pose_button.isEnabled() and window.favorite_pose_button.isEnabled())
         window.pose_recovery_blocked = False
+        # A reopened CPM window (no window flag) in the same SFM process: the process-wide pause still disables them.
+        g["PROD_POSE_RECOVERY_BLOCK"][0] = u"Apply Pose"
+        window.refresh_pose_buttons()
+        check("U7 pose changes paused process-wide: a reopened window keeps Apply and Update disabled",
+              not window.apply_pose_button.isEnabled() and not window.update_pose_button.isEnabled()
+              and window.delete_pose_button.isEnabled() and window.favorite_pose_button.isEnabled())
+        g["PROD_POSE_RECOVERY_BLOCK"][0] = None
+        window.refresh_pose_buttons()
         meta = window.library_meta
         window.library_meta = {"schema_version": 1, "record_kind": u"library-metadata", "favorites": [u"pose:p1"]}
         item[u"record"][u"kind"] = u"pose"
