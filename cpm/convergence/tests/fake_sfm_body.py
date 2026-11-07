@@ -440,6 +440,7 @@ class World(object):
         self.calls = []
         self.timeline_mode = 2
         self.stale_clock = 50299
+        self.native_clip_evaluation = False      # True: outside the Motion Editor, evaluate at stale_clock (FA-1)
         self.fail_on_write = None        # a channel name whose first write raises
         self.finish_raises = self.abort_raises = False
         self.start_raises = None                 # None, "before" or "after"
@@ -613,6 +614,8 @@ class World(object):
 
     def evaluate(self):
         t = self.t_chan()
+        if self.native_clip_evaluation and self.timeline_mode != 2:
+            t = self.stale_clock
         for ch in self.channels.values():
             if ch.attrs["mode"] != 3 or ch.attrs["toElement"] is None:
                 continue

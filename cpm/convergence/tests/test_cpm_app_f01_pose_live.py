@@ -933,6 +933,44 @@ def section_final_undo(app, ns, F, reg, lib):
         ns["prod_pose_load_registry"], ns["prod_pose_selected_library"] = real_load, real_selected
 
 
+def section_apply_messages(app, ns, F, reg, lib):
+    """S3 run 3 B10, version 1: outside the Motion Editor SFM evaluates the arm at another clock (FA-1), so the
+    evaluation checks that run before the gate refuse as unreadable evidence. Emulated here by making those checks
+    refuse whenever the timeline is not the Motion Editor (the W2 fake evaluates at one clock)."""
+    real_load, real_selected = ns.get("prod_pose_load_registry"), ns.get("prod_pose_selected_library")
+    real_inputs = ns["prod_pose_effective_inputs"]
+    editor = u"Switch to the Motion Editor to apply a pose. Nothing was changed."
+
+    def inputs(*args, **kw):
+        if Pin.world is not None and getattr(Pin.world, "timeline_mode", 2) != 2:
+            raise ns["ProdPoseError"](u"evidence-unreadable", u"not evaluated at the mapped tick (clip editor)")
+        return real_inputs(*args, **kw)
+    ns["prod_pose_effective_inputs"] = inputs
+    try:
+        item = dict((i[u"name"], i) for i in ns["prod_pose_discover"](lib[u"char_dir"], lib[u"character_key"], reg)[
+            u"items"])[u"Arms Out"]
+        ns["PROD_POSE_RECOVERY_BLOCK"][0] = None
+        world = F.World(u"apply.dmx", handle_base=500000, poison_source=True)
+        use_world(ns, F, world, u"shot10")
+        world.set_frame(10)
+        world.timeline_mode = 3
+        win = legacy_window(app, ns, reg, lib)
+        before = authored(ns, reg, u"shot10")
+        win.apply_pose(item)
+        check("M.2_clip_editor_legacy_apply_says_switch_to_the_motion_editor",
+              win.statuses[-1][2] == u"editor-mode" and win.statuses[-1][3] == editor, win.statuses[-1:])
+        check("M.2_nothing_written_no_undo_no_pause", not world.dm.calls and authored(ns, reg, u"shot10") == before
+              and win.pose_recovery_blocked is False)
+        world.timeline_mode = 2
+        win = legacy_window(app, ns, reg, lib)
+        win.apply_pose(item)
+        check("M.5_legacy_motion_editor_apply_unchanged", len(win.pending) == 1 and
+              [c[0] for c in world.dm.calls] == ["StartUndo", "FinishUndo"], win.statuses[-1:])
+    finally:
+        ns["prod_pose_effective_inputs"] = real_inputs
+        ns["prod_pose_load_registry"], ns["prod_pose_selected_library"] = real_load, real_selected
+
+
 def section_static(app):
     block, _ = core.extract_block(route.APP_PATH, BLOCKS[3][0], BLOCKS[3][1])
     writes = [t for t in ("SetKeyValue(", "InsertKeyAtTime(", "InsertKey(", "StartUndo(", "FinishUndo(",
@@ -991,6 +1029,7 @@ def main():
         if lib:
             run("refusals", lambda: section_refusals(ns, F, reg, lib))
             run("final_undo", lambda: section_final_undo(app, ns, F, reg, lib))
+            run("apply_messages", lambda: section_apply_messages(app, ns, F, reg, lib))
         run("channel_clock", lambda: section_channel_clock(ns, F, reg, root))
     finally:
         shutil.rmtree(root, True)

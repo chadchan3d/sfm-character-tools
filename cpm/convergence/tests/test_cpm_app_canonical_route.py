@@ -337,6 +337,7 @@ F01_STAGEC_NEW_METHODS = set(["apply_pose", "pose_begin_verification", "pose_fin
 # F-01 Pose Library M1 stage D (Addendum R2.1 sections 5.4-8; left arm): one appended live block after stage C;
 # ProdWindow gains the Poses page (constructor, tab_changed) and its list methods.
 F01_STAGED_NEW_TOP = set([
+    "prod_pose_require_motion_editor",  # S3 run 3 B10: Apply checks the timeline editor before evaluation
     "PROD_POSE_BONE_NAME_RE", "PROD_POSE_INSERT_ALLOWED_METADATA", "PROD_POSE_LIVE_EVALUATED_OUTPUTS",
     "PROD_POSE_LIVE_KNOWN_OPERATORS", "PROD_POSE_LIVE_MAX_ARRAY", "PROD_POSE_LIVE_MAX_NODES",
     "PROD_POSE_LIVE_MAX_TOTAL_KEYS", "PROD_POSE_LIVE_REGIONS", "PROD_POSE_LIVE_SLAVE_ATTRS", "PROD_POSE_QUAL_FAULT",

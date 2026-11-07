@@ -1581,6 +1581,80 @@ def section_revised_a1(ns, reg, fx, root):
         u"pinned FK positions changed" in l for l in ns["LOG"]), ns["LOG"][-3:])
 
 
+# ---------------------------------------------------------------------------
+# S3 run 3 B10: Apply refusal messages through the window (M.1 ... M.6)
+# ---------------------------------------------------------------------------
+
+def section_apply_messages(app, ns, reg, fx, item, lib):
+    mode = ns["PROD_POSE_REGISTRY_MODE"]
+    ns["PROD_POSE_REGISTRY_MODE"] = u"qualification"
+    editor = u"Switch to the Motion Editor to apply a pose. Nothing was changed."
+    try:
+        # M.1 run 3 B10: the Clip Editor, where SFM evaluates the rig at its stale clock (FA-1)
+        def clip_editor(w):
+            # As natively: the rig's channels hold keys at other times, so the stale clock evaluates another pose.
+            layer = w.channels[u"Hip_p"].attrs["log"].layer
+            v = FB.plain(layer.keys[0][1])
+            layer.keys.append([w.stale_clock, FB.native([v[0] + 1.0, v[1], v[2]], "vec")])
+            layer.keys.append([w.t_chan() - 1, FB.native(list(v), "vec")])
+            layer.keys.sort(key=lambda k: k[0])
+            w.native_clip_evaluation = True
+            w.timeline_mode = 3
+            w.evaluate()
+        world = posed_destination(ns, fx, clip_editor)
+        got = outcome(lambda: ns["prod_body_effective_inputs"](*(lambda st: (st[u"D"], st[u"C"], profile_of(ns, reg)))(
+            ns["prod_body_state"](ns["prod_resolve_instance"](live_context(ns)["instance"]), profile_of(ns, reg)))))
+        check("M.1_precondition_the_clip_editor_evaluation_is_not_at_the_mapped_tick",
+              got[0] != "ok" and got[1] == u"evidence-unreadable", got)
+        win = window(app, ns, reg, lib)
+        win.apply_pose(item)
+        check("M.1_clip_editor_full_body_apply_says_switch_to_the_motion_editor",
+              win.statuses[-1][2] == u"editor-mode" and win.statuses[-1][3] == editor and
+              ns["PROD_POSE_EDITOR_MODE_COPY"] == editor, win.statuses[-1:])
+        check("M.1_nothing_written_no_undo_no_pause", no_mutation(world) and not win.pending and
+              win.pose_recovery_blocked is False)
+        # M.3 genuine unreadable evidence in the Motion Editor keeps the protective message
+        def skew(w):
+            t = w.handle_dag[u"Hip"].attrs["transform"]
+            v = FB.plain(t.attrs["position"])
+            t.set("position", FB.Vector(v[0] + 0.25, v[1], v[2]))
+        world = posed_destination(ns, fx)
+        skew(world)
+        win = window(app, ns, reg, lib)
+        win.apply_pose(item)
+        check("M.3_unreadable_evidence_keeps_the_protective_message_not_the_editor_one",
+              win.statuses[-1][2] == u"evidence-unreadable" and win.statuses[-1][3] ==
+              ns["PROD_BODY_MESSAGES"][u"evidence-unreadable"] and no_mutation(world), win.statuses[-1:])
+        # M.4 incompatible proportions keep their specific explanation (shot10, Motion Editor)
+        world = FB.World(fx[u"shot10"])
+        use_world(ns, world)
+        win = window(app, ns, reg, lib)
+        win.apply_pose(item)
+        check("M.4_incompatible_proportions_keep_their_message",
+              win.statuses[-1][2] == u"proportions" and win.statuses[-1][3] == ns["PROD_BODY_MESSAGES"][
+                  u"proportions"] and no_mutation(world), win.statuses[-1:])
+        # M.5 a valid Motion Editor Apply is unchanged
+        world = posed_destination(ns, fx)
+        win = window(app, ns, reg, lib)
+        win.apply_pose(item)
+        verdict = ns["prod_pose_deferred_verify"](win.pending[0]) if win.pending else None
+        check("M.5_valid_motion_editor_apply_unchanged", len(win.pending) == 1 and
+              verdict == {u"phase": u"committed-verified"} and [c[0] for c in world.dm.calls] ==
+              ["StartUndo", "FinishUndo"], verdict)
+        # M.6 the recovery pause still refuses first
+        ns["PROD_POSE_RECOVERY_BLOCK"][0] = u"Apply Pose"
+        try:
+            world = posed_destination(ns, fx, clip_editor)
+            win = window(app, ns, reg, lib)
+            win.apply_pose(item)
+            check("M.6_recovery_pause_still_refuses_before_any_editor_check",
+                  win.statuses[-1][2] == u"recovery-blocked" and no_mutation(world), win.statuses[-1:])
+        finally:
+            ns["PROD_POSE_RECOVERY_BLOCK"][0] = None
+    finally:
+        ns["PROD_POSE_REGISTRY_MODE"] = mode
+
+
 def main():
     if "--phase=run" not in sys.argv[1:]:
         print("usage: %s --phase=run" % os.path.basename(sys.argv[0]))
@@ -1606,6 +1680,7 @@ def main():
                             u"model_ref": MODEL, u"checksum": 1234}
                 run("corrections", lambda: section_corrections(app, ns, lived[0], fx, lived[1], live_lib))
                 run("final_undo", lambda: section_final_undo(app, ns, lived[0], fx, lived[1], live_lib))
+                run("apply_messages", lambda: section_apply_messages(app, ns, lived[0], fx, lived[1], live_lib))
             run("window", lambda: section_window(app, ns, reg, fx, os.path.join(root, u"window")))
             run("revised_a1", lambda: section_revised_a1(ns, reg, fx, os.path.join(root, u"revised_a1")))
     finally:

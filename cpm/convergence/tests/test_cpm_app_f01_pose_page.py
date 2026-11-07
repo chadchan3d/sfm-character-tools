@@ -949,6 +949,36 @@ def section_full_body_apply(window, tabs, env, boxes, QtGui):
         window.apply_pose_button.click()
         check("F3 clicking Apply Pose on version 1 reaches the left-arm dispatcher", calls == [(u"version 1", u"a1")],
               calls)
+        # F7 refusal messages on the click route (S3 run 3 B10): the popup and the status show the refusal's copy.
+        editor = u"Switch to the Motion Editor to apply a pose. Nothing was changed."
+        cases = ((u"Full Body", "prod_body_apply", u"editor-mode", g["PROD_POSE_EDITOR_MODE_COPY"]),
+                 (u"Arms Up", "prod_pose_apply", u"editor-mode", g["PROD_POSE_EDITOR_MODE_COPY"]),
+                 (u"Full Body", "prod_body_apply", u"evidence-unreadable",
+                  g["PROD_BODY_MESSAGES"][u"evidence-unreadable"]),
+                 (u"Full Body", "prod_body_apply", u"proportions", g["PROD_BODY_MESSAGES"][u"proportions"]))
+        stub = dict((k, g[k]) for k in ("prod_body_apply", "prod_pose_apply"))
+        try:
+            for name, fn, code, copy in cases:
+                def refuse(i, a, it, reg, phase_callback=None, code=code, copy=copy):
+                    raise g["ProdPoseError"](code, copy)
+                g[fn] = refuse
+                select(name)
+                n = len(boxes)
+                window.apply_pose_button.click()
+                shown = boxes[n:]
+                check("F7 %s %s: the popup and the status show its message" % (name, code),
+                      len(shown) == 1 and shown[0][1] == copy and window.status.text() == copy and
+                      (code != u"editor-mode" or copy == editor), (shown, window.status.text()))
+                g.update(stub)
+        finally:
+            g.update(stub)
+        del calls[:]
+        select(u"Full Body")
+        n = len(boxes)
+        window.apply_pose_button.click()
+        check("F7 a successful (no-op) Apply still shows its status and no popup",
+              calls == [(u"version 2", u"b1")] and window.status.text() == g["PROD_POSE_MESSAGES"][u"no-op"] and
+              len(boxes) == n, (calls, window.status.text(), boxes[n:]))
         check("F6 selecting the full-body pose again re-enables Apply Pose", select(u"Full Body") is True)
         check("F6 clearing the selection disables Apply Pose", select(None) is False)
         # Genuine restrictions: no usable full-body mapping (the production build), no registry, invalid records.

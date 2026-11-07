@@ -43195,7 +43195,7 @@ def prod_pose_qualification_fault(mode, point):
 # Editor is not qualified: Apply refuses there. The mode and the three channel clocks are pinned in P1 and must be
 # unchanged at P2 (immediately before StartUndo) and at P7.
 PROD_POSE_APPLY_TIMELINE_MODE = 2
-PROD_POSE_EDITOR_MODE_COPY = u"Switch the timeline to the Motion Editor to apply a pose. Nothing was changed."
+PROD_POSE_EDITOR_MODE_COPY = u"Switch to the Motion Editor to apply a pose. Nothing was changed."
 PROD_POSE_EDITOR_CLOCK_COPY = (u"The character's animation isn't evaluated at the playhead in this editor state. "
                                u"Move the playhead in the Motion Editor and try again. Nothing was changed.")
 
@@ -43209,6 +43209,17 @@ def prod_pose_timeline_mode():
     if isinstance(mode, bool) or not isinstance(mode, prod_pose_int_types()):
         raise ProdPoseError(u"editor-mode", PROD_POSE_EDITOR_MODE_COPY)
     return int(mode)
+
+
+def prod_pose_require_motion_editor():
+    """Apply's first scene check (S3 run 3): outside the Motion Editor SFM evaluates the rig at another clock (FA-1),
+    so the evaluation checks that follow would refuse as unreadable evidence instead of telling the artist to switch
+    editors. The complete gate (mode and every channel clock) still runs at P1, P2 and P7."""
+    mode = prod_pose_timeline_mode()
+    if mode != PROD_POSE_APPLY_TIMELINE_MODE:
+        prod_pose_log(u"editor-mode-refused", {u"mode": mode})
+        raise ProdPoseError(u"editor-mode", PROD_POSE_EDITOR_MODE_COPY)
+    return mode
 
 
 def prod_pose_apply_gate(L, names, t_chan):
@@ -43273,6 +43284,7 @@ def prod_pose_preflight(identity, authorization, item, reg):
             raise ProdPoseError(u"not-qualified", u"%s: %s" % (PROD_POSE_PART_NAMES[r], PROD_POSE_REASONS[
                 u"not-qualified"] % {u"character": dest_class}))
     row = prod_resolve_instance(prod_instance_token(authorization[u"context"]), identity)
+    prod_pose_require_motion_editor()
     dm_obj = dm()
     undo = prod_pose_undo_state(dm_obj)
     if prod_pose_undo_problems(undo):
@@ -44795,6 +44807,7 @@ def prod_body_preflight(identity, authorization, item, reg):
             for m in authorization[u"mappings"]):
         raise ProdPoseError(u"not-qualified", PROD_BODY_MESSAGES[u"unavailable"])
     row = prod_resolve_instance(prod_instance_token(authorization[u"context"]), identity)
+    prod_pose_require_motion_editor()
     undo = prod_pose_undo_state(dm())
     if prod_pose_undo_problems(undo):
         raise prod_body_error(u"evidence-unreadable", u"the Undo history is unreadable: %s" % prod_pose_undo_problems(undo))
