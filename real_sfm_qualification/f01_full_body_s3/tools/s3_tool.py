@@ -16,6 +16,8 @@ usage: python -I s3_tool.py S3.json COMMAND
   install       journal first; then install the qualification CPM and both registries (temporary)
   seed          copy the pinned legacy left-arm pose (version 1) into the run's character Poses folder; in a
                 continuation run, every pinned record and Process A observation of the source run instead
+  legacy-precheck  read-only, supplemental run, after B13: does shot15's left arm differ visibly from NQ1 Pose A's
+                source arm (B11)? writes Q/evidence/LEGACY_PRECHECK.json (the legacy Apply only when DISTINCT)
   precheck      read-only, after B1: the staged qualification CPM's own revised A1 compatibility check on the B1
                 observation and S3 Pose A; writes Q/evidence/A1_PRECHECK.json (Apply only when COMPATIBLE)
   check         report the installation state (published | qualification | other)
@@ -549,6 +551,19 @@ def cmd_precheck(c):
     return s3_precheck.main(["s3_precheck", staged, obs, os.path.join(poses_dir(c), records[0]), out])
 
 
+def cmd_legacy_precheck(c):
+    import s3_compare
+    out = q(c, "evidence", "LEGACY_PRECHECK.json")
+    if os.path.lexists(out):
+        raise SystemExit("REFUSED: %s exists" % out)
+    result = s3_compare.legacy_precheck(c)
+    T.write_json(out, result, exclusive=True)
+    print(json.dumps(result, indent=1))
+    print("LEGACY PRECHECK DISTINCT: apply NQ1 Pose A (B14)" if result["distinct"] else
+          "LEGACY PRECHECK NOT DISTINCT: the arm already matches; do not claim a visible transfer - STOP and report")
+    return 0 if result["distinct"] else 1
+
+
 def cmd_compare(c):
     import s3_compare
     return s3_compare.run(c)
@@ -557,7 +572,8 @@ def cmd_compare(c):
 def main(argv):
     commands = {"build": cmd_build, "pre": cmd_pre, "status": cmd_status, "inspect": cmd_inspect,
                 "install": cmd_install, "seed": cmd_seed, "check": cmd_check, "collect-logs": cmd_collect_logs,
-                "restore": cmd_restore, "compare": cmd_compare, "precheck": cmd_precheck}
+                "restore": cmd_restore, "compare": cmd_compare, "precheck": cmd_precheck,
+                "legacy-precheck": cmd_legacy_precheck}
     if len(argv) == 4 and argv[2] == "library":
         return cmd_library(load(argv[1]), argv[3]) or 0
     if len(argv) != 3 or argv[2] not in commands:

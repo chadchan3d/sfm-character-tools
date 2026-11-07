@@ -274,7 +274,8 @@ if PY3:
 BONES = {"bip_pelvis": (0.0, 0.0, 40.0), "bip_spine_0": (0.0, 0.0, 45.0), "bip_neck": (0.0, 0.0, 60.0),
          "bip_head": (0.0, 0.0, 65.0), "bip_UpperArm_l": (8.0, 0.0, 58.0), "bip_knee_l": (5.0, 0.0, 20.0),
          "bip_tail00": (0.0, -5.0, 40.0), "Ear_l": (2.0, 0.0, 70.0), "bip_index_0_l": (20.0, 0.0, 58.0),
-         "bip_head_hair_back": (0.0, -2.0, 70.0), "jaw": (0.0, 2.0, 63.0), "bip_lowerArm_l_twist2": (14.0, 0.0, 58.0)}
+         "bip_head_hair_back": (0.0, -2.0, 70.0), "jaw": (0.0, 2.0, 63.0), "bip_lowerArm_l_twist2": (14.0, 0.0, 58.0),
+         "bip_lowerArm_l": (12.0, 0.0, 58.0), "bip_hand_l": (16.0, 0.0, 58.0)}
 UNPOSED = ("jaw", "bip_lowerArm_l_twist2")
 WRITTEN = ["w%03d_p" % i for i in range(139)] + ["w%03d_o" % i for i in range(139)]
 EXTRA = ["Smile_flex_channel", "eyes_rightleft_flex_channel", "jaw_o", "rig_root_p"]
@@ -670,6 +671,131 @@ if PY3:
                 self.assertRaises(OSError, C.run, c)
             finally:
                 sys.stdout = saved
+
+
+# --- the supplemental run (B9 ... B17) ----------------------------------------------------------------------------
+
+class SupplementSynthetic(Synthetic):
+    """A correct supplemental run: the Clip Editor refusal with the Motion Editor message, the proportions refusal, and
+    the legacy left-arm transfer onto a visibly different arm with no-op, Undo and Redo."""
+
+    def build(self):
+        f = self.faults
+        dest = Scene(300, "e:/q/sessions/S3_DESTINATION.dmx", 35.0, posture(-30.0))
+        arm = ("bip_UpperArm_l", "bip_lowerArm_l", "bip_hand_l")
+        dest.mode = "Clip Editor"
+        self.observe(dest, "B9")
+        self.observe(dest, "B10")
+        dest.mode, dest.shot, dest.head = "Motion Editor", "shot10", 0.4167
+        source_arm = dict((n, dest.angles[n]) for n in arm)       # shot10: NQ1 Pose A's own source arm
+        source_hand = value_for("Hand_l_o", 9)
+        dest.keys["Hand_l_o"] = [[1000, source_hand]]
+        self.observe(dest, "B11")
+        if "noop-writes" in f:
+            pass
+        self.observe(dest, "B12")
+        dest.shot, dest.head = "shot15", 0.2083
+        if "arm-already-matches" not in f:
+            for n in arm:
+                dest.angles[n] = source_arm[n] + 30.0
+            dest.keys["Hand_l_o"] = [[1000, qz(77.0)]]
+        self.observe(dest, "B13")
+        base = dest.snapshot()
+        from s3_compare import legacy_precheck
+        if "no-legacy-precheck" not in f:
+            c = {"paths": {"Q": self.q}, "character_dir": CHAR, "supplement": True}
+            self.dump(os.path.join("evidence", "LEGACY_PRECHECK.json"), legacy_precheck(c))
+        dest.write(LEFT, dict((n, value_for(n, 9)) for n in LEFT))
+        for n in arm:
+            dest.angles[n] = source_arm[n]
+        dest.undo = {"can_undo": True, "can_redo": False, "undo_desc": "Apply Pose NQ1 Pose A", "redo_desc": ""}
+        self.observe(dest, "B14")
+        applied = dest.snapshot()
+        if "noop-writes" in f:
+            dest.keys["Smile_flex_channel"][0][1] = [0.3]
+        self.observe(dest, "B15")
+        dest.restore(base)
+        dest.undo = dict(base[2], can_redo="redo-cleared" not in f, redo_desc="Redo Apply Pose NQ1 Pose A")
+        self.observe(dest, "B16")
+        dest.restore(applied)
+        if "skip-b17" not in f:
+            self.observe(dest, "B17")
+        lib = os.path.join(self.q, "evidence", "library_poses", CHAR)
+        for name, r in (("NQ1 Pose A--5273df2209ca.json", {"name": "NQ1 Pose A", "pose": {"version": 1}}),):
+            with open(os.path.join(lib, name), "wb") as fh:
+                fh.write(json.dumps(r).encode("utf-8"))
+        editor = ("Switch the timeline to the Motion Editor to apply a pose. Nothing was changed." if "old-message" in f
+                  else "Switch to the Motion Editor to apply a pose. Nothing was changed.")
+        self.op(1, "Apply Pose", ['PROD_POSE_editor-mode-refused {"mode": 3}',
+                                  "PROD_ACTION_ERROR label=u'Apply Pose' error=ProdPoseError(u\"%s\",)" % editor])
+        self.op(2, "Apply Pose", ['PROD_POSE_BODY-refused {"code": "proportions"}',
+                                  "PROD_ACTION_ERROR label=u'Apply Pose' error=ProdPoseError(u\"This pose was saved "
+                                  "with different body proportions and can't be applied safely. Nothing was "
+                                  "changed.\",)"])
+        self.op(3, "Apply Pose", ['PROD_POSE_P1 {"noop": false}', 'PROD_POSE_P6 {"owned": true}',
+                                  "PROD_POSE_P7-verified {}"])
+        self.op(4, "Apply Pose", ['PROD_POSE_P1 {"noop": true}'])
+        with open(os.path.join(self.q, "evidence", "logs", "CPM - 2026-11-07_12-00-00Z - pid300 - abcdef - 001.log"),
+                  "wb") as fh:
+            fh.write(("\r\n".join(self.log) + "\r\n").encode("utf-8"))
+        with open(os.path.join(self.q, "sessions", "S3_DESTINATION.dmx"), "wb") as fh:
+            fh.write(b"destination")
+        self.dump(os.path.join("evidence", "destination.json"),
+                  {"destination_sha256": C.s0_hash(os.path.join(self.q, "sessions", "S3_DESTINATION.dmx"))})
+        self.dump(os.path.join("evidence", "restore.json"), {"restored": True})
+        return {"paths": {"Q": self.q}, "character_dir": CHAR, "supplement": True}
+
+
+if PY3:
+    class SupplementTests(unittest.TestCase):
+        def setUp(self):
+            self.dir = tempfile.mkdtemp(prefix="s3supp")
+
+        def tearDown(self):
+            shutil.rmtree(self.dir, True)
+
+        def verdict(self, *faults):
+            c = SupplementSynthetic(os.path.join(self.dir, "Q"), faults).build()
+            saved = sys.stdout
+            sys.stdout = io.StringIO()
+            try:
+                code = C.run(c)
+            finally:
+                sys.stdout = saved
+            out = load(os.path.join(self.dir, "Q", "evidence", "S3_VERDICT.json"))
+            self.assertEqual(code == 0, out["verdict"] == "PASS")
+            return out
+
+        def test_a_complete_correct_supplement_passes(self):
+            out = self.verdict()
+            self.assertEqual((out["verdict"], out["failed"]), ("PASS", []))
+            ids = [x["id"] for x in out["checks"]]
+            for cid in ("log.clip_editor_refusal_says_switch_to_the_motion_editor", "legacy.visible_left_arm_transfer",
+                        "legacy.redo_restores", "legacy.precheck_visible_difference_before_apply"):
+                self.assertIn(cid, ids)
+
+        def test_counterexamples_fail(self):
+            for fault, cid in (("arm-already-matches", "legacy.visible_left_arm_transfer"),
+                               ("arm-already-matches", "legacy.precheck_visible_difference_before_apply"),
+                               ("old-message", "log.clip_editor_refusal_says_switch_to_the_motion_editor"),
+                               ("redo-cleared", "legacy.undo_restores"),
+                               ("noop-writes", "legacy.repeat_true_noop"),
+                               ("no-legacy-precheck", "legacy.precheck_visible_difference_before_apply"),
+                               ("skip-b17", "observed.B17")):
+                shutil.rmtree(os.path.join(self.dir, "Q"), True)
+                out = self.verdict(fault)
+                self.assertEqual(out["verdict"], "FAIL", fault)
+                self.assertIn(cid, out["failed"], (fault, out["failed"]))
+
+        def test_the_legacy_precheck_refuses_when_the_arm_already_matches(self):
+            SupplementSynthetic(os.path.join(self.dir, "Q"), ("arm-already-matches",)).build()
+            res = load(os.path.join(self.dir, "Q", "evidence", "LEGACY_PRECHECK.json"))
+            self.assertFalse(res["distinct"])
+            shutil.rmtree(os.path.join(self.dir, "Q"))
+            SupplementSynthetic(os.path.join(self.dir, "Q"), ()).build()
+            res = load(os.path.join(self.dir, "Q", "evidence", "LEGACY_PRECHECK.json"))
+            self.assertTrue(res["distinct"])
+            self.assertGreaterEqual(max(res["differences_deg"].values()), 5.0)
 
 
 if PY3:

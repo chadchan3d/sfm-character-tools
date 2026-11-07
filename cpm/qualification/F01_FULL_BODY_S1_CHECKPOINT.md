@@ -408,3 +408,53 @@ On `661cfd7` the same full-body selection gives Apply disabled ("Saved: None · 
 candidate `9a155bff…` and qualification build `814b6ec5…`. It adds the UI smoke check B1b
 (`observer/F01_S3_UISmoke.py`, read-only, pinned by `build`): Apply Pose must be enabled for the selected full-body
 pose before B2. The comparator requires it (`ui.full_body_apply_enabled_before_apply`).
+## 12. S3 run 3, the Apply refusal message, and the supplemental run (2026-11-07)
+
+**S3 run 3** (`E:\SFM_U0B_Scratch\f01-full-body-s3-r3`; qualification CPM `814b6ec5…`): the first native full-body
+Apply.
+- **B1–B11 established natively:**
+  - the A1 pre-check was compatible and the UI smoke check showed Apply enabled;
+  - B2 inserted 278 keys, reproducing the pose within 0.00012 units and 0.0003°, with placement, face, gaze, jaw, scale
+    and unrelated animation preserved;
+  - exact Undo and Redo, a true no-op, the updated pose applied over existing keys, a verified Abort and persistence
+    after navigation;
+  - the Clip Editor refusal wrote nothing;
+  - a full-body Apply kept SFM busy about 2.6 s and settled after 3.5–3.7 s.
+- **Formal verdict FAIL (procedural):** B12 was not observed, B13–B17 ran on shot10 (the legacy pose's own source arm,
+  so nothing moved), and B17 was impossible after scrubbing. Recorded in `evidence\DEVIATIONS.json`; the verdict is
+  not revised.
+
+**B10 message defect.** In the Clip Editor, SFM evaluates the rig at another clock (FA-1). The preflights check
+evaluated inputs before they reach the Motion Editor gate, so Apply refused as "CPM couldn't read everything…"
+instead of telling the artist to switch editors. The version 1 preflight has the same order.
+
+**Correction (`e98b90b2f6f3ccdd89b56641ecfe831041cf8f52`; CPM `f6098b3a61bbc17b435205741761cf6993fc726d94b575d2c9a4fd600eb4e6e9`).**
+- `prod_pose_require_motion_editor` checks the timeline mode first in both preflights.
+- The complete gate (the mode and every channel clock) still runs at P1, P2 and P7.
+- The copy is now "Switch to the Motion Editor to apply a pose. Nothing was changed."
+
+**Tests:**
+- full body `M.1`–`M.6`, through the window's real `pose_guard` and `apply_pose` and the real preflight. The body fake
+  can now evaluate at SFM's stale clock outside the Motion Editor, opt-in, as natively;
+- legacy `M.2` and `M.5`;
+- Poses page `F7`: the click route's popup and status for each refusal.
+
+On `c2a2068`, `M.1` reproduces the native B10 message.
+
+**Results** on Python 3.10.6 and 2.7.5 (both interpreters unless marked):
+- full body 246/246;
+- legacy live 104/104;
+- integration 204/204, pose core 255/255, library 87/87;
+- Poses page 118/118 (2.7.5);
+- M-06 179/179 and 334/334, M-05 115/115;
+- empty states 15/15 (2.7.5);
+- canonical route 84/85 (the historical row only).
+
+**Run 4 kit (supplemental, B9–B17 only):** `real_sfm_qualification/f01_full_body_s3/PROCEDURE_SUPPLEMENT.md` and
+`s3_supplement.template.json`.
+- **Build:** qualification `12b59b29…`.
+- **Legacy pre-check:** read-only, run after B13. It requires shot15's left arm to differ visibly from the legacy
+  pose's source arm. S0 data predicts up to 79°.
+- **Supplement comparator:** checks the refusals with zero writes, the corrected popup wording from the CPM log, and
+  the legacy transfer, no-op, Undo and Redo.
+- **Kit tests:** 36 on 3.10.6; the wrapper and smoke tests pass on 2.7.5.

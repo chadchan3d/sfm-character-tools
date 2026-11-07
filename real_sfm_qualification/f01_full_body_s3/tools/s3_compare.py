@@ -518,6 +518,113 @@ def evaluate(R):
         s0_hash(os.path.join(R.q, "sessions", "S3_DESTINATION.dmx")) == read_json(dest)["destination_sha256"])
 
 
+# --- the supplemental run (B9 ... B17 only; S3 run 4) ----------------------------------------------------------------
+
+SUPPLEMENT_STEPS = ["B%d" % i for i in range(9, 18)]
+EDITOR_COPY = u"Switch to the Motion Editor to apply a pose. Nothing was changed."
+PROPORTIONS_COPY = u"This pose was saved with different body proportions and can't be applied safely. Nothing was changed."
+LEFT_ARM_BONES = ("bip_UpperArm_l", "bip_lowerArm_l", "bip_hand_l")
+
+
+def legacy_distinct(o_source, o_dest):
+    """How far the destination's left arm (B13, shot15) is from the legacy pose's own source arm (B11, shot10, where
+    NQ1 Pose A was captured): the largest local-orientation difference of the left upper arm, lower arm and hand, and
+    of the written Hand_l_o channel (degrees). A meaningful transfer needs a visible difference."""
+    out = {}
+    for name in LEFT_ARM_BONES:
+        if name in o_source["bones"] and name in o_dest["bones"]:
+            out[name] = angle(o_source["bones"][name]["local_orientation"], o_dest["bones"][name]["local_orientation"])
+    a, b = Run.channels(o_source).get("Hand_l_o"), Run.channels(o_dest).get("Hand_l_o")
+    if a and b and isinstance(a.get("value_at_mapped"), list) and isinstance(b.get("value_at_mapped"), list):
+        out["Hand_l_o"] = angle(a["value_at_mapped"], b["value_at_mapped"])
+    return out
+
+
+def arm_motion(o1, o2):
+    return max([angle(o1["bones"][n]["world_orientation"], o2["bones"][n]["world_orientation"])
+                for n in LEFT_ARM_BONES if n in o1["bones"] and n in o2["bones"]] or [0.0])
+
+
+def evaluate_supplement(R):
+    o, chk = R.obs, R.check
+    for step in SUPPLEMENT_STEPS:
+        if not chk("observed.%s" % step, step in o and step in R.side, LABELS[step]):
+            continue
+        problems = s0_analyze.validate(o[step]) + list(o[step].get("problems") or []) + list(R.side[step]["mismatch"])
+        chk("valid.%s" % step, not problems and o[step]["readonly"]["unchanged"], problems[:5])
+        chk("cpm.%s" % step, (o[step].get("cpm_loaded") or {}).get("build_sha256") == R.ids["qualification_cpm_sha256"],
+            o[step].get("cpm_loaded"))
+    if any(s not in o for s in SUPPLEMENT_STEPS):
+        chk("complete", False, "missing observations: %s" % [s for s in SUPPLEMENT_STEPS if s not in o])
+        return
+    pids = set(o[s]["pid"] for s in SUPPLEMENT_STEPS)
+    chk("process.one_sfm_process", len(pids) == 1, sorted(pids))
+    chk("process.destination_session", all(o[s]["document"].lower().endswith("s3_destination.dmx")
+                                           for s in SUPPLEMENT_STEPS), o["B9"]["document"])
+    chk("refusal.clip_editor_writes_nothing", R.doc_unchanged(o["B9"], o["B10"]))
+    chk("refusal.fk_proportions_write_nothing", R.doc_unchanged(o["B11"], o["B12"]))
+    legacy = R.record(LEGACY)
+    chk("library.legacy_record_present", legacy is not None)
+    pre_path = os.path.join(R.q, "evidence", "LEGACY_PRECHECK.json")
+    pre = read_json(pre_path) if os.path.isfile(pre_path) else {}
+    chk("legacy.precheck_visible_difference_before_apply", pre.get("distinct") is True and
+        pre.get("source_label") == "S0-18" and pre.get("destination_label") == "S0-20", pre.get("differences_deg"))
+    b13, b14 = o["B13"], o["B14"]
+    changed = [n for n in LEGACY_WRITTEN if R.channel_problems(b13, b14, names=[n])]
+    chk("legacy.left_arm_keys_written", changed == list(LEGACY_WRITTEN), changed)
+    motion = arm_motion(b13, b14)
+    chk("legacy.visible_left_arm_transfer", motion >= VISIBLE_DEGREES, round(motion, 3))
+    taken = dict((k, v) for k, v in legacy_distinct(o["B11"], b14).items() if k in LEFT_ARM_BONES)
+    chk("legacy.arm_takes_the_saved_pose", len(taken) == 3 and max(taken.values()) <= R.tol["angle_degrees"],
+        taken)      # the arm bones' local orientations equal the pose's source arm (NQ1 Pose A, shot10, B11)
+    chk("legacy.everything_else_unchanged", not R.channel_problems(b13, b14, exclude=LEGACY_WRITTEN) and
+        R.outside_equal("B13", "B14"), R.channel_problems(b13, b14, exclude=LEGACY_WRITTEN)[:8])
+    chk("legacy.one_owned_undo_entry", b14["session_after"]["undo"]["undo_desc"] == u"Apply Pose " + LEGACY)
+    chk("legacy.repeat_true_noop", R.doc_unchanged(b14, o["B15"]))
+    chk("legacy.undo_restores", not R.channel_problems(b13, o["B16"]) and not R.skeleton_problems(b13, o["B16"]) and
+        o["B16"]["session_after"]["undo"]["can_redo"] is True)
+    chk("legacy.redo_restores", not R.channel_problems(b14, o["B17"]) and not R.skeleton_problems(b14, o["B17"]) and
+        o["B17"]["session_after"]["undo"]["undo_desc"] == u"Apply Pose " + LEGACY)
+    logs = parse_logs(os.path.join(R.q, "evidence", "logs"))
+    ops = apply_operations(logs, list(pids)[0])
+    chk("log.four_apply_operations", len(ops) == 4, [op["id"] for op in ops])
+    if len(ops) == 4:
+        text = lambda op: " ".join(op["text"])  # noqa: E731
+        chk("log.clip_editor_refusal_says_switch_to_the_motion_editor", EDITOR_COPY in text(ops[0]) and
+            "editor-mode-refused" in text(ops[0]) and not has(ops[0], "PROD_POSE_BODY-P6 "))
+        chk("log.proportions_refusal_keeps_its_message", PROPORTIONS_COPY in text(ops[1]) and
+            not has(ops[1], "PROD_POSE_BODY-P6 "))
+        chk("log.legacy_verified_by_cpm", has(ops[2], "PROD_POSE_P6 ") and has(ops[2], "PROD_POSE_P7-verified"))
+        chk("log.legacy_repeat_is_noop", (p1_detail(ops[3]) or {}).get("noop") is True and
+            not has(ops[3], "PROD_POSE_P6 "))
+    chk("log.no_recovery_or_uncertainty", not any(("RECOVERY_BLOCKED" in r["text"] or "undo-uncertain" in r["text"] or
+                                                   "abort-unverified" in r["text"] or "P7-unverified" in r["text"])
+                                                  for r in logs))
+    R.timing = [dict(timing(op), step=s, id=op["id"]) for op, s in zip(ops, ("B10", "B12", "B14", "B15"))]
+    restore = os.path.join(R.q, "evidence", "restore.json")
+    chk("restore.published_and_inventories_equal", os.path.isfile(restore) and read_json(restore).get("restored") is True)
+    dest = os.path.join(R.q, "evidence", "destination.json")
+    chk("sessions.destination_not_saved_during_the_run", os.path.isfile(dest) and
+        s0_hash(os.path.join(R.q, "sessions", "S3_DESTINATION.dmx")) == read_json(dest)["destination_sha256"])
+
+
+def legacy_precheck(c):
+    """Read-only, after B13: does shot15's left arm differ visibly from NQ1 Pose A's own source arm (B11, shot10)?"""
+    R = Run(c)
+    if "B11" not in R.obs or "B13" not in R.obs:
+        raise SystemExit("REFUSED: observe B11 and B13 first")
+    for s in ("B11", "B13"):
+        if R.side[s]["mismatch"] or R.obs[s]["problems"]:
+            raise SystemExit("REFUSED: %s is not a valid observation" % s)
+    diff = legacy_distinct(R.obs["B11"], R.obs["B13"])
+    distinct = bool(diff) and max(diff.values()) >= VISIBLE_DEGREES
+    return {"source_label": R.obs["B11"]["label"], "destination_label": R.obs["B13"]["label"],
+            "source_shot": R.obs["B11"]["session_after"]["current_shot"],
+            "destination_shot": R.obs["B13"]["session_after"]["current_shot"],
+            "differences_deg": dict((k, round(v, 3)) for k, v in diff.items()), "threshold_deg": VISIBLE_DEGREES,
+            "distinct": distinct}
+
+
 def s0_hash(path):
     import hashlib
     h = hashlib.sha256()
@@ -528,8 +635,8 @@ def s0_hash(path):
 
 
 def performance(R):
-    rows = [t for t in getattr(R, "timing", []) if t["step"] in ("B2", "B6")]
-    if len(rows) != 2 or any(t["blocking_ms"] is None or t["whole_ms"] is None for t in rows):
+    rows = [t for t in getattr(R, "timing", []) if t["step"] in ("B2", "B6", "B14")]
+    if not rows or any(t["blocking_ms"] is None or t["whole_ms"] is None for t in rows):
         return {"class": "unmeasured", "applies": rows}
     worst = max(max(t["blocking_ms"], t["whole_ms"]) for t in rows)
     cls = "responsive" if worst <= PERF["responsive_ms"] else ("finding" if worst <= PERF["limit_ms"] else "fail")
@@ -539,7 +646,7 @@ def performance(R):
 def run(c):
     R = Run(c)
     R.timing = []
-    evaluate(R)
+    (evaluate_supplement if c.get("supplement") else evaluate)(R)
     perf = performance(R)
     failed = [x for x in R.checks if not x["pass"]]
     verdict = "PASS" if not failed and perf["class"] in ("responsive", "finding") else "FAIL"
