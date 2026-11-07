@@ -683,17 +683,18 @@ class SupplementSynthetic(Synthetic):
         f = self.faults
         dest = Scene(300, "e:/q/sessions/S3_DESTINATION.dmx", 35.0, posture(-30.0))
         arm = ("bip_UpperArm_l", "bip_lowerArm_l", "bip_hand_l")
+        legacy_only = "legacy-only" in f
         dest.mode = "Clip Editor"
-        self.observe(dest, "B9")
-        self.observe(dest, "B10")
+        if not legacy_only:
+            self.observe(dest, "B9")
+            self.observe(dest, "B10")
         dest.mode, dest.shot, dest.head = "Motion Editor", "shot10", 0.4167
         source_arm = dict((n, dest.angles[n]) for n in arm)       # shot10: NQ1 Pose A's own source arm
         source_hand = value_for("Hand_l_o", 9)
         dest.keys["Hand_l_o"] = [[1000, source_hand]]
         self.observe(dest, "B11")
-        if "noop-writes" in f:
-            pass
-        self.observe(dest, "B12")
+        if not legacy_only:
+            self.observe(dest, "B12")
         dest.shot, dest.head = "shot15", 0.2083
         if "arm-already-matches" not in f:
             for n in arm:
@@ -704,6 +705,8 @@ class SupplementSynthetic(Synthetic):
         from s3_compare import legacy_precheck
         if "no-legacy-precheck" not in f:
             c = {"paths": {"Q": self.q}, "character_dir": CHAR, "supplement": True}
+            if legacy_only:
+                c["supplement_steps"] = ["B11", "B13", "B14", "B15", "B16", "B17"]
             self.dump(os.path.join("evidence", "LEGACY_PRECHECK.json"), legacy_precheck(c))
         dest.write(LEFT, dict((n, value_for(n, 9)) for n in LEFT))
         for n in arm:
@@ -726,9 +729,11 @@ class SupplementSynthetic(Synthetic):
                 fh.write(json.dumps(r).encode("utf-8"))
         editor = ("Switch the timeline to the Motion Editor to apply a pose. Nothing was changed." if "old-message" in f
                   else "Switch to the Motion Editor to apply a pose. Nothing was changed.")
-        self.op(1, "Apply Pose", ['PROD_POSE_editor-mode-refused {"mode": 3}',
-                                  "PROD_ACTION_ERROR label=u'Apply Pose' error=ProdPoseError(u\"%s\",)" % editor])
-        self.op(2, "Apply Pose", ['PROD_POSE_BODY-refused {"code": "proportions"}',
+        if not legacy_only:
+            self.op(1, "Apply Pose", ['PROD_POSE_editor-mode-refused {"mode": 3}',
+                                      "PROD_ACTION_ERROR label=u'Apply Pose' error=ProdPoseError(u\"%s\",)" % editor])
+        if not legacy_only:
+          self.op(2, "Apply Pose", ['PROD_POSE_BODY-refused {"code": "proportions"}',
                                   "PROD_ACTION_ERROR label=u'Apply Pose' error=ProdPoseError(u\"This pose was saved "
                                   "with different body proportions and can't be applied safely. Nothing was "
                                   "changed.\",)"])
@@ -743,7 +748,10 @@ class SupplementSynthetic(Synthetic):
         self.dump(os.path.join("evidence", "destination.json"),
                   {"destination_sha256": C.s0_hash(os.path.join(self.q, "sessions", "S3_DESTINATION.dmx"))})
         self.dump(os.path.join("evidence", "restore.json"), {"restored": True})
-        return {"paths": {"Q": self.q}, "character_dir": CHAR, "supplement": True}
+        c = {"paths": {"Q": self.q}, "character_dir": CHAR, "supplement": True}
+        if legacy_only:
+            c["supplement_steps"] = ["B11", "B13", "B14", "B15", "B16", "B17"]
+        return c
 
 
 if PY3:
@@ -773,6 +781,15 @@ if PY3:
             for cid in ("log.clip_editor_refusal_says_switch_to_the_motion_editor", "legacy.visible_left_arm_transfer",
                         "legacy.redo_restores", "legacy.precheck_visible_difference_before_apply"):
                 self.assertIn(cid, ids)
+
+        def test_a_correct_legacy_only_run_passes_and_an_unmoved_arm_fails(self):
+            out = self.verdict("legacy-only")
+            self.assertEqual((out["verdict"], out["failed"]), ("PASS", []))
+            ids = [x["id"] for x in out["checks"]]
+            self.assertNotIn("refusal.clip_editor_writes_nothing", ids)
+            shutil.rmtree(os.path.join(self.dir, "Q"))
+            out = self.verdict("legacy-only", "arm-already-matches")
+            self.assertIn("legacy.visible_left_arm_transfer", out["failed"])
 
         def test_counterexamples_fail(self):
             for fault, cid in (("arm-already-matches", "legacy.visible_left_arm_transfer"),

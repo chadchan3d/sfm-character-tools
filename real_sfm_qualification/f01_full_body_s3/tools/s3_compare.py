@@ -546,23 +546,28 @@ def arm_motion(o1, o2):
 
 
 def evaluate_supplement(R):
+    """The supplement's steps come from the configuration ("supplement_steps"; default B9-B17): run 4 covers B9-B17,
+    run 5 the legacy segment (B11 as the legacy pose's source arm, then B13-B17). Only the covered steps are checked."""
     o, chk = R.obs, R.check
-    for step in SUPPLEMENT_STEPS:
+    steps = list(R.c.get("supplement_steps") or SUPPLEMENT_STEPS)
+    refusals = "B9" in steps
+    for step in steps:
         if not chk("observed.%s" % step, step in o and step in R.side, LABELS[step]):
             continue
         problems = s0_analyze.validate(o[step]) + list(o[step].get("problems") or []) + list(R.side[step]["mismatch"])
         chk("valid.%s" % step, not problems and o[step]["readonly"]["unchanged"], problems[:5])
         chk("cpm.%s" % step, (o[step].get("cpm_loaded") or {}).get("build_sha256") == R.ids["qualification_cpm_sha256"],
             o[step].get("cpm_loaded"))
-    if any(s not in o for s in SUPPLEMENT_STEPS):
-        chk("complete", False, "missing observations: %s" % [s for s in SUPPLEMENT_STEPS if s not in o])
+    if any(s not in o for s in steps):
+        chk("complete", False, "missing observations: %s" % [s for s in steps if s not in o])
         return
-    pids = set(o[s]["pid"] for s in SUPPLEMENT_STEPS)
+    pids = set(o[s]["pid"] for s in steps)
     chk("process.one_sfm_process", len(pids) == 1, sorted(pids))
     chk("process.destination_session", all(o[s]["document"].lower().endswith("s3_destination.dmx")
-                                           for s in SUPPLEMENT_STEPS), o["B9"]["document"])
-    chk("refusal.clip_editor_writes_nothing", R.doc_unchanged(o["B9"], o["B10"]))
-    chk("refusal.fk_proportions_write_nothing", R.doc_unchanged(o["B11"], o["B12"]))
+                                           for s in steps), o[steps[0]]["document"])
+    if refusals:
+        chk("refusal.clip_editor_writes_nothing", R.doc_unchanged(o["B9"], o["B10"]))
+        chk("refusal.fk_proportions_write_nothing", R.doc_unchanged(o["B11"], o["B12"]))
     legacy = R.record(LEGACY)
     chk("library.legacy_record_present", legacy is not None)
     pre_path = os.path.join(R.q, "evidence", "LEGACY_PRECHECK.json")
@@ -587,20 +592,25 @@ def evaluate_supplement(R):
         o["B17"]["session_after"]["undo"]["undo_desc"] == u"Apply Pose " + LEGACY)
     logs = parse_logs(os.path.join(R.q, "evidence", "logs"))
     ops = apply_operations(logs, list(pids)[0])
-    chk("log.four_apply_operations", len(ops) == 4, [op["id"] for op in ops])
-    if len(ops) == 4:
+    expected = 4 if refusals else 2
+    chk("log.apply_operations_as_planned", len(ops) == expected, [op["id"] for op in ops])
+    if len(ops) == expected:
         text = lambda op: " ".join(op["text"])  # noqa: E731
-        chk("log.clip_editor_refusal_says_switch_to_the_motion_editor", EDITOR_COPY in text(ops[0]) and
-            "editor-mode-refused" in text(ops[0]) and not has(ops[0], "PROD_POSE_BODY-P6 "))
-        chk("log.proportions_refusal_keeps_its_message", PROPORTIONS_COPY in text(ops[1]) and
-            not has(ops[1], "PROD_POSE_BODY-P6 "))
-        chk("log.legacy_verified_by_cpm", has(ops[2], "PROD_POSE_P6 ") and has(ops[2], "PROD_POSE_P7-verified"))
-        chk("log.legacy_repeat_is_noop", (p1_detail(ops[3]) or {}).get("noop") is True and
-            not has(ops[3], "PROD_POSE_P6 "))
+        if refusals:
+            chk("log.clip_editor_refusal_says_switch_to_the_motion_editor", EDITOR_COPY in text(ops[0]) and
+                "editor-mode-refused" in text(ops[0]) and not has(ops[0], "PROD_POSE_BODY-P6 "))
+            chk("log.proportions_refusal_keeps_its_message", PROPORTIONS_COPY in text(ops[1]) and
+                not has(ops[1], "PROD_POSE_BODY-P6 "))
+        legacy_ops = ops[-2:]
+        chk("log.legacy_verified_by_cpm", has(legacy_ops[0], "PROD_POSE_P6 ") and
+            has(legacy_ops[0], "PROD_POSE_P7-verified") and not has(legacy_ops[0], "PROD_POSE_BODY-"))
+        chk("log.legacy_repeat_is_noop", (p1_detail(legacy_ops[1]) or {}).get("noop") is True and
+            not has(legacy_ops[1], "PROD_POSE_P6 "))
     chk("log.no_recovery_or_uncertainty", not any(("RECOVERY_BLOCKED" in r["text"] or "undo-uncertain" in r["text"] or
                                                    "abort-unverified" in r["text"] or "P7-unverified" in r["text"])
                                                   for r in logs))
-    R.timing = [dict(timing(op), step=s, id=op["id"]) for op, s in zip(ops, ("B10", "B12", "B14", "B15"))]
+    R.timing = [dict(timing(op), step=s, id=op["id"]) for op, s in zip(ops, ("B10", "B12", "B14", "B15") if refusals
+                                                                          else ("B14", "B15"))]
     restore = os.path.join(R.q, "evidence", "restore.json")
     chk("restore.published_and_inventories_equal", os.path.isfile(restore) and read_json(restore).get("restored") is True)
     dest = os.path.join(R.q, "evidence", "destination.json")
