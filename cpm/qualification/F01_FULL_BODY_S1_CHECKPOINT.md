@@ -254,3 +254,42 @@ as `not-applied`. That was safe, but it was not a plain refusal.
 The limitations in section 4 and the native items in section 7 stand.
 
 **Native plan.** `F01_FULL_BODY_S3_NATIVE_PLAN.md` is a draft. It is not authorized and nothing has been executed.
+
+## 9. Recovery pause across CPM window recreation; S3 kit (2026-11-06)
+
+Owner authorization "Finish Recovery Safety and Prepare Native Qualification".
+
+**Finding.** The recovery pause lived on the `ProdWindow` instance. `ProdWindow` sets `WA_DeleteOnClose`, so closing
+and reopening CPM constructed a new window without the pause. The SFM process, and any uncertain native Undo
+transaction, survived. The R15 launcher loads the private module `chadchan3d_cpm_app` once per SFM process and never
+reloads it, so module state lives exactly as long as the process.
+
+**Correction (`af45dfa8582ae6c63a9a4410e062c08ee6515061`; CPM `813a9ff29436732f060ddb383af312e0292c303bc8aadef90e7297ad3782bc79`).**
+- `PROD_POSE_RECOVERY_BLOCK` is a module-level flag. `pose_guard` sets it on recovery-unverified, refuses while it is
+  set, and the Poses page state reads it.
+- Nothing clears it within a process. A fresh SFM process loads the module anew and starts unpaused; no earlier
+  native transaction can survive into it.
+- The window attribute is kept.
+- The recovery copy now refers to "the character's pose" and "restart SFM". The arms and "close and reopen CPM" are
+  gone from recovery-unverified, blocked-after-recovery and committed-unverified.
+
+**Tests:**
+- a reopened window stays paused after uncertain `StartUndo` and `FinishUndo` failures: full body `Y.5` (3), legacy
+  `U.5` (3), integration `C6.block_is_process_wide` and `C6.reopened_cpm_window_stays_paused_in_the_same_sfm_process`;
+- a fresh namespace (a new process) applies normally: `Y.8`, `U.8`;
+- a reopened window's buttons stay disabled: page `U7`.
+
+**Against `a8d3566`** the reopen and process-wide checks fail: body 4, legacy 4, integration 3 (including the
+allow-list row). All pass corrected.
+
+**Results** on Python 3.10.6 and 2.7.5 (both interpreters unless marked):
+- full body 210/210;
+- legacy live 100/100;
+- integration 204/204, pose core 255/255, library 87/87;
+- Poses page 98/98 (2.7.5);
+- M-06 179/179 and 334/334, M-05 115/115;
+- empty states 15/15 (2.7.5);
+- canonical route 84/85 (historical row only).
+
+**S3 kit.** `real_sfm_qualification/f01_full_body_s3/` holds the procedure, tool, observer wrapper, comparator and
+tests. `F01_FULL_BODY_S3_NATIVE_PLAN.md` section 7 records it. It is prepared, **not executed**.

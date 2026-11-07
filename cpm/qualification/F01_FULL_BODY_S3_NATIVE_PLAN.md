@@ -1,8 +1,10 @@
-# F-01 Full-Body S3 — Native Qualification Plan (DRAFT)
+# F-01 Full-Body S3 — Native Qualification Plan
 
-**Status: DRAFT, NOT AUTHORIZED, NOT EXECUTED.** Prepared 2026-11-06 at the Owner's request alongside the final S1 Undo
-corrections. Nothing in this plan has been installed, launched or run. Executing any step requires separate Owner
-authorization. The plan supersedes the outline in `F01_FULL_BODY_S1_CHECKPOINT.md` section 6.
+**Status: PREPARED, NOT EXECUTED.** Drafted 2026-11-06 alongside the final S1 Undo corrections. The executable kit is
+now `real_sfm_qualification/f01_full_body_s3/`: the operator procedure `PROCEDURE.md`, the tool, observer wrapper and
+comparator. Section 7 records how the kit refines this plan. Nothing has been installed, launched or run. Executing
+any step requires the Owner's execution approval. The plan supersedes the outline in
+`F01_FULL_BODY_S1_CHECKPOINT.md` section 6.
 
 ## 1. Candidate and scope
 
@@ -135,3 +137,33 @@ Owner's decision.
 5. Owner preparation of the two fixture sessions (section 2).
 
 Raw native evidence stays in the Owner's local archive; the repository receives the summary record and the hashes.
+
+## 7. Kit and refinements (2026-11-06, Owner authorization "Finish Recovery Safety and Prepare Native Qualification")
+
+The kit in `real_sfm_qualification/f01_full_body_s3/` implements this plan, refined towards the artist workflow:
+
+- **Candidate:** CPM `813a9ff2…` (after the recovery-pause correction `af45dfa`); qualification build `45cbaf95…`.
+- **Posing:** the Owner poses Krystal in SFM during Process A, rather than preparing the postures beforehand. Posture
+  A is saved as `S3 Pose A`, B as `S3 Pose B`, and a third posture C updates `S3 Pose B` in place (Update Pose).
+  Applying the updated B over A therefore exercises the existing-key update.
+- **Destination:** shot13 of the R2 fixture, posed by the Owner once (step 0), compatible under A1 (rotations only on
+  FK bones). `rig_root` is moved and turned; the face, jaw and gaze are set distinctly.
+- **Processes:** two SFM processes. The refusals (Clip Editor, shot10 FK positions) and the legacy left-arm
+  regression run in Process B after the full-body steps.
+- **Legacy pose:** `NQ1 Pose A` (`4916a724…`), seeded by hash, because the R2 shot15 arm already matches Pose B
+  (PS-1b5).
+- **Observer:** the S0 observer `4a358cc0…`, unchanged, through a read-only wrapper. The wrapper adds a digest of
+  every channel outside the instance and an immediate editor, shot and playhead check.
+- **Comparator:**
+  - independent of CPM's code;
+  - uses the registry tolerances;
+  - checks: distinctness (≥ 5° per anatomical group), full-body reproduction relative to `rig_root`, preservation,
+    Undo/Redo, the no-op, the update in place, the Abort, the refusals, CPM's own P6/P7 log verdicts and
+    restoration;
+  - measures timing from the CPM log's millisecond stamps. Responsive is ≤ 5 s; a finding is up to 30 s; a fail is
+    above that.
+- **Offline tests** (`tests/test_s3.py`):
+  - the wrapper against the S0 fake (read-only, sidecar, repeated step refused, mismatch reported), on Python 2.7.5
+    and 3.10.6;
+  - the build derivation;
+  - a complete synthetic run (PASS) and 13 counterexamples (each FAIL), on 3.10.6.
