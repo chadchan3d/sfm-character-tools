@@ -9,6 +9,8 @@
 - **F-01 full-body architecture (Owner-accepted 2026-11-05):** `cpm/qualification/F01_FULL_BODY_CONSOLIDATED_DESIGN.md` Rev 1 — Astra's hybrid architecture with Argon's adversarial corrections, as stated in the Owner's authorization; the review texts are external records (not in this repository). It supersedes `F01_FULL_BODY_DESIGN_PROPOSAL.md`, which is kept unchanged. It does not modify the R15 Blueprint or the Stage D design.
 
 ## Current milestone and done criteria
+**F-01 Full-Body S1 — Astra PASS WITH BOUNDED CORRECTIONS (`229f3f2`); final Undo corrections complete offline (2026-11-06); not natively qualified.** Commit `9799c9e` corrects `FinishUndo` uncertainty on both Apply paths (a matching Undo description is never evidence of commitment: recovery-unverified and lockout, no P7, no Abort or Undo) and legacy `StartUndo` uncertainty (the full-body startup contract). CPM `e1dc727f…`; full body 209/209, legacy live 99/99 on both interpreters; other regressions unchanged PASS. Record: `F01_FULL_BODY_S1_CHECKPOINT.md` section 8. Draft native plan (not authorized): `F01_FULL_BODY_S3_NATIVE_PLAN.md`.
+
 **F-01 Full-Body S1 — Astra ACCEPT WITH CORRECTIONS; corrections complete offline (2026-11-06); not natively qualified.** Corrections `8323469` (ownership, P7 authority, P2 A1, bindings) and `82997bd` (Undo startup and recovery); CPM `90cf0987…`; full-body suite 189/189 on both interpreters; left-arm, M-05 and M-06 regressions unchanged PASS. Record: `F01_FULL_BODY_S1_CHECKPOINT.md` section 7. Version 1 `StartUndo` handling unchanged (for adjudication).
 
 **F-01 Full-Body S1 — OFFLINE IMPLEMENTATION COMPLETE (2026-11-06); not natively qualified.** Record: `cpm/qualification/F01_FULL_BODY_S1_CHECKPOINT.md`. Design: `F01_FULL_BODY_CONSOLIDATED_DESIGN.md` Rev 2 (A1 Astra ruling, A2/A3 Owner decisions approved). Commits `da70d47` (S1-A/B), `6f845d0` (S1-C), `02b4406` (S1-D), `20363f3` (S1-E). CPM `947d4a11…`; body profile registry `cpm/pose_profiles/cpm_body_profiles_v1.json` `22dcd159…` (full-body mapping experimental); left-arm registry `f445d5ef…` unchanged.
@@ -64,4 +66,4 @@
 - **Public reception:** owner-reported downloads/subscriptions versus anti-AI comments are sentiment observations, not evidence of software success or failure.
 
 ## One next bounded action
-**Independent review of the S1 corrections** (`8323469`, `82997bd`), then the Owner's decision on preparing the minimal native full-body qualification. No installation, native run, release packaging, deployment or merge to `master` before separate authorization.
+**Review of the final S1 Undo corrections** (`9799c9e`) and of the draft native plan, then the Owner's decision on authorizing the S3 procedure, observer and comparator and the native run. No installation, native run, release packaging, deployment or merge to `master` before separate authorization.

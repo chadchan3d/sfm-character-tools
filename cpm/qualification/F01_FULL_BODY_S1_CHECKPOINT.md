@@ -190,3 +190,67 @@ Remaining concerns:
    transforms with the restored state. A transform that still holds applied values then fails closed (recovery
    unverified) rather than passing.
 4. **Native verification still needed.** The limitations in section 4 stand: solver, Undo size, single-rig evidence.
+
+## 8. Astra final S1 Undo corrections (2026-11-06)
+
+Astra's disposition of `229f3f2a7628597fff631bb2fb9b43c45ada33a2` was **PASS WITH BOUNDED CORRECTIONS**: two remaining
+P1 Undo exception-handling defects. Section 7 remains the record of the previous round.
+
+| Commit | Content |
+|---|---|
+| `9799c9e7d54e52c6fbcb8a96f2cdce716dadce63` | Both corrections and their tests |
+
+CPM after the corrections: `e1dc727f661e20f896a340fa403392a8d6241dc5d131203cc941ed91c829b7be`. The registries are
+unchanged.
+
+| Defect | Correction |
+|---|---|
+| **`FinishUndo` uncertainty (both Apply paths).** After a `FinishUndo` exception, CPM inferred commitment from a matching Undo description. An older entry with the same name made an unclosed transaction look committed, and P7 was scheduled | A `FinishUndo` exception is never a commitment. It gives no `native-commit`, no P7, no Abort and no Undo. The result is recovery-unverified, and `pose_guard` engages the lockout. The exception, the observed Undo state and the P1 Undo state are logged (`BODY-finish-undo-uncertain`, `finish-undo-uncertain`) |
+| **Legacy `StartUndo` uncertainty.** Version 1 treated any `StartUndo` exception as "not opened" and could report `not-applied` with an open transaction | The full-body startup contract now applies to version 1. The native labels are prepared before the call, so a failure there is a plain refusal. Any exception from `StartUndo` itself is uncertain ownership: recovery-unverified and the lockout, with no Abort and never `not-applied` |
+
+Successful `FinishUndo`, ownership at P6, the refresh and P7 are unchanged. So are ownership, A1, classification and
+performance.
+
+**Tests.** Section `Y` (full body, 19 checks) and section `U` (legacy, 19 checks) cover, for each path:
+1. a failure before native `StartUndo`;
+2. `StartUndo` raising before and after simulated opening;
+3. `FinishUndo` raising before closure while an older entry has the identical description;
+4. `FinishUndo` raising after simulated commitment;
+5. the lockout through the real `pose_guard`, refusing the next Apply;
+6. no automatic Abort or Undo in any uncertain branch;
+7. normal Apply, P7, repeat no-op and the owned Abort.
+
+`X.8b` now asserts the corrected contract. The W2 fake is extended in the suite only, with Undo exception switches
+that are unset by default; the W2 file itself is not modified. The body fake records Undo and Redo calls.
+
+**Against the reviewed CPM `229f3f2`**, these checks fail:
+- full body, 8: `X.8b`, `Y.3` ×3, `Y.4` ×2, `Y.5` ×2;
+- legacy, 14: `U.1` ×2, `U.2` ×4, `U.3` ×3, `U.4` ×2, `U.5` ×3.
+
+The old code reported `not-applied` after a `StartUndo` exception (both before and after opening). It also returned
+`verification-pending` after a `FinishUndo` exception that matched an older entry. All of these checks pass on the
+corrected CPM.
+
+On `229f3f2` the two `U.1` checks failed differently: a label-preparation failure was aborted, verified and reported
+as `not-applied`. That was safe, but it was not a plain refusal.
+
+**Results** on Python 3.10.6 and 2.7.5 (both interpreters unless marked):
+- full body 209/209;
+- pose core 255/255, library 87/87, integration 202/202;
+- live (legacy) 99/99;
+- Poses page 97/97 (2.7.5);
+- M-06 179/179 and 334/334, M-05 115/115;
+- empty states 15/15 (2.7.5);
+- canonical route 84/85: the unchanged historical row `derivation.added_top_level_is_bounded` only, and no new
+  top-level names.
+
+**Remaining uncertainty.** Offline, none is known in the corrected handling. The cost is deliberate:
+- a genuine native `StartUndo` or `FinishUndo` exception now always pauses pose operations until CPM is closed and
+  reopened, even when SFM did commit;
+- the existing pause message says "Check the arms in SFM", left-arm wording that a full-body Apply now reaches.
+  The copy was left unchanged (UI out of scope) and needs an Owner decision before production;
+- whether SFM can raise there at all is unobserved natively.
+
+The limitations in section 4 and the native items in section 7 stand.
+
+**Native plan.** `F01_FULL_BODY_S3_NATIVE_PLAN.md` is a draft. It is not authorized and nothing has been executed.
