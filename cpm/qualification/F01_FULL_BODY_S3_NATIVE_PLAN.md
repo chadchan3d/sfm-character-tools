@@ -189,3 +189,15 @@ Kit changes:
 - **Performance:** anything above 5 s is reported as a usability finding.
 - **Tests:** 29 kit tests on 3.10.6, including the continuation lifecycle on a temporary installation (the source run
   is unchanged and restore returns every inventory); the wrapper tests pass on 2.7.5.
+## 9. Run 2 result and run 3 (2026-11-07)
+
+**Run 2** passed B1 and the revised A1 pre-check natively, then stopped at B2: the Poses page never enabled Apply
+Pose for a full-body pose. Fixed in `c2a2068`; recorded in `F01_FULL_BODY_S1_CHECKPOINT.md` section 11.
+
+**Run 3** reuses the same run 1 files and steps (`PROCEDURE_B_RETEST.md`), with:
+- the candidate `9a155bff…` and qualification build `814b6ec5…`;
+- a new UI smoke check (B1b, read-only): Apply Pose must be enabled for the selected `S3 Pose A` before the first
+  Apply. The comparator requires it.
+
+Kit tests: 33 on 3.10.6 (including the UI smoke check against a fake window, the comparator's smoke requirement and
+the continuation lifecycle); the wrapper and smoke tests pass on 2.7.5.

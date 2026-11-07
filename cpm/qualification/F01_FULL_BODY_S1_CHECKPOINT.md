@@ -363,3 +363,48 @@ The exact rule refuses on the same evidence.
 
 **Process B retest kit:** `real_sfm_qualification/f01_full_body_s3/PROCEDURE_B_RETEST.md` (run 2, a continuation of
 run 1), described in `F01_FULL_BODY_S3_NATIVE_PLAN.md` section 8. Prepared, not executed.
+## 11. S3 run 2 and the full-body Apply button (2026-11-07)
+
+**S3 run 2** (`E:\SFM_U0B_Scratch\f01-full-body-s3-r2`; continuation of run 1; qualification CPM `32486723…`):
+- **B1 and the pre-check passed:** the installed build's own revised A1 check on the native B1 observation reported
+  COMPATIBLE (124 pins; the four run 1 differences within the limit, destination values kept; 278 insertions).
+- **Stopped at B2:** Apply Pose was disabled for `S3 Pose A`. Nothing was applied (the logs hold only Refresh Models
+  and Select Model operations). The installation was restored, and all inventories equal their baselines.
+- **Operator deviation:** the first B1 was observed in the Clip Editor. It is preserved in `observations_void\` and
+  recorded in `evidence\DEVIATIONS.json`.
+
+**Defect.** `prod_pose_ui_state` considered only the saved parts listed in `PROD_POSE_REGIONS` (`left_arm`,
+`right_arm`). A version 2 pose holds `full_body`, so it had no saved or available part, and Apply Pose (and Choose
+Parts) could never be enabled. The window computed `full_body` availability correctly; the S1 window tests called
+`apply_pose` directly, and the Poses page tests covered left-arm poses only.
+
+**Correction (`c2a2068526981766e7c8be489834f58f1e9eec53`; CPM `9a155bff002ba9bd1cd9dc59f924ff0fb1f95c167ddb9b3cc8d09282530dc214`).**
+The parts considered now include `full_body`. Nothing else changes:
+- availability still requires a usable full-body mapping for the build's mode, so production stays disabled until
+  qualified;
+- the click route (`apply_selected_pose` → `apply_pose` → version 2 dispatch to `prod_body_apply`) is unchanged;
+- version 1 is unchanged.
+
+**Tests:** Poses page section `F` (15 checks), on the real window, its button state and click handler:
+- a selected full-body pose enables Apply, its summary reads "Available: Full body", and the click reaches the
+  version 2 dispatcher;
+- a version 1 pose keeps Apply and reaches its own dispatcher;
+- no full-body mapping, a missing registry, an invalid record and no scene instance stay disabled;
+- the window and process-wide recovery pauses disable it;
+- changing the selection updates the button.
+
+On `661cfd7` the same full-body selection gives Apply disabled ("Saved: None · Available: None").
+
+**Results** on Python 3.10.6 and 2.7.5 (both interpreters unless marked):
+- full body 238/238;
+- legacy live 100/100;
+- integration 204/204, pose core 255/255, library 87/87;
+- Poses page 113/113 (2.7.5);
+- M-06 179/179 and 334/334, M-05 115/115;
+- empty states 15/15 (2.7.5);
+- canonical route 84/85 (the historical row only).
+
+**Run 3 kit:** `PROCEDURE_B_RETEST.md` now targets run 3 (`E:\SFM_U0B_Scratch\f01-full-body-s3-r3`), with the
+candidate `9a155bff…` and qualification build `814b6ec5…`. It adds the UI smoke check B1b
+(`observer/F01_S3_UISmoke.py`, read-only, pinned by `build`): Apply Pose must be enabled for the selected full-body
+pose before B2. The comparator requires it (`ui.full_body_apply_enabled_before_apply`).

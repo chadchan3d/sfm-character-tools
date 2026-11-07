@@ -419,6 +419,14 @@ def evaluate(R):
     if R.c.get("continuation"):
         pre = os.path.join(R.q, "evidence", "A1_PRECHECK.json")
         pc = read_json(pre) if os.path.isfile(pre) else {}
+        smoke_path = os.path.join(R.q, "observations", "UI-SMOKE.json")
+        smoke = read_json(smoke_path) if os.path.isfile(smoke_path) else {}
+        chk("ui.full_body_apply_enabled_before_apply", smoke.get("apply_button_enabled") is True and
+            (smoke.get("selected") or {}).get("name") == POSE_A and
+            (smoke.get("selected") or {}).get("regions") == ["full_body"] and
+            (smoke.get("state") or {}).get("apply_mode") == "direct" and not smoke.get("recovery_paused") and
+            smoke.get("cpm_build_sha256") == R.ids["qualification_cpm_sha256"] and
+            smoke.get("pid") == o["B1"]["pid"], dict((k, smoke.get(k)) for k in ("apply_button_enabled", "selected")))
         chk("precheck.revised_A1_compatible_before_apply", pc.get("compatible") is True and
             pc.get("qualification_cpm_sha256") == R.ids["qualification_cpm_sha256"] and
             (pc.get("observation") or {}).get("label") == "S0-08", {k: pc.get(k) for k in ("revised_A1", "compatible")})

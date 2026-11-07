@@ -1,6 +1,6 @@
 {
  "format": "F01-S3-config-v1",
- "description": "F-01 full-body S3 Process B retest (continuation of run 1) with the revised-A1 candidate. Copy to <Q>/s3.json in a NEW run folder and replace the placeholders. Run 1 is only read.",
+ "description": "F-01 full-body S3 Process B retest (continuation of run 1) with the revised-A1 candidate and the full-body Apply button fix (commit c2a2068). Copy to <Q>/s3.json in a NEW run folder and replace the placeholders. Run 1 is only read.",
  "paths": {
   "Q": "<NEW_RUN_DIR>",
   "REPO": "<REPO>",
@@ -17,7 +17,7 @@
   "LEGACY_POSE": "{Q}/unused-in-a-continuation"
  },
  "pins": {
-  "candidate_cpm_sha256": "aca2bb0666631b294c332781163479ba8aa298de0a611ea1abcfc648de0320bc",
+  "candidate_cpm_sha256": "9a155bff002ba9bd1cd9dc59f924ff0fb1f95c167ddb9b3cc8d09282530dc214",
   "profile_sha256": "f445d5ef7fb183e6bcae3099b3812ffd2363213911605134231c2a1f708d6d00",
   "body_profile_sha256": "22dcd1599c0556bcb71df0a9b9d14657684173b3bbf557250710a8104a6baa26",
   "published_cpm_sha256": "ccbed9d794984643fc6f7d7d9c65ef90e5812eb27f85dc4a86855a17c2d3d8df",

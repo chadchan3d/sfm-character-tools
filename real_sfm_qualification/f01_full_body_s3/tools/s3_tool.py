@@ -88,6 +88,10 @@ def wrapper(c):
     return os.path.join(tools_dir(c), "observer", "F01_S3_Observe.py")
 
 
+def ui_smoke(c):
+    return os.path.join(tools_dir(c), "observer", "F01_S3_UISmoke.py")
+
+
 def mainmenu(c):
     return os.path.join(p(c, "GAME"), "usermod", "scripts", "SFM Character Tools")
 
@@ -175,6 +179,7 @@ def cmd_build(c):
            "changed_line": diff[0] + 1, "line": b[diff[0]].decode("utf-8"),
            "profile_sha256": c["pins"]["profile_sha256"], "body_profile_sha256": c["pins"]["body_profile_sha256"],
            "observer_sha256": T.sha(observer(c)), "wrapper_sha256": T.sha(wrapper(c)),
+           "ui_smoke_sha256": T.sha(ui_smoke(c)),
            "comparator_sha256": T.sha(os.path.join(tools_dir(c), "tools", "s3_compare.py"))}
     if ids["observer_sha256"] != c["pins"]["observer_sha256"]:
         shutil.rmtree(staged)
@@ -204,8 +209,9 @@ def cmd_pre(c):
                 problems.append("source %s %s is missing or not %s" % (group, name, digest))
     elif not os.path.isfile(p(c, "R2_FIXTURE")) or T.sha(p(c, "R2_FIXTURE")) != c["pins"]["r2_fixture_sha256"]:
         problems.append("the R2 fixture is not %s" % c["pins"]["r2_fixture_sha256"])
-    if ids and (T.sha(observer(c)) != ids["observer_sha256"] or T.sha(wrapper(c)) != ids["wrapper_sha256"]):
-        problems.append("the observer or the S3 wrapper changed after build")
+    if ids and (T.sha(observer(c)) != ids["observer_sha256"] or T.sha(wrapper(c)) != ids["wrapper_sha256"] or
+                T.sha(ui_smoke(c)) != ids.get("ui_smoke_sha256")):
+        problems.append("the observer, the S3 wrapper or the UI smoke check changed after build")
     if not cont(c) and (not os.path.isfile(p(c, "LEGACY_POSE")) or
                         T.sha(p(c, "LEGACY_POSE")) != c["pins"]["legacy_pose_sha256"]):
         problems.append("the legacy pose is not %s" % c["pins"]["legacy_pose_sha256"])

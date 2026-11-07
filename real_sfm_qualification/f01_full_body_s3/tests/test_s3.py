@@ -120,6 +120,109 @@ class WrapperTests(unittest.TestCase):
         self.assertEqual(len(table), 24)
 
 
+# --- the UI smoke check against a fake CPM window (Python 2.7 and 3) -----------------------------------------------
+
+UI_SMOKE = os.path.join(ROOT, "observer", "F01_S3_UISmoke.py")
+
+
+class FakeButton(object):
+    def __init__(self, enabled):
+        self.enabled, self.clicks = enabled, 0
+
+    def isEnabled(self):
+        return self.enabled
+
+    def click(self):
+        self.clicks += 1
+
+
+class FakeWindow(object):
+    def __init__(self, enabled, regions=(u"full_body",)):
+        self.apply_pose_button = FakeButton(enabled)
+        self.pose_recovery_blocked = False
+        self.item = {u"name": u"S3 Pose A", u"preset_id": u"p", u"record": {u"pose": {
+            u"version": 2, u"regions": dict((r, {}) for r in regions)}}}
+        self.selections = 0
+
+    def selected_pose(self):
+        return self.item
+
+    def setCurrentRow(self, row):
+        self.selections += 1
+
+    def pose_ui_state(self, item):
+        return {u"buttons": {u"apply_pose": self.apply_pose_button.enabled},
+                u"apply_mode": u"direct" if self.apply_pose_button.enabled else None, u"summary": [u"s"]}
+
+
+def exec_file(path, g):
+    with io.open(path, "rb") as f:
+        code = compile(f.read(), path, "exec")
+    exec(code, g)
+
+
+def run_ui_smoke(folder, window):
+    import types
+    cpm = types.ModuleType("chadchan3d_cpm_app")
+    cpm.PROD_APP_ATTR = "_slot"
+    cpm.PROD_POSE_RECOVERY_BLOCK = [None]
+    cpm.__chadchan3d_cpm_build_sha256__ = "b" * 64
+    app = type("App", (), {"_slot": window})()
+    qtgui = types.ModuleType("PySide.QtGui")
+    qtgui.QApplication = type("QApplication", (), {"instance": staticmethod(lambda: app)})
+    pyside = types.ModuleType("PySide")
+    pyside.QtGui = qtgui
+    saved = dict((k, sys.modules.get(k)) for k in ("chadchan3d_cpm_app", "PySide", "PySide.QtGui"))
+    sys.modules.update({"chadchan3d_cpm_app": cpm, "PySide": pyside, "PySide.QtGui": qtgui})
+    out = io.StringIO() if PY3 else Sink()
+    stdout = sys.stdout
+    sys.stdout = out
+    try:
+        exec_file(UI_SMOKE, {"__name__": "__s3_ui__", "S3_DIR": folder})
+    finally:
+        sys.stdout = stdout
+        for k, v in saved.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
+    return out.getvalue() if PY3 else None
+
+
+class UISmokeTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="s3ui")
+        os.makedirs(os.path.join(self.dir, "observations"))
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, True)
+
+    def read(self):
+        with io.open(os.path.join(self.dir, "observations", "UI-SMOKE.json"), "rb") as f:
+            return json.loads(f.read().decode("utf-8"))
+
+    def test_an_enabled_full_body_apply_is_recorded_without_clicking(self):
+        win = FakeWindow(True)
+        printed = run_ui_smoke(self.dir, win)
+        data = self.read()
+        self.assertEqual((data["apply_button_enabled"], data["selected"]["regions"], data["state"]["apply_mode"]),
+                         (True, ["full_body"], "direct"))
+        self.assertEqual((win.apply_pose_button.clicks, win.selections), (0, 0))
+        if PY3:
+            self.assertIn("ENABLED for S3 Pose A (full body): OK", printed)
+
+    def test_a_disabled_apply_reports_stop(self):
+        printed = run_ui_smoke(self.dir, FakeWindow(False))
+        self.assertFalse(self.read()["apply_button_enabled"])
+        if PY3:
+            self.assertIn("DISABLED", printed)
+            self.assertIn("STOP", printed)
+
+    def test_the_smoke_check_is_taken_once(self):
+        run_ui_smoke(self.dir, FakeWindow(True))
+        self.assertRaises(RuntimeError, run_ui_smoke, self.dir, FakeWindow(True))
+
+
 # --- s3_tool build ------------------------------------------------------------------------------------------------
 
 if PY3:
@@ -437,6 +540,13 @@ class Synthetic(object):
         c = {"paths": {"Q": self.q}, "character_dir": CHAR}
         if self.continuation:
             c["continuation"] = {"process_a_qualification_cpm_sha256": "a" * 64}
+            if "no-ui-smoke" not in f:
+                self.dump(os.path.join("observations", "UI-SMOKE.json"), {
+                    "format": "F01-S3-ui-smoke-v1", "pid": dest.pid, "cpm_build_sha256": QUAL,
+                    "selected": {"name": "S3 Pose A", "preset_id": "x", "version": 2, "regions": ["full_body"]},
+                    "apply_button_enabled": "ui-disabled" not in f,
+                    "state": {"apply_pose": "ui-disabled" not in f, "apply_mode": "direct", "summary": []},
+                    "recovery_paused": False})
             if "no-precheck" not in f:
                 self.dump(os.path.join("evidence", "A1_PRECHECK.json"), {
                     "compatible": "precheck-incompatible" not in f, "qualification_cpm_sha256": QUAL,
@@ -489,6 +599,12 @@ if PY3:
             out = self.verdict(continuation=True)
             self.assertEqual((out["verdict"], out["failed"]), ("PASS", []))
             self.assertIn("precheck.revised_A1_compatible_before_apply", [x["id"] for x in out["checks"]])
+
+        def test_a_continuation_needs_the_full_body_apply_ui_smoke_check(self):
+            for fault in ("no-ui-smoke", "ui-disabled"):
+                shutil.rmtree(os.path.join(self.dir, "Q"), True)
+                out = self.verdict(fault, continuation=True)
+                self.assertIn("ui.full_body_apply_enabled_before_apply", out["failed"], fault)
 
         def test_a_continuation_without_a_compatible_precheck_fails(self):
             for fault in ("no-precheck", "precheck-incompatible"):
