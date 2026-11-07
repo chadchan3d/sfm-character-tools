@@ -41297,7 +41297,8 @@ def prod_pose_ui_state(st):
         out[u"tooltips"][u"update_pose"] = PROD_POSE_MESSAGES[u"foreign-locked"]
         out[u"tooltips"][u"rename"] = PROD_POSE_MESSAGES[u"foreign-locked"]
         out[u"tooltips"][u"delete_pose"] = PROD_POSE_MESSAGES[u"foreign-locked"]
-    saved = [r for r in PROD_POSE_REGIONS if r in sel.get(u"saved", [])]
+    # The parts a pose can hold: the arm regions (version 1) and the complete pose (version 2, stage E).
+    saved = [r for r in PROD_POSE_REGIONS + (u"full_body",) if r in sel.get(u"saved", [])]
     availability = sel.get(u"availability") or {}
     known = all(availability.get(r) is not None for r in saved)
     available = [r for r in saved if availability.get(r) == u"available"]

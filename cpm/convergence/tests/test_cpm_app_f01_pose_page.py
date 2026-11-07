@@ -875,6 +875,128 @@ def section_selection_refresh(window, tabs, env, boxes):
         tabs.currentChanged.disconnect(counter)
 
 
+def section_full_body_apply(window, tabs, env, boxes, QtGui):
+    """S3 run 2 defect (2026-11-07): the Poses page never enabled Apply Pose for a full-body (version 2) pose, because
+    prod_pose_ui_state considered only the arm regions. The real window, its button state and its click handler:
+    a valid selected full-body pose enables Apply and the click reaches the version 2 dispatcher; version 1 is
+    unchanged; unavailable, invalid and paused cases stay disabled; changing the selection updates the button."""
+    g = window.render.im_func.func_globals
+    names = ("prod_pose_load_registry", "prod_pose_selected_library", "prod_pose_discover", "prod_pose_rig_class",
+             "prod_pose_registry_select", "prod_resolve_instance", "prod_identity_from_row", "prod_context_token",
+             "prod_body_apply", "prod_pose_apply", "prod_pose_reread", "prod_pose_authorize",
+             "prod_context_token_matches")
+    saved = dict((k, g[k]) for k in names)
+    source = {u"model_ref": u"models/test/krystal2020.mdl", u"shot_name": u"shot15", u"rig_class": u"krystal-biped"}
+
+    def item(name, pid, pose):
+        return {u"name": name, u"preset_id": pid, u"revision": 1,
+                u"record": {u"name": name, u"preset_id": pid, u"kind": u"pose",
+                            u"created_at": u"20261107-120000-000000", u"pose": pose}}
+    body = item(u"Full Body", u"b1", {u"version": 2, u"regions": {u"full_body": {}}, u"source": dict(source)})
+    arm = item(u"Arms Up", u"a1", {u"version": 1, u"regions": {u"left_arm": {}}, u"source": dict(source)})
+    both = {u"region": u"full_body", u"from": u"krystal-biped", u"to": u"krystal-biped"}
+    arm_map = {u"region": u"left_arm", u"from": u"krystal-biped", u"to": u"krystal-biped"}
+    state = {"found": {u"items": [body, arm], u"unusable": []}, "mappings": [both, arm_map], "registry": True}
+    calls = []
+
+    def load_registry():
+        if not state["registry"]:
+            raise g["ProdPoseIntegrationError"](u"registry", u"The pose profiles are unavailable. Reinstall CPM.")
+        return dict(BODY_REGISTRY)
+    g["prod_pose_load_registry"] = load_registry
+    g["prod_pose_selected_library"] = lambda ident: {u"char_dir": u"unused", u"character_key": u"k"}
+    g["prod_pose_discover"] = lambda char_dir, key, reg: state["found"]
+    g["prod_pose_rig_class"] = lambda reg, model, checksum: u"krystal-biped"
+    g["prod_pose_registry_select"] = lambda reg, mode: {u"mappings": list(state["mappings"])}
+    ident = {"model": u"models/test/krystal2020.mdl", "checksum": 1234, "animset_name": u"Krystal"}
+    # The M-06 boundary (natively qualified), stubbed as in section_polish.
+    g["prod_resolve_instance"] = lambda tok, identity=None: dict(ident, test_row=True)
+    g["prod_identity_from_row"] = lambda row: dict(ident)
+    g["prod_context_token"] = lambda *a, **k: {"test_context": True}
+    g["prod_context_token_matches"] = lambda token: token == {"test_context": True}
+    g["prod_pose_reread"] = lambda selected, it, reg: it
+    g["prod_pose_authorize"] = lambda *a, **k: {u"mode": u"qualification"}
+    g["prod_body_apply"] = lambda i, a, it, reg, phase_callback=None: calls.append(
+        (u"version 2", it[u"preset_id"])) or {u"phase": u"no-op"}
+    g["prod_pose_apply"] = lambda i, a, it, reg, phase_callback=None: calls.append(
+        (u"version 1", it[u"preset_id"])) or {u"phase": u"no-op"}
+
+    def select(name):
+        rows = dict((window.pose_list.item(i).text(), i) for i in range(window.pose_list.count()))
+        window.pose_list.setCurrentRow(rows[name] if name in rows else -1)
+        return window.apply_pose_button.isEnabled()
+
+    def listed():
+        return [window.pose_list.item(i).text() for i in range(window.pose_list.count())
+                if window.pose_list.item(i).flags() & g["QtCore"].Qt.ItemIsSelectable]
+
+    def reload():
+        window.pose_list.setCurrentRow(-1)
+        window.refresh_pose_view()
+    try:
+        window.identity = dict(ident)
+        window.selection_token = {"kind": g["PROD_INSTANCE_TOKEN_KIND"], "test": True}
+        reload()
+        check("F1 a valid selected full-body pose enables Apply Pose", select(u"Full Body") is True)
+        check("F1 its summary names the complete pose as available",
+              window.pose_ui_state(window.selected_pose())[u"summary"][0].endswith(u"Available: Full body"),
+              window.pose_ui_state(window.selected_pose())[u"summary"])
+        window.apply_pose_button.click()
+        check("F2 clicking Apply Pose reaches the version 2 dispatcher", calls == [(u"version 2", u"b1")] and
+              window.status.text() == g["PROD_POSE_MESSAGES"][u"no-op"], (calls, window.status.text()))
+        del calls[:]
+        check("F3 a version 1 left-arm pose keeps Apply Pose", select(u"Arms Up") is True)
+        window.apply_pose_button.click()
+        check("F3 clicking Apply Pose on version 1 reaches the left-arm dispatcher", calls == [(u"version 1", u"a1")],
+              calls)
+        check("F6 selecting the full-body pose again re-enables Apply Pose", select(u"Full Body") is True)
+        check("F6 clearing the selection disables Apply Pose", select(None) is False)
+        # Genuine restrictions: no usable full-body mapping (the production build), no registry, invalid records.
+        state["mappings"] = [arm_map]
+        reload()
+        check("F4 without a usable full-body mapping the full-body pose stays disabled; the arm pose does not",
+              select(u"Full Body") is False and select(u"Arms Up") is True)
+        state["mappings"] = [both, arm_map]
+        state["registry"] = False
+        reload()
+        check("F4 missing pose registry: nothing is listed and Apply Pose stays disabled",
+              listed() == [] and select(u"Full Body") is False, listed())
+        state["registry"] = True
+        state["found"] = {u"items": [], u"unusable": [{u"path": u"bad.json", u"reason": u"invalid"}]}
+        reload()
+        check("F4 an invalid record is not selectable and Apply Pose stays disabled",
+              listed() == [] and select(u"Full Body") is False, listed())
+        st = g["prod_pose_ui_state"]({u"character": u"Krystal", u"supported": True, u"instance_valid": True,
+                                      u"visible_count": 1, u"selected": {u"saved": [u"full_body"], u"unusable": True,
+                                                                         u"availability": {u"full_body": u"available"},
+                                                                         u"own": True}})
+        check("F4 an unusable full-body record never enables Apply Pose", st[u"buttons"][u"apply_pose"] is False)
+        window.selection_token = None
+        state["found"] = {u"items": [body, arm], u"unusable": []}
+        reload()
+        check("F4 no scene instance: the full-body pose stays disabled", select(u"Full Body") is False)
+        window.selection_token = {"kind": g["PROD_INSTANCE_TOKEN_KIND"], "test": True}
+        # The recovery pause, per window and process-wide.
+        reload()
+        window.pose_recovery_blocked = True
+        check("F5 recovery pause (window) disables the full-body pose", select(u"Full Body") is False)
+        window.pose_recovery_blocked = False
+        g["PROD_POSE_RECOVERY_BLOCK"][0] = u"Apply Pose"
+        check("F5 recovery pause (process-wide) disables the full-body pose",
+              select(None) is False and select(u"Full Body") is False)
+        g["PROD_POSE_RECOVERY_BLOCK"][0] = None
+        check("F5 after the pause, Apply Pose follows the selection again", select(None) is False and
+              select(u"Full Body") is True)
+    finally:
+        g["PROD_POSE_RECOVERY_BLOCK"][0] = None
+        window.pose_recovery_blocked = False
+        window.pose_list.setCurrentRow(-1)
+        window.identity = None
+        window.selection_token = None
+        g.update(saved)
+        window.refresh_pose_view()
+
+
 def main():
     env = r15.Env("real", os.path.join(tempfile.gettempdir(), "cpm_pose_page_fixture"))
     QtGui = env.QtGui
@@ -939,6 +1061,7 @@ def main():
     section_rename_ui(window, tabs, env, boxes, QtGui)
     section_polish(window, tabs, env, boxes, QtGui)
     section_selection_refresh(window, tabs, env, boxes)
+    section_full_body_apply(window, tabs, env, boxes, QtGui)
     try:
         window.close()
     except Exception:
