@@ -399,12 +399,14 @@ class DataModel(object):
         self.current = None
 
     def Undo(self):
+        self.calls.append(("Undo",))
         entry = self.stack.pop()
         revert(entry["items"])
         self.redo_stack.append(entry)
         self.world.evaluate()
 
     def Redo(self):
+        self.calls.append(("Redo",))
         entry = self.redo_stack.pop()
         for item in entry["items"]:
             if item[0] == "insert":

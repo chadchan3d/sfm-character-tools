@@ -1153,12 +1153,11 @@ def section_corrections(app, ns, reg, fx, item, lib):
     world = posed_destination(ns, fx, lambda w: setattr(w, "finish_raises", "after"))
     auth = authorize(ns, reg, u"Apply Pose", item)
     got = outcome(lambda: ns["prod_body_apply"](IDENTITY, auth, item, reg))
-    pending = got[1].get(u"pending") if got[0] == "ok" else None
-    verdict = ns["prod_pose_deferred_verify"](dict(pending, authorization=auth)) if pending else None
-    check("X.8b_finish_undo_failure_after_commit_is_committed_unverified",
-          got[0] == "ok" and got[1][u"phase"] == u"verification-pending" and pending[u"finish_exception"] is True
-          and verdict.get(u"phase") == u"committed-unverified" and
-          not [x for x in world.dm.calls if x[0] == "AbortUndoableOperation"], (got[0], verdict))
+    # Astra S1 final: a FinishUndo exception never hands over to P7 (was: verification-pending, then P7
+    # committed-unverified). Section Y covers the reproduced counterexample.
+    check("X.8b_finish_undo_failure_after_commit_is_recovery_unverified",
+          got[0] == "ProdRecoveryUnverifiedError" and
+          not [x for x in world.dm.calls if x[0] == "AbortUndoableOperation"], got)
     # X.9 the qualification-build injected fault, through ProdWindow.pose_guard
     win = window(app, ns, reg, lib)
     mode = ns["PROD_POSE_REGISTRY_MODE"]
@@ -1229,6 +1228,138 @@ def section_corrections(app, ns, reg, fx, item, lib):
     check("X.12_constraint_order_permutation_preserves_classification_and_descriptor", ok)
 
 
+# ---------------------------------------------------------------------------
+# Astra S1 final: Undo exception uncertainty (Y.1 ... Y.7), full-body Apply
+# ---------------------------------------------------------------------------
+
+def recovery_calls(world):
+    return [c[0] for c in world.dm.calls if c[0] in ("AbortUndoableOperation", "Undo", "Redo")]
+
+
+def section_final_undo(app, ns, reg, fx, item, lib):
+    label = u"Apply Pose %s" % item[u"record"][u"name"]
+    mode = ns["PROD_POSE_REGISTRY_MODE"]
+    ns["PROD_POSE_REGISTRY_MODE"] = u"qualification"           # full body is applied only by the qualification CPM
+
+    def direct(world):
+        phases = []
+        auth = authorize(ns, reg, u"Apply Pose", item)
+        got = outcome(lambda: ns["prod_body_apply"](IDENTITY, auth, item, reg,
+                                                    phase_callback=lambda p, d=None: phases.append(p)))
+        return got, phases
+
+    def through_guard(prepare=None):
+        win = window(app, ns, reg, lib)
+        world = posed_destination(ns, fx, prepare)
+        win.apply_pose(item)
+        return win, world
+
+    def locked(win, world):
+        return win.pose_recovery_blocked is True and not win.pending and bool(win.statuses) and \
+            win.statuses[-1][0] == "error" and \
+            win.statuses[-1][3] == ns["PROD_POSE_MESSAGES"][u"recovery-unverified"] % {u"name": item[u"record"][
+                u"name"]} and not recovery_calls(world)
+
+    def blocks_next(win):
+        world = posed_destination(ns, fx)
+        win.apply_pose(item)
+        return bool(win.statuses) and win.statuses[-1][2] == u"recovery-blocked" and no_mutation(world) and \
+            not win.pending
+
+    try:
+        # Y.1 StartUndo fails before native invocation (its arguments cannot be prepared): a plain refusal.
+        real_name = ns["prod_pose_native_name"]
+
+        def failing_name(text):
+            if u"Apply Pose" in text:                  # only the Undo labels; attribute names still resolve
+                raise RuntimeError("label preparation failed (test)")
+            return real_name(text)
+        ns["prod_pose_native_name"] = failing_name
+        try:
+            world = posed_destination(ns, fx)
+            del ns["LOG"][:]
+            got, phases = direct(world)
+            reached = [x for x in ns["LOG"] if x.startswith(u"PROD_POSE_BODY-P1 ")]
+            win, gworld = through_guard()
+        finally:
+            ns["prod_pose_native_name"] = real_name
+        check("Y.1_failure_before_native_start_undo_is_a_plain_refusal",
+              got[0] not in ("ok", "ProdRecoveryUnverifiedError") and no_mutation(world) and not phases and
+              len(reached) == 1 and u"label preparation failed" in got[-1], got)
+        check("Y.1_guard_reports_it_without_lockout_or_mutation",
+              win.pose_recovery_blocked is False and win.statuses[-1][0] == "error" and no_mutation(gworld),
+              win.statuses[-1:])
+        # Y.2 the native StartUndo call raises, before and after simulated opening: uncertain, lockout.
+        for when in ("before", "after"):
+            world = posed_destination(ns, fx, lambda w, when=when: setattr(w, "start_raises", when))
+            got, phases = direct(world)
+            check("Y.2_start_undo_raises_%s_opening_is_recovery_unverified" % when,
+                  got[0] == "ProdRecoveryUnverifiedError" and not scene_writes(world) and not phases and
+                  [c[0] for c in world.dm.calls] == ["StartUndo"] and
+                  (world.dm.current is not None) == (when == "after"), (got, world.dm.calls))
+            win, gworld = through_guard(lambda w, when=when: setattr(w, "start_raises", when))
+            check("Y.2_start_undo_raises_%s_opening_locks_out_through_pose_guard" % when, locked(win, gworld),
+                  win.statuses[-1:])
+        check("Y.5_start_undo_lockout_refuses_the_next_apply", blocks_next(win), win.statuses[-1:])
+
+        # Y.3 Astra's counterexample: an older Undo entry has the identical description; FinishUndo raises before
+        # closing the current transaction. The matching description is never evidence of commitment.
+        def older_and_open(w):
+            w.dm.push_foreign(label)
+            w.finish_raises = "before"
+        world = posed_destination(ns, fx, older_and_open)
+        del ns["LOG"][:]
+        got, phases = direct(world)
+        evidence = [x for x in ns["LOG"] if u"BODY-finish-undo-uncertain" in x]
+        check("Y.3_finish_undo_raises_before_closure_with_an_identical_older_entry_is_recovery_unverified",
+              got[0] == "ProdRecoveryUnverifiedError" and u"native-commit" not in phases and
+              world.dm.current is not None and len(world.dm.stack) == 1 and world.dm.GetUndoDesc() == label,
+              (got, phases))
+        check("Y.3_no_abort_or_undo_of_the_uncertain_operation", not recovery_calls(world) and
+              [c[0] for c in world.dm.calls] == ["StartUndo", "FinishUndo"], world.dm.calls)
+        check("Y.3_diagnostic_evidence_keeps_the_exception_and_observed_undo_state",
+              len(evidence) == 1 and u"FinishUndo failed before commit" in evidence[0] and
+              u"undo_desc" in evidence[0] and u"pre_undo" in evidence[0], evidence)
+        win, gworld = through_guard(older_and_open)
+        check("Y.3_locks_out_through_pose_guard_no_p7_scheduled", locked(win, gworld), win.statuses[-1:])
+        check("Y.5_finish_undo_lockout_refuses_the_next_apply", blocks_next(win), win.statuses[-1:])
+        # Y.4 FinishUndo raises after simulated commitment: still uncertain (no optimistic classification).
+        world = posed_destination(ns, fx, lambda w: setattr(w, "finish_raises", "after"))
+        got, phases = direct(world)
+        check("Y.4_finish_undo_raises_after_commit_is_recovery_unverified",
+              got[0] == "ProdRecoveryUnverifiedError" and u"native-commit" not in phases and
+              len(world.dm.stack) == 1 and world.dm.GetUndoDesc() == label and not recovery_calls(world),
+              (got, phases))
+        win, gworld = through_guard(lambda w: setattr(w, "finish_raises", "after"))
+        check("Y.4_locks_out_through_pose_guard_no_p7_scheduled", locked(win, gworld), win.statuses[-1:])
+        check("Y.5_after_commit_lockout_refuses_the_next_apply", blocks_next(win), win.statuses[-1:])
+        # Y.6 every uncertain branch above performed no automatic Abort or Undo (checked per case by locked() and
+        # recovery_calls()); the shipped fault-free path below is unchanged.
+        # Y.7 normal Apply, FinishUndo, P7 and repeat no-op through the guard; the owned Abort.
+        win, world = through_guard()
+        check("Y.7_normal_apply_commits_and_schedules_p7", len(win.pending) == 1 and
+              [c[0] for c in world.dm.calls] == ["StartUndo", "FinishUndo"] and world.dm.GetUndoDesc() == label and
+              win.pose_recovery_blocked is False, win.statuses[-1:])
+        verdict = ns["prod_pose_deferred_verify"](win.pending[0]) if win.pending else None
+        check("Y.7_p7_verifies", verdict == {u"phase": u"committed-verified"}, verdict)
+        calls = len(world.dm.calls)
+        win.apply_pose(item)
+        check("Y.7_repeat_is_a_true_noop", win.statuses[-1][1] == ns["PROD_POSE_MESSAGES"][u"no-op"] and
+              len(world.dm.calls) == calls and len(win.pending) == 1, win.statuses[-1:])
+        win = window(app, ns, reg, lib)
+        world = posed_destination(ns, fx)
+        before = all_keys(world)
+        ns["PROD_POSE_QUAL_FAULT"][0] = u"after-writes"
+        win.apply_pose(item)
+        check("Y.7_owned_abort_restores_and_does_not_lock", win.statuses[-1][1] == ns["PROD_POSE_MESSAGES"][
+            u"not-applied"] and all_keys(world) == before and not world.dm.stack and world.dm.current is None and
+            win.pose_recovery_blocked is False and recovery_calls(world) == ["AbortUndoableOperation"],
+            win.statuses[-1:])
+    finally:
+        ns["PROD_POSE_REGISTRY_MODE"] = mode
+        ns["PROD_POSE_QUAL_FAULT"][0] = None
+
+
 def main():
     if "--phase=run" not in sys.argv[1:]:
         print("usage: %s --phase=run" % os.path.basename(sys.argv[0]))
@@ -1253,6 +1384,7 @@ def main():
                             u"char_dir": os.path.join(root, u"live", u"Characters", u"krystal2020"),
                             u"model_ref": MODEL, u"checksum": 1234}
                 run("corrections", lambda: section_corrections(app, ns, lived[0], fx, lived[1], live_lib))
+                run("final_undo", lambda: section_final_undo(app, ns, lived[0], fx, lived[1], live_lib))
             run("window", lambda: section_window(app, ns, reg, fx, os.path.join(root, u"window")))
     finally:
         shutil.rmtree(root, True)

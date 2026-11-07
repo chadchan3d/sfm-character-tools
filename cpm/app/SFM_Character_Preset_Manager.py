@@ -43371,11 +43371,17 @@ def prod_pose_apply(identity, authorization, item, reg, phase_callback=None):
             raise ProdPoseError(u"stale", PROD_POSE_MESSAGES[u"stale"])
     dm_obj = dm()
     label = u"Apply Pose %s" % name
-    opened = finished = False
+    finished = False
     written = []
+    # Astra S1 final: the fallible arguments are prepared before StartUndo, so a failure here opens nothing and is a
+    # plain refusal. A failure of the native StartUndo call itself leaves ownership unknown: fail closed.
+    native_labels = (prod_pose_native_name(label), prod_pose_native_name(u"Redo " + label))
     try:
-        dm_obj.StartUndo(prod_pose_native_name(label), prod_pose_native_name(u"Redo " + label))
-        opened = True
+        dm_obj.StartUndo(native_labels[0], native_labels[1])
+    except Exception as exc:
+        prod_pose_log(u"start-undo-uncertain", {u"error": repr(exc), u"undo": prod_pose_undo_state(dm_obj)})
+        raise ProdRecoveryUnverifiedError(PROD_POSE_MESSAGES[u"recovery-unverified"] % {u"name": name})
+    try:
         if phase_callback is not None:
             phase_callback(u"P3-owned", {u"label": label})
         for r in sorted(pre[u"regions"]):
@@ -43414,14 +43420,7 @@ def prod_pose_apply(identity, authorization, item, reg, phase_callback=None):
         finished = True                    # from here on, Abort is never attempted (section 8.2)
         dm_obj.FinishUndo()
     except Exception as exc:
-        prod_pose_log(u"P3-P6-failure", {u"error": repr(exc), u"opened": opened, u"finished": finished,
-                                         u"written": written})
-        if not opened:
-            # StartUndo did not return: nothing was written by this operation.
-            problems = prod_pose_same_state(identity, authorization, pre, u"no-transaction")
-            if problems:
-                raise ProdRecoveryUnverifiedError(PROD_POSE_MESSAGES[u"recovery-unverified"] % {u"name": name})
-            return {u"phase": u"not-applied", u"reason": repr(exc)}
+        prod_pose_log(u"P3-P6-failure", {u"error": repr(exc), u"finished": finished, u"written": written})
         if not finished:
             try:
                 dm_obj.AbortUndoableOperation()
@@ -43433,13 +43432,11 @@ def prod_pose_apply(identity, authorization, item, reg, phase_callback=None):
             if problems:
                 raise ProdRecoveryUnverifiedError(PROD_POSE_MESSAGES[u"recovery-unverified"] % {u"name": name})
             return {u"phase": u"not-applied", u"reason": repr(exc)}
-        # FinishUndo raised: the Undo state decides (section 8.2).
-        undo = prod_pose_undo_state(dm_obj)
-        if not prod_pose_undo_problems(undo) and undo[u"can_undo"] is True and undo[u"undo_desc"] == label:
-            if phase_callback is not None:
-                phase_callback(u"native-commit", {u"label": label, u"finish_exception": True})
-            return {u"phase": u"verification-pending",
-                    u"pending": prod_pose_pending(pre, label, finish_exception=True)}
+        # Astra S1 final: FinishUndo raised. Whether the transaction closed is unknown, and a matching Undo
+        # description (possibly an older entry with the same name) is no evidence of commitment: never committed,
+        # no P7, no Abort or Undo. The exception and the observed Undo state are kept as evidence.
+        prod_pose_log(u"finish-undo-uncertain", {u"error": repr(exc), u"undo": prod_pose_undo_state(dm_obj),
+                                                 u"pre_undo": pre[u"undo"], u"label": label})
         raise ProdRecoveryUnverifiedError(PROD_POSE_MESSAGES[u"recovery-unverified"] % {u"name": name})
     if phase_callback is not None:
         phase_callback(u"native-commit", {u"label": label})
@@ -44891,12 +44888,12 @@ def prod_body_apply(identity, authorization, item, reg, phase_callback=None):
             if problems:
                 raise ProdRecoveryUnverifiedError(PROD_POSE_MESSAGES[u"recovery-unverified"] % {u"name": name})
             return {u"phase": u"not-applied", u"reason": repr(exc)}
-        undo = prod_pose_undo_state(dm_obj)
-        if not prod_pose_undo_problems(undo) and undo[u"can_undo"] is True and undo[u"undo_desc"] == label:
-            if phase_callback is not None:
-                phase_callback(u"native-commit", {u"label": label, u"finish_exception": True})
-            return {u"phase": u"verification-pending",
-                    u"pending": prod_body_pending(pre, label, finish_exception=True)}
+        # Astra S1 final: FinishUndo raised. Whether the transaction closed is unknown, and a matching Undo
+        # description (possibly an older entry with the same name) is no evidence of commitment: never committed,
+        # no P7, no Abort or Undo. The exception and the observed Undo state are kept as evidence.
+        prod_pose_log(u"BODY-finish-undo-uncertain", {u"error": repr(exc), u"undo": prod_pose_undo_state(dm_obj),
+                                                      u"pre_undo": pre[u"undo"], u"label": label,
+                                                      u"written": len(written)})
         raise ProdRecoveryUnverifiedError(PROD_POSE_MESSAGES[u"recovery-unverified"] % {u"name": name})
     if phase_callback is not None:
         phase_callback(u"native-commit", {u"label": label})
