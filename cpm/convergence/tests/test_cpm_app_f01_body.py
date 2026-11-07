@@ -416,14 +416,18 @@ def section_planner(ns, reg, fx, pose):
     live = ns["prod_body_descriptor"](D13, C13, profile)
     check("P.shot13_is_compatible_with_the_shot15_pose",
           outcome(lambda: ns["prod_body_compare_descriptor"](region[u"descriptor"], live))[0] == "ok")
-    check("P.A1_shot13_fk_positions_match_exactly",
-          outcome(lambda: ns["prod_body_check_fk_positions"](region, D13, C13))[0] == "ok")
+    got13 = outcome(lambda: ns["prod_body_check_fk_positions"](region, D13, C13, profile))
+    check("P.A1_shot13_fk_positions_match_and_are_pinned_to_the_destination",
+          got13[0] == "ok" and len(got13[1]) == 124 and all(
+              v == D13[u"channels"][n][u"value"] for n, v in got13[1].items()), got13[0])
     D10 = fx[u"shot10"]
     C10 = ns["prod_body_classify"](D10, profile)
     refused("P.shot10_refuses_on_scale_state", outcome(lambda: ns["prod_body_compare_descriptor"](
         region[u"descriptor"], ns["prod_body_descriptor"](D10, C10, profile))), u"proportions")
-    refused("P.A1_shot10_float32_noise_in_fk_positions_refuses",
-            outcome(lambda: ns["prod_body_check_fk_positions"](region, D10, C10)), u"fk-position")
+    got10 = outcome(lambda: ns["prod_body_check_fk_positions"](region, D10, C10, profile))
+    check("P.A1_revised_shot10_float32_noise_is_within_the_limit_and_keeps_shot10_values",
+          got10[0] == "ok" and all(v == D10[u"channels"][n][u"value"] for n, v in got10[1].items()) and
+          any(v != region[u"positions"][n] for n, v in got10[1].items()), got10[0])
     check("P.A1_refusal_copy_is_the_owner_wording", ns["PROD_BODY_MESSAGES"][u"fk-position"] ==
           u"This pose uses different bone positions and can't be applied safely.")
 
@@ -435,8 +439,9 @@ def section_planner(ns, reg, fx, pose):
         d[u"channels"][name][u"value"] = v
         bone[u"local_position"] = list(v)
         return d
-    refused("P.A1_one_ulp_fk_translation_refuses_before_any_write",
-            outcome(lambda: ns["prod_body_check_fk_positions"](region, moved(u"bip_tail05_p"), C13)), u"fk-position")
+    got = outcome(lambda: ns["prod_body_check_fk_positions"](region, moved(u"bip_tail05_p"), C13, profile))
+    check("P.A1_revised_one_ulp_fk_translation_is_compatible_and_pinned",
+          got[0] == "ok" and got[1][u"bip_tail05_p"] != region[u"positions"][u"bip_tail05_p"], got[0])
     d = moved(u"bip_hip_l_p")
     refused("P.changed_ik_bone_offset_is_a_proportion_refusal", outcome(lambda: ns["prod_body_compare_descriptor"](
         region[u"descriptor"], ns["prod_body_descriptor"](d, C13, profile))), u"proportions")
@@ -718,9 +723,9 @@ def section_live_refusals(ns, reg, fx, item):
     def ulp(world):
         layer = world.channels[u"bip_tail05_p"].attrs["log"].layer
         v = FB.plain(layer.keys[0][1])
-        layer.keys[0][1] = FB.native([v[0], next_f32(v[1]), v[2]], "vec")
+        layer.keys[0][1] = FB.native([v[0], v[1] + 0.001, v[2]], "vec")      # beyond the revised limit
     world, _, got = apply_fresh(ns, reg, fx, item, ulp)
-    refused("L.A1_fk_position_one_ulp_refuses", got, u"fk-position")
+    refused("L.A1_fk_position_beyond_the_limit_refuses", got, u"fk-position")
     check("L.A1_refusal_changes_nothing_and_opens_no_undo", not scene_writes(world) and not world.dm.calls and
           got[2] == u"This pose uses different bone positions and can't be applied safely.", got)
     world, _, got = apply_fresh(ns, reg, fx, item, lambda w: setattr(w, "timeline_mode", 3))
@@ -943,7 +948,7 @@ def section_window(app, ns, reg, fx, root):
         bad = FB.World(fx[u"shot13"])
         layer = bad.channels[u"bip_tail05_p"].attrs["log"].layer
         v = FB.plain(layer.keys[0][1])
-        layer.keys[0][1] = FB.native([v[0], next_f32(v[1]), v[2]], "vec")
+        layer.keys[0][1] = FB.native([v[0], v[1] + 0.001, v[2]], "vec")      # beyond the revised limit
         bad.evaluate()
         use_world(ns, bad)
         win.apply_pose(item)
@@ -1095,7 +1100,7 @@ def section_corrections(app, ns, reg, fx, item, lib):
         ns["prod_body_preflight"] = original
     refused("X.4_one_ulp_fk_position_change_between_p1_and_p2_refuses", got, u"stale")
     check("X.4_no_mutation_and_a_logged_a1_recheck", no_mutation(world) and any(
-        u"evaluated state refused: fk-position" in l for l in ns["LOG"][-5:]))
+        u"evaluated state refused: evidence-unreadable" in l for l in ns["LOG"][-5:]))
     # X.5 effective-position or channel-evaluation inconsistency refuses at P1
     for name, attr in ((u"Hip", "position"), (u"Hip", "orientation"), (u"bip_tail06", "position")):
         def skew(w, name=name, attr=attr):
@@ -1384,6 +1389,198 @@ def section_final_undo(app, ns, reg, fx, item, lib):
         ns["PROD_POSE_RECOVERY_BLOCK"][0] = None       # the later sections model a fresh SFM process
 
 
+# ---------------------------------------------------------------------------
+# Revised A1 (Astra, after the native S3 evidence): Z.1 ... Z.11
+# ---------------------------------------------------------------------------
+
+# S3 run 1 (E:\SFM_U0B_Scratch\f01-full-body-s3\evidence\A1_PRECHECK.json): S3 Pose A's saved FK positions and the
+# posed destination's at B1, the four native discrepancies (SFM's rotate tool rewriting positions).
+NATIVE_SAVED = {u"Ear_r_p": [4.631233215332031, -0.22191429138183594, -3.2890470027923584],
+                u"bip_index_0_l_p": [0.2489776611328125, 3.5797061920166016, 1.0252677202224731],
+                u"bip_tail00_p": [2.185591459274292, -3.3301925659179688, -3.838539123535156e-05],
+                u"bip_tail02_p": [0.0, 3.0237770080566406, 0.0]}
+NATIVE_DEST = {u"Ear_r_p": [4.631217956542969, -0.221917986869812, -3.289045810699463],
+               u"bip_index_0_l_p": [0.2489776611328125, 3.5797061920166016, 1.0252676010131836],
+               u"bip_tail00_p": [2.185591459274292, -3.3301925659179688, -3.828108310699463e-05],
+               u"bip_tail02_p": [8.285045623779297e-06, 3.0237720012664795, -2.390146255493164e-05]}
+
+
+def with_positions(D, values):
+    d = copy.deepcopy(D)
+    for name, v in values.items():
+        d[u"channels"][name][u"value"] = list(v)
+        d[u"channels"][name][u"keys"] = [[k[0], list(v)] for k in d[u"channels"][name][u"keys"]]
+        d[u"bones"][name[:-2]][u"local_position"] = list(v)
+    return d
+
+
+def set_world_positions(world, values):
+    for name, v in values.items():
+        layer = world.channels[name].attrs["log"].layer
+        for k in layer.keys:
+            k[1] = FB.native(list(v), "vec")
+    world.evaluate()
+
+
+def section_revised_a1(ns, reg, fx, root):
+    profile = profile_of(ns, reg)
+    D13, C13 = fx[u"shot13"], ns["prod_body_classify"](fx[u"shot13"], profile)
+    check_ = lambda region, D, prof=profile: outcome(lambda: ns["prod_body_check_fk_positions"](  # noqa: E731
+        region, D, C13, prof))
+    limit = f32(0.00005)
+    check("Z.0_limit_is_krystal_only", ns["prod_body_fk_limit"](profile) == limit and
+          ns["prod_body_fk_limit"](dict(profile, _id=u"body_other_v1")) == 0.0)
+
+    # A record saved natively from a source carrying the S3 drift, through the real capture path.
+    lib = {u"character_key": u"krystal2020", u"char_dir": os.path.join(root, u"Characters", u"krystal2020"),
+           u"library_root": root, u"model_ref": MODEL}
+    os.makedirs(root)
+    src = FB.World(fx[u"shot15"])
+    set_world_positions(src, NATIVE_SAVED)
+    use_world(ns, src)
+    auth = authorize(ns, reg, u"Save Pose")
+    pose = ns["prod_body_capture"](IDENTITY, auth, reg)
+    region = pose[u"regions"][u"full_body"]
+    check("Z.0_the_record_holds_the_native_saved_positions",
+          all(region[u"positions"][n] == v for n, v in NATIVE_SAVED.items()))
+    saved = ns["prod_pose_save_new"](lib, u"S3 Native A", pose, u"20261107-120000-000000", reg)
+    fresh, _ = registries(ns)
+    item = [i for i in ns["prod_pose_discover"](lib[u"char_dir"], u"krystal2020", fresh)[u"items"]
+            if i[u"preset_id"] == saved[u"preset_id"]][0]
+
+    # Z.1 the four native discrepancies are compatible, and the destination keeps its own values
+    Dn = with_positions(D13, NATIVE_DEST)
+    got = check_(region, Dn)
+    check("Z.1_all_four_native_discrepancies_accepted", got[0] == "ok" and all(
+        got[1][n] == NATIVE_DEST[n] for n in NATIVE_DEST), got)
+    check("Z.1_largest_native_distance_is_within_the_limit", max(
+        ns["prod_body_fk_distance"](NATIVE_SAVED[n], NATIVE_DEST[n]) for n in NATIVE_DEST) < 0.00005)
+    plans = ns["prod_body_plan"](region, Dn, C13, snapshots(Dn, C13[u"written"]), Dn[u"t_chan"], got[1])
+    byname = dict((p[u"name"], p) for p in plans)
+    check("Z.1_planned_fk_positions_are_the_destination_values_never_the_saved_ones",
+          all(byname[n][u"value"] == NATIVE_DEST[n] and byname[n][u"action"] == u"insert" for n in NATIVE_DEST))
+    refused("Z.1_another_profile_stays_exact", check_(region, Dn, dict(profile, _id=u"body_other_v1")),
+            u"fk-position")
+    # Z.2 / Z.3 the boundary, as float32: exactly at the limit accepted, the next float32 above refused
+    at = copy.deepcopy(region)
+    base = D13[u"channels"][u"bip_tail02_p"][u"value"]
+    at[u"positions"][u"bip_tail02_p"] = [base[0] + limit, base[1], base[2]]
+    got = check_(at, D13)
+    check("Z.2_distance_exactly_at_the_limit_is_accepted", base[0] == 0.0 and got[0] == "ok" and
+          got[1][u"bip_tail02_p"] == base, got)
+    above = copy.deepcopy(region)
+    above[u"positions"][u"bip_tail02_p"] = [next_f32(limit), base[1], base[2]]
+    refused("Z.3_distance_immediately_above_the_limit_refuses", check_(above, D13), u"fk-position")
+    # Z.4 non-finite, non-float32 and incoherent evidence refuses
+    for label, value in ((u"nan", float("nan")), (u"inf", float("inf")), (u"not_float32", 0.1)):
+        r = copy.deepcopy(region)
+        r[u"positions"][u"bip_tail02_p"] = [value, base[1], base[2]]
+        refused("Z.4_saved_%s_refuses" % label, check_(r, D13), u"evidence-unreadable")
+    d = copy.deepcopy(D13)
+    d[u"bones"][u"bip_tail02"][u"local_position"] = [next_f32(base[0]), base[1], base[2]]
+    refused("Z.4_transform_not_equal_to_its_channel_refuses", check_(region, d), u"evidence-unreadable")
+    d = copy.deepcopy(D13)
+    d[u"channels"][u"bip_tail02_p"][u"value"] = [float("inf"), base[1], base[2]]
+    refused("Z.4_non_finite_destination_refuses", check_(region, d), u"evidence-unreadable")
+    # Z.6 an existing correct key stays unchanged; Z.7 a contradictory existing key refuses
+    pinned = check_(region, Dn)[1]
+    keyed = copy.deepcopy(Dn)
+    for n in NATIVE_DEST:
+        keyed[u"channels"][n][u"keys"].append([Dn[u"t_chan"], list(NATIVE_DEST[n])])
+        keyed[u"channels"][n][u"keys"].sort(key=lambda k: k[0])
+    plans = ns["prod_body_plan"](region, keyed, C13, snapshots(keyed, C13[u"written"]), keyed[u"t_chan"], pinned)
+    check("Z.6_existing_correct_key_is_left_unchanged",
+          all(p[u"action"] == u"none" for p in plans if p[u"name"] in NATIVE_DEST))
+    bad = copy.deepcopy(keyed)
+    k = [x for x in bad[u"channels"][u"bip_tail02_p"][u"keys"] if x[0] == Dn[u"t_chan"]][0]
+    k[1] = list(NATIVE_SAVED[u"bip_tail02_p"])          # the authored key says the saved value; evaluation says not
+    refused("Z.7_contradictory_existing_key_refuses", outcome(lambda: ns["prod_body_plan"](
+        region, bad, C13, snapshots(bad, C13[u"written"]), bad[u"t_chan"], pinned)), u"evidence-unreadable")
+
+    # Live: the native destination values on a distinctly posed shot13
+    native = lambda w: set_world_positions(w, NATIVE_DEST)  # noqa: E731
+    apply_ = lambda: outcome(lambda: ns["prod_body_apply"](  # noqa: E731
+        IDENTITY, authorize(ns, reg, u"Apply Pose", item), item, reg))
+    # Z.10 Abort restores the exact original state (missing keys, values, transforms, Undo)
+    world = posed_destination(ns, fx, native)
+    keys0, tr0 = all_keys(world), transform_state(world)
+    ns["PROD_POSE_QUAL_FAULT"][0] = u"after-writes"
+    try:
+        got = apply_()
+    finally:
+        ns["PROD_POSE_QUAL_FAULT"][0] = None
+    check("Z.10_abort_restores_the_exact_original_state", got[0] == "ok" and got[1][u"phase"] == u"not-applied" and
+          all_keys(world) == keys0 and transform_state(world) == tr0 and not world.dm.stack and
+          world.dm.current is None, got)
+    # Z.5 missing keys inserted with the destination's values; P7 verifies; nothing transferred
+    world = posed_destination(ns, fx, native)
+    keys0, tr0 = all_keys(world), transform_state(world)
+    del ns["LOG"][:]
+    auth = authorize(ns, reg, u"Apply Pose", item)
+    got = outcome(lambda: ns["prod_body_apply"](IDENTITY, auth, item, reg))
+    pending = dict(got[1][u"pending"], authorization=auth) if got[0] == "ok" else None
+    verdict = ns["prod_pose_deferred_verify"](pending) if pending else None
+    t = world.t_chan()
+    at_t = dict((n, [FB.plain(k[1]) for k in world.channels[n].attrs["log"].layer.keys if k[0] == t])
+                for n in NATIVE_DEST)
+    check("Z.5_missing_keys_are_inserted_with_the_destination_values",
+          all(at_t[n] == [NATIVE_DEST[n]] for n in NATIVE_DEST), at_t)
+    check("Z.5_destination_fk_positions_unchanged_and_p7_verified", verdict == {u"phase": u"committed-verified"} and
+          all(FB.plain(world.bone_dag[n[:-2]].attrs["transform"].attrs["position"]) == NATIVE_DEST[n]
+              for n in NATIVE_DEST), verdict)
+    a1 = [l for l in ns["LOG"] if u"BODY-A1" in l]
+    check("Z.5_preflight_logs_the_pinned_differences", len(a1) == 1 and all(n in a1[0] for n in
+                                                                           (u"Ear_r_p", u"bip_tail02_p")), a1)
+    # Z.8 a repeated Apply is a verified no-op
+    calls = len(world.dm.calls)
+    again = apply_()
+    check("Z.8_repeated_apply_is_a_true_noop", again == ("ok", {u"phase": u"no-op"}) and len(world.dm.calls) == calls,
+          again)
+    # Z.11 P7 refuses FK position drift (one float32 step, or the saved value transferred) and never verifies
+    for label, value in ((u"one_ulp", [next_f32(NATIVE_DEST[u"bip_tail02_p"][0])] + NATIVE_DEST[u"bip_tail02_p"][1:]),
+                         (u"saved_value_transferred", NATIVE_SAVED[u"bip_tail02_p"])):
+        layer = world.channels[u"bip_tail02_p"].attrs["log"].layer
+        keep = [list(k) for k in layer.keys]
+        for k in layer.keys:
+            if k[0] == t:
+                k[1] = FB.native(list(value), "vec")
+        world.evaluate()
+        del ns["LOG"][:]
+        verdict = ns["prod_pose_deferred_verify"](pending)
+        check("Z.11_p7_refuses_fk_position_drift_%s" % label, verdict.get(u"phase") == u"committed-unverified" and
+              any(u"pinned FK position bip_tail02_p drifted" in l for l in ns["LOG"]), verdict)
+        layer.keys[:] = keep
+        world.evaluate()
+    check("Z.11_restored_state_verifies_again", ns["prod_pose_deferred_verify"](pending) ==
+          {u"phase": u"committed-verified"})
+    # Z.10 Undo restores the exact original state; Redo the applied one
+    applied = all_keys(world)
+    world.dm.Undo()
+    world.evaluate()
+    check("Z.10_undo_restores_the_exact_original_state", all_keys(world) == keys0 and transform_state(world) == tr0)
+    world.dm.Redo()
+    world.evaluate()
+    check("Z.10_redo_restores_the_applied_state", all_keys(world) == applied)
+    # Z.9 one float32 step on a pinned FK position between P1 and P2 refuses (channel and transform, coherently)
+    world = posed_destination(ns, fx, native)
+    original = ns["prod_body_preflight"]
+
+    def preflight_then_step(*args):
+        pre = original(*args)
+        v = NATIVE_DEST[u"bip_tail02_p"]
+        set_world_positions(world, {u"bip_tail02_p": [next_f32(v[0])] + v[1:]})
+        return pre
+    ns["prod_body_preflight"] = preflight_then_step
+    del ns["LOG"][:]
+    try:
+        got = apply_()
+    finally:
+        ns["prod_body_preflight"] = original
+    refused("Z.9_one_ulp_change_between_p1_and_p2_refuses", got, u"stale")
+    check("Z.9_no_mutation_and_the_pin_change_is_logged", no_mutation(world) and any(
+        u"pinned FK positions changed" in l for l in ns["LOG"]), ns["LOG"][-3:])
+
+
 def main():
     if "--phase=run" not in sys.argv[1:]:
         print("usage: %s --phase=run" % os.path.basename(sys.argv[0]))
@@ -1410,6 +1607,7 @@ def main():
                 run("corrections", lambda: section_corrections(app, ns, lived[0], fx, lived[1], live_lib))
                 run("final_undo", lambda: section_final_undo(app, ns, lived[0], fx, lived[1], live_lib))
             run("window", lambda: section_window(app, ns, reg, fx, os.path.join(root, u"window")))
+            run("revised_a1", lambda: section_revised_a1(ns, reg, fx, os.path.join(root, u"revised_a1")))
     finally:
         shutil.rmtree(root, True)
     failed = [r for r in RESULTS if not r[1]]

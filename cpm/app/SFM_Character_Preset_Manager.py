@@ -43561,6 +43561,11 @@ PROD_BODY_TRANSFORM_TYPES = {u"position": (u"DmeVector3Log", u"DmeVector3LogLaye
 PROD_BODY_SOURCE_ATTRIBUTES = {u"position": u"valuePosition", u"orientation": u"valueOrientation"}
 PROD_BODY_CONTROL_CHANNELS = {u"position": u"positionChannel", u"orientation": u"orientationChannel"}
 PROD_BODY_FK_POSITION_COPY = u"This pose uses different bone positions and can't be applied safely."
+# Revised A1 (Astra, after the native S3 evidence: SFM's rotate tool rewrites FK positions with float32 noise, up to
+# 2.4e-5 units). Per body profile, the largest saved/destination FK-position Euclidean distance that is compatible.
+# The destination always keeps its own pinned FK positions: the saved values are never transferred, averaged or
+# normalized into it. A profile not named here stays exact.
+PROD_BODY_FK_POSITION_TOLERANCE = {u"body_krystal_v1": 0.00005}
 PROD_BODY_MESSAGES = {
     u"unavailable": u"Full-body poses aren't available for this character yet.",
     u"rig-differs": u"This character's rig differs from the one this pose was saved on. Nothing was changed.",
@@ -44164,31 +44169,76 @@ def prod_body_payload(D, C, profile):
                                 u"descriptor": prod_body_descriptor(D, C, profile)})
 
 
-def prod_body_check_fk_positions(region, D, C):
-    """A1: every included FK position must already match the destination's effective position exactly, as finite
-    native float32 values; any difference refuses the whole operation before a write (body proportions)."""
-    bad = []
-    for name in C[u"written"]:
+def prod_body_fk_limit(profile):
+    """The profile's FK-position limit as one float32 value (0.0: exact)."""
+    return prod_pose_f32(float(PROD_BODY_FK_POSITION_TOLERANCE.get(profile[u"_id"], 0.0)))
+
+
+def prod_body_fk_distance(a, b):
+    return math.sqrt(sum((float(a[i]) - float(b[i])) ** 2 for i in range(3)))
+
+
+def prod_body_check_fk_positions(region, D, C, profile):
+    """Revised A1. For every included FK position: the saved value and the destination's channel value at the mapped
+    tick are finite float32 3-vectors; the destination's evaluated transform equals its channel exactly; and their
+    Euclidean distance, evaluated from the exact components and compared as float32, is at most the profile's limit
+    (exactly 0 for a profile without one). Any failure refuses the whole operation before a write. Returns the pinned
+    destination values {channel: value}: the planned values of these channels (the destination keeps its own)."""
+    limit = prod_body_fk_limit(profile)
+    pinned, far, bad = {}, [], []
+    for name in sorted(C[u"written"]):
         owner, attr = C[u"owners"][name]
         if attr != u"position" or C[u"channels"][name] != u"fk-written":
             continue
         saved = region[u"positions"].get(name)
-        here = prod_body_owner_row(D, owner)[u"local_position"]
-        if saved is None or not prod_body_exact(saved, list(here)) or \
-                not prod_body_exact(saved, prod_body_channel_value(D, name)):
+        here = list(prod_body_owner_row(D, owner)[u"local_position"])
+        try:
+            value = prod_body_channel_value(D, name)
+        except ProdPoseError:
             bad.append(name)
+            continue
+        if saved is None or len(saved) != 3 or not prod_body_exact(list(saved), list(saved)) or \
+                not prod_body_exact(here, value):
+            bad.append(name)
+            continue
+        d = prod_body_fk_distance(saved, value)
+        if not (d == 0.0 or (limit > 0.0 and prod_pose_f32(d) <= limit)):
+            far.append((name, d))
+            continue
+        pinned[name] = value
     if bad:
-        raise prod_body_error(u"fk-position", u"FK positions differ from the pose: %s" % bad[:16])
+        raise prod_body_error(u"evidence-unreadable", u"FK position evidence is not finite or not coherent: %s" %
+                              bad[:16])
+    if far:
+        raise prod_body_error(u"fk-position", u"FK positions differ from the pose beyond %r: %s" % (
+            limit, [(n, d) for n, d in far[:16]]))
+    return pinned
 
 
-def prod_body_plan(region, D, C, snaps, t_chan):
-    """P1's one deduplicated write plan: one exact-time key plan per written channel, from the saved parent-local
-    value. Compatible FK position channels are planned too (A1): a missing key is inserted, a correct key is left
-    unchanged (action none). Refuses when the saved values and the destination's written set differ."""
+def prod_body_planned_values(region, pinned):
+    """P1's one authoritative planned-value map: saved values for every authorized pose channel, except the FK
+    position channels, which hold the pinned destination values."""
+    values = dict(region[u"positions"])
+    values.update(region[u"orientations"])
+    if set(pinned) - set(region[u"positions"]):
+        raise prod_body_error(u"rig-differs", u"a pinned FK position is not in the pose")
+    values.update(pinned)
+    return values
+
+
+def prod_body_plan(region, D, C, snaps, t_chan, pinned=None):
+    """P1's one deduplicated write plan: one exact-time key plan per written channel, from the planned-value map
+    (saved values; the pinned destination values for FK positions). A pinned FK position is never written with a
+    different value: a missing key is inserted with the destination's own value (which must equal the log's value
+    at t), a correct key is left unchanged (action none), and an existing key that contradicts the pinned evaluated
+    value refuses (it is never silently repaired). Refuses when the saved values and the written set differ."""
     names = C[u"written"]
-    saved = dict(region[u"positions"])
-    saved.update(region[u"orientations"])
-    if len(saved) != len(region[u"positions"]) + len(region[u"orientations"]) or sorted(saved) != sorted(names):
+    pinned = pinned or {}
+    if len(set(region[u"positions"]) | set(region[u"orientations"])) != \
+            len(region[u"positions"]) + len(region[u"orientations"]):
+        raise prod_body_error(u"rig-differs", u"the pose's channels are not the destination's written set")
+    saved = prod_body_planned_values(region, pinned)
+    if sorted(saved) != sorted(names):
         raise prod_body_error(u"rig-differs", u"the pose's channels are not the destination's written set")
     if sorted(snaps) != sorted(names):
         raise prod_body_error(u"evidence-unreadable", u"layer evidence is missing for %s" %
@@ -44197,7 +44247,14 @@ def prod_body_plan(region, D, C, snaps, t_chan):
     for name in sorted(names):
         attr = C[u"owners"][name][1]
         types = PROD_BODY_TRANSFORM_TYPES[attr]
-        plans.append(prod_pose_key_plan(snaps[name], t_chan, saved[name], types))
+        plan = prod_pose_key_plan(snaps[name], t_chan, saved[name], types)
+        if name in pinned:
+            evaluated = snaps[name].get(u"evaluated_at_t")
+            if plan[u"action"] == u"update" or not isinstance(evaluated, list) or \
+                    not prod_body_exact(prod_body_f32_list(evaluated), list(pinned[name])):
+                raise prod_body_error(u"evidence-unreadable", u"%s: the authored key at t contradicts the pinned FK "
+                                                             u"position" % name)
+        plans.append(plan)
     if len(set(p[u"name"] for p in plans)) != len(plans):
         raise prod_body_error(u"structure-unsupported", u"a channel is planned twice")
     return plans
@@ -44327,11 +44384,12 @@ def prod_body_verify_skeleton(D_now, D_base, expected, C, profile, values=None):
     return problems
 
 
-def prod_body_noop(plans, D, C, region, profile):
+def prod_body_noop(plans, D, C, region, profile, values=None):
     """True no-op: every planned channel already holds its exact key and the evaluated skeleton already verifies.
-    A visible match with any required key missing (an insert, including an FK position key) is not a no-op."""
-    values = dict(region[u"positions"])
-    values.update(region[u"orientations"])
+    A visible match with any required key missing (an insert, including an FK position key) is not a no-op. `values`
+    is P1's planned-value map (default: the saved values)."""
+    if values is None:
+        values = prod_body_planned_values(region, {})
     if not prod_pose_noop_test(plans, {u"rig_inputs_ok": True, u"skeletal_oracle_ok": True}):
         return False
     expected = prod_body_expected_skeleton(region, D, C, profile)
@@ -44742,20 +44800,22 @@ def prod_body_preflight(identity, authorization, item, reg):
     st = prod_body_state(row, profile)
     D, C, L = st[u"D"], st[u"C"], st[u"L"]
     prod_body_compare_descriptor(region[u"descriptor"], st[u"descriptor"])
-    prod_body_check_fk_positions(region, D, C)
+    pinned = prod_body_check_fk_positions(region, D, C, profile)
+    prod_pose_log(u"BODY-A1", {u"pinned": len(pinned), u"differing": sorted(
+        n for n, v in pinned.items() if list(v) != list(region[u"positions"][n])),
+        u"max_distance": max([prod_body_fk_distance(region[u"positions"][n], v) for n, v in pinned.items()] or [0.0])})
     inputs = prod_body_effective_inputs(D, C, profile)     # transforms evaluated at their channels' values
     t_chan = st[u"time"][u"t_chan"]
     gate = prod_pose_apply_gate(L, sorted(L[u"channels"]), t_chan)
     bindings = prod_body_bindings(L, C)
     snaps = dict((n, prod_body_wrap(lambda n=n: prod_pose_layer_snapshot(bindings[n], t_chan))) for n in bindings)
-    plans = prod_body_wrap(lambda: prod_body_plan(region, D, C, snaps, t_chan))
-    values = dict(region[u"positions"])
-    values.update(region[u"orientations"])
+    plans = prod_body_wrap(lambda: prod_body_plan(region, D, C, snaps, t_chan, pinned))
+    values = prod_body_planned_values(region, pinned)     # the one map for plans, no-op, P5 and P7
     expected = prod_body_expected_skeleton(region, D, C, profile)
-    noop = prod_body_noop(plans, D, C, region, profile)
+    noop = prod_body_noop(plans, D, C, region, profile, values)
     handles = dict((n, prod_pose_h(b[u"channel"])) for n, b in bindings.items())
     return {u"state": st, u"profile": profile, u"undo": undo, u"time": st[u"time"], u"gate": gate,
-            u"region": region, u"inputs": inputs,
+            u"region": region, u"inputs": inputs, u"pinned": pinned,
             u"bindings": bindings, u"snaps": snaps, u"plans": plans, u"values": values, u"expected": expected,
             u"noop": noop, u"expected_authored": prod_body_expected_authored(st[u"authored"], plans, handles),
             u"row": row}
@@ -44781,7 +44841,8 @@ def prod_body_same_state(identity, authorization, pre):
     if st[u"D"][u"authority"] != pre[u"state"][u"D"][u"authority"]:
         problems.append(u"authority changed")
     try:
-        prod_body_check_fk_positions(pre[u"region"], st[u"D"], st[u"C"])
+        if prod_body_check_fk_positions(pre[u"region"], st[u"D"], st[u"C"], pre[u"profile"]) != pre[u"pinned"]:
+            problems.append(u"pinned FK positions changed")
         if prod_body_effective_inputs(st[u"D"], st[u"C"], pre[u"profile"]) != pre[u"inputs"]:
             problems.append(u"evaluated inputs changed")
     except ProdPoseError as exc:
@@ -44923,7 +44984,8 @@ def prod_body_pending(pre, label, finish_exception=False, owned_top=True):
             u"profile": pre[u"profile"], u"identity": st[u"identity"], u"expected_authored": pre[u"expected_authored"],
             u"observed": st[u"observed"], u"baseline": st[u"D"], u"classes": st[u"C"],
             u"expected": dict((k, [list(v[0]), list(v[1])]) for k, v in pre[u"expected"].items()),
-            u"values": pre[u"values"], u"finish_exception": finish_exception, u"owned_top": owned_top,
+            u"values": pre[u"values"], u"pinned": pre[u"pinned"], u"finish_exception": finish_exception,
+            u"owned_top": owned_top,
             u"regions": [PROD_BODY_REGION]}
 
 
@@ -44971,6 +45033,15 @@ def prod_body_verify_applied(pending):
             prod_body_check_authority(D, pending[u"classes"])
         except ProdPoseError as exc:
             problems.append(u"authority refused: %s" % exc.code)
+        for name, v in sorted(pending[u"pinned"].items()):
+            owner = pending[u"classes"][u"owners"][name][0]
+            try:
+                ok = prod_body_exact(prod_body_channel_value(D, name), list(v)) and \
+                    prod_body_exact(list(prod_body_owner_row(D, owner)[u"local_position"]), list(v))
+            except ProdPoseError:
+                ok = False
+            if not ok:
+                problems.append(u"pinned FK position %s drifted" % name)
         expected = dict((k, (v[0], v[1])) for k, v in pending[u"expected"].items())
         problems.extend(prod_body_verify_skeleton(D, pending[u"baseline"], expected, pending[u"classes"], profile,
                                                   pending[u"values"]))
