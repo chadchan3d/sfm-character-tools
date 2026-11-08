@@ -2194,6 +2194,162 @@ def section_dependencies(ns, app, root, lib, grip):
     refused_clean(u"previous_follower_counterexample", w, run(), u"shared-input")
 
 
+# ---------------------------------------------------------------------------
+# AZ. Dependency ownership corrections (Astra closure review of 953b107): protected animation resources,
+# shared-transform aliases and the positive external-admission invariant
+# ---------------------------------------------------------------------------
+
+def shared_dags(w, names, transform=None, parent=None):
+    """DAGs that share one transform element, added to the scene (or under `parent`) in the given order."""
+    t = transform if transform is not None else FB.Element(w, w.new_handle(), "DmeTransform", u"shared_t",
+                                                           position=FB.Vector(), orientation=FB.Quaternion())
+    out = {}
+    for n in names:
+        out[n] = FB.Dag(w, w.new_handle(), "DmeDag", n, t)
+    for n in names:
+        (parent if parent is not None else w.scene).add(out[n])
+    return out
+
+
+def section_ownership(ns, app, root, lib, grip):
+    arm = arm_fixture()
+
+    def world(prepare=None):
+        w = FS.World(placed_destination(arm))
+        if prepare is not None:
+            prepare(w)
+            w.evaluate()
+        use(ns, w, arm)
+        return w
+
+    def tr(w, bone):
+        return w.bone_dag[bone].attrs["transform"]
+
+    def run():
+        return outcome(lambda: apply(ns, reload(ns, lib, grip)))
+
+    def refused_clean(label, w, got, code):
+        check("AZ.%s_refuses_before_writing" % label, got[0] != "ok" and got[1] == code, got if got[0] != "ok" else
+              (got[1][0].get(u"phase"), got[1][1]))
+        check("AZ.%s_writes_nothing_and_opens_no_undo" % label, not writes(w) and not w.dm.calls, w.dm.calls)
+
+    def verified(label, w, got):
+        check("AZ.%s_applies_and_verifies" % label, got[0] == "ok" and got[1][1] == {u"phase": u"committed-verified"},
+              got if got[0] != "ok" else (got[1][0].get(u"phase"), got[1][1]))
+
+    # 1. Protected animation resources (Astra's exact counterexample first).
+    w = world(lambda w: reader_channel(w, tr(w, u"finger3"), u"orientation", w.channels[u"tail_o"].attrs["log"],
+                                       u"defaultvalue"))
+    refused_clean(u"astra_pass_from_a_posed_finger_into_the_tail_log_defaultvalue", w, run(), u"shared-input")
+    w = world(lambda w: reader_channel(w, tr(w, u"finger3"), u"orientation",
+                                       w.channels[u"tail_o"].attrs["log"].layer, u"value"))
+    refused_clean(u"pass_into_a_character_layer", w, run(), u"shared-input")
+    w = world(lambda w: reader_channel(w, tr(w, u"finger3"), u"orientation", w.animset, u"name"))
+    refused_clean(u"pass_into_the_character_animation_set", w, run(), u"shared-input")
+
+    def external_log(w):
+        other = reader_channel(w, prop_dag(w).attrs["transform"], u"orientation", prop_dag(w, u"prop_b").attrs[
+            "transform"], u"orientation", mode=0)
+        reader_channel(w, tr(w, u"finger3"), u"orientation", other.attrs["log"], u"defaultvalue")
+    w = world(external_log)
+    refused_clean(u"pass_into_another_animation_log", w, run(), u"structure-unsupported")
+
+    def other_control(w):
+        control = FB.Element(w, w.new_handle(), "DmeTransformControl", u"prop_control",
+                             valueOrientation=FB.Quaternion())
+        w.shot.attrs["animationSets"].items.append(FB.Element(w, w.new_handle(), "DmeAnimationSet", u"prop_set",
+                                                              controls=FB.ElementArray(w, [control]),
+                                                              operators=FB.ElementArray(w, [])))
+        reader_channel(w, tr(w, u"finger3"), u"orientation", control, u"valueOrientation")
+    w = world(other_control)
+    refused_clean(u"pass_into_another_animation_sets_control", w, run(), u"structure-unsupported")
+    w = world(lambda w: reader_channel(w, tr(w, u"finger3"), u"orientation",
+                                       FB.Element(w, w.new_handle(), "DmElement", u"blob", value=0.0), u"value"))
+    refused_clean(u"pass_into_an_element_of_unknown_ownership", w, run(), u"structure-unsupported")
+    w = world(lambda w: reader_channel(w, tr(w, u"finger3"), u"orientation",
+                                       FB.Element(w, w.new_handle(), "DmeTransform", u"orphan",
+                                                  orientation=FB.Quaternion()), u"orientation"))
+    refused_clean(u"pass_into_a_transform_no_scene_dag_owns", w, run(), u"structure-unsupported")
+    w = world(lambda w: constrain_to(w, FB.Element(w, w.new_handle(), "DmElement", u"not_a_dag"),
+                                     w.bone_dag[u"finger3"], u"other"))
+    refused_clean(u"constraint_slaving_an_element_that_is_not_a_scene_dag", w, run(), u"structure-unsupported")
+
+    def to_prop_via_expression(w):
+        expr = FB.Element(w, w.new_handle(), "DmeExpressionOperator", "expr", expr=u"value", value=0.0, result=0.0)
+        place_operator(w, expr, u"other")
+        reader_channel(w, tr(w, u"finger3"), u"orientation", expr, u"value")
+        reader_channel(w, expr, u"result", prop_dag(w).attrs["transform"], u"orientation")
+    w = world(to_prop_via_expression)
+    verified(u"bounded_expression_route_into_a_prop", w, run())
+    w = world(lambda w: constrain_to(w, prop_dag(w), w.bone_dag[u"finger3"], u"other"))
+    verified(u"ordinary_unshared_external_prop", w, run())
+
+    # 2. Shared-transform aliases (every sharing DAG is an owner; enumeration order never selects one).
+    for order in ((u"P", u"Q"), (u"Q", u"P")):
+        def alias_return(w, order=order):
+            dags = shared_dags(w, order)
+            constrain_to(w, dags[u"P"], w.bone_dag[u"finger3"], u"other")
+            constrain_to(w, w.bone_dag[u"tail"], dags[u"Q"], u"other")
+        w = world(alias_return)
+        refused_clean(u"astra_shared_transform_alias_returning_to_the_tail_order_%s" % u"".join(order), w, run(),
+                      u"shared-input")
+    for order in ((u"P", u"Q", u"R"), (u"R", u"Q", u"P"), (u"Q", u"R", u"P")):
+        def three(w, order=order):
+            dags = shared_dags(w, order)
+            constrain_to(w, dags[u"P"], w.bone_dag[u"finger3"], u"other")
+            constrain_to(w, w.bone_dag[u"leg"], dags[u"R"], u"character")
+        w = world(three)
+        refused_clean(u"three_aliases_returning_to_the_leg_order_%s" % u"".join(order), w, run(), u"shared-input")
+    for order in ((u"P", u"Q"), (u"Q", u"P")):
+        def external_only(w, order=order):
+            dags = shared_dags(w, order)
+            constrain_to(w, dags[u"P"], w.bone_dag[u"finger3"], u"other")
+        w = world(external_only)
+        verified(u"shared_transform_among_external_props_only_order_%s" % u"".join(order), w, run())
+
+    def prop_sharing_the_tail_transform(w):
+        p = shared_dags(w, [u"P"], transform=tr(w, u"tail"))[u"P"]
+        constrain_to(w, p, w.bone_dag[u"finger3"], u"other")
+    w = world(prop_sharing_the_tail_transform)
+    # A second DAG holding a bone's transform is refused by the live reader as a duplicated bone element.
+    refused_clean(u"prop_sharing_a_protected_bone_transform", w, run(), u"structure-unsupported")
+    w = world(lambda w: shared_dags(w, [u"P"], transform=tr(w, u"finger3")))
+    refused_clean(u"external_dag_sharing_a_posed_bone_transform", w, run(), u"structure-unsupported")
+
+    def prop_sharing_the_model_transform(w):
+        p = shared_dags(w, [u"P"], transform=w.gm.attrs["transform"])[u"P"]
+        constrain_to(w, p, w.bone_dag[u"finger3"], u"other")
+    w = world(prop_sharing_the_model_transform)
+    refused_clean(u"following_prop_sharing_the_model_transform", w, run(), u"shared-input")
+
+    # 3. Ownership changing between phases.
+    w = world()
+    real = ns["prod_scope_preflight"]
+
+    def preflight_then(*args):
+        pre = real(*args)
+        dags = shared_dags(w, (u"P", u"Q"))
+        constrain_to(w, dags[u"P"], w.bone_dag[u"finger3"], u"other")
+        constrain_to(w, w.bone_dag[u"tail"], dags[u"Q"], u"other")
+        return pre
+    ns["prod_scope_preflight"] = preflight_then
+    try:
+        got = run()
+    finally:
+        ns["prod_scope_preflight"] = real
+    refused(u"AZ.shared_alias_appearing_between_P1_and_P2_is_stale", got, u"stale")
+    check("AZ.P2_alias_refusal_writes_nothing", not writes(w) and not w.dm.calls)
+    w = world()
+    item = reload(ns, lib, grip)
+    auth = authorize(ns, u"Apply Pose", item)
+    result = ns["prod_scope_apply"](Pin.identity, auth, item, {})
+    reader_channel(w, tr(w, u"finger3"), u"orientation", w.channels[u"tail_o"].attrs["log"], u"defaultvalue")
+    w.evaluate()
+    verdict = ns["prod_pose_deferred_verify"](dict(result[u"pending"], authorization=auth))
+    check("AZ.protected_log_reader_appearing_before_P7_is_committed_unverified",
+          verdict[u"phase"] == u"committed-unverified" and u"Undo" not in [c[0] for c in w.dm.calls], verdict)
+
+
 def section_static(app):
     text = route._read_source(route.APP_PATH)[0].decode("utf-8")
     start = text.index(u"# F-01 Pose Library scoped poses, SFP-1")
@@ -2236,6 +2392,7 @@ def main():
             run("transactions", lambda: section_transactions(ns, app, root, frames[0], frames[1]))
             run("corrections", lambda: section_corrections(ns, app, root, frames[0], frames[1]))
             run("dependencies", lambda: section_dependencies(ns, app, root, frames[0], frames[1]))
+            run("ownership", lambda: section_ownership(ns, app, root, frames[0], frames[1]))
             if full and full is not True:
                 run("sequential", lambda: section_sequential(ns, root, full[0], full[1], frames[0], frames[1]))
             run("semantics", lambda: section_semantics(ns, app, fx, root, frames[0], frames[1]))

@@ -45486,6 +45486,7 @@ PROD_SCOPE_SCALE_OPERATORS = (u"DmeExpressionOperator",)
 PROD_SCOPE_CONSTRAINTS = (u"DmeRigIKConstraintOperator", u"DmeRigOrientConstraintOperator",
                           u"DmeRigPointConstraintOperator")
 PROD_SCOPE_SLAVE_SLOTS = (u"slave", u"startJoint", u"midJoint", u"endJoint")
+PROD_SCOPE_VALUE_OPERATORS = (u"DmeExpressionOperator", u"DmePackColorOperator")   # traced through their channels
 PROD_SCOPE_MAX_GROUPS = 4096
 PROD_SCOPE_AUTH_SCHEMA = u"cpm-scoped-pose-authorization-v1"
 PROD_SCOPE_PART_KEYS = {u"full_body": u"full_body", u"selected_parts": u"selected_parts"}
@@ -45963,7 +45964,41 @@ def prod_scope_discover(L, t_chan, index):
     for name, ch in L[u"channels"].items():
         D[u"channels"][name][u"indices"] = [prod_pose_field(ch, u"fromIndex"), prod_pose_field(ch, u"toIndex")]
     D[u"dependencies"] = prod_scope_dependency_index()
+    D[u"instance_elements"] = prod_scope_instance_elements(L)
     return prod_pose_roundtrip(D)
+
+
+def prod_scope_instance_elements(L):
+    """The selected instance's own mutable resources that the discovery rows do not already name (the dependency
+    engine treats every one as protected): the animation set, its channels clip, rigs and registrations and their
+    owned elements, every channel's log and layers (defaults and keys live there), and the control groups."""
+    out = {}
+
+    def add(obj, label):
+        if obj is not None:
+            out[u"%d" % prod_pose_h(obj)] = label
+    add(L[u"animset"], u"animation set")
+    add(L[u"clip"], u"channels clip")
+    for rig, reg in L[u"rigs"]:
+        add(rig, u"rig %s" % prod_pose_text(rig.GetName()))
+        add(reg, u"rig registration")
+    for obj in L[u"owned"]:
+        add(obj, u"rig element %s" % (prod_pose_text(obj.GetName()) if obj is not None else u""))
+    for name, ch in L[u"channels"].items():
+        log = ch.GetLog()
+        if log is not None:
+            add(log, u"log of channel %s" % name)
+            for i in range(int(log.GetNumLayers())):
+                add(log.GetLayer(i), u"layer of channel %s" % name)
+    present, root = prod_pose_opt_attr(L[u"animset"], u"rootControlGroup")
+    pending = [root] if present and root is not None else []
+    while pending and len(out) < 1 << 20:
+        g = pending.pop()
+        add(g, u"control group %s" % prod_pose_text(g.GetName()))
+        present, kids = prod_pose_opt_attr(g, u"children")
+        if present and kids is not None:
+            pending.extend(k for k in prod_pose_seq(kids) if k is not None)
+    return out
 
 
 def prod_scope_dependency_index():
@@ -45973,8 +46008,11 @@ def prod_scope_dependency_index():
     - each supported constraint's inputs (the operator, its target and slave elements), the DAGs it reads (targets
       and pole) and the DAGs it drives (slave targets); an unreadable read set is None (unknown), an unreadable write
       set is None;
-    - each channel with a source: source, destination and mode (an unreadable or non-integer value is "unreadable");
-    - every scene's DAG hierarchy (children by parent) and each transform's DAG.
+    - each channel with a source: source, destination, the destination's element type and mode (an unreadable or
+      non-integer value is "unreadable");
+    - every scene's DAG set and hierarchy (children by parent), each DAG's transform, and for each transform EVERY
+      DAG that owns it (shared transforms keep all their owners);
+    - the supported value operators (expression, pack-color), which are traced through their channels.
     Expression and pack-color operators are reached through their channels; unknown operator types are refused by
     the writer index. Nothing is evaluated or written."""
     movie = sfmApp.GetMovie()
@@ -46016,7 +46054,7 @@ def prod_scope_dependency_index():
             stack.extend(prod_pose_seq(prod_pose_attr(el, u"children")))
         elif kind == u"DmeChannelsClip":
             stack.extend(prod_pose_seq(prod_pose_attr(el, u"channels"), 65536))
-    children, transforms = {}, {}
+    children, transforms, dag_transform, dags = {}, {}, {}, set()
     for scene in scenes.values():
         nodes, parents = prod_pose_walk(scene)
         for child, ps in parents.items():
@@ -46024,16 +46062,20 @@ def prod_scope_dependency_index():
                 if p is not None:
                     children.setdefault(u"%d" % p, set()).add(child)
         for h, node in nodes.items():
+            dags.add(h)
             if prod_pose_has(node, u"transform"):
                 t = prod_pose_attr(node, u"transform")
                 if t is not None:
-                    transforms[u"%d" % prod_pose_h(t)] = h
-    constraints = []
+                    transforms.setdefault(u"%d" % prod_pose_h(t), set()).add(h)    # every owner, never one
+                    dag_transform[u"%d" % h] = prod_pose_h(t)
+    constraints, value_operators = [], []
     for h, op in sorted(operators.items()):
         kind = prod_pose_type(op)
         if kind == u"DmeChannel":
             channels[h] = op
             continue
+        if kind in PROD_SCOPE_VALUE_OPERATORS:
+            value_operators.append(h)
         if kind not in PROD_SCOPE_CONSTRAINTS:
             continue
         row = {u"handle": h, u"inputs": [h], u"reads": [], u"slaves": []}
@@ -46070,8 +46112,12 @@ def prod_scope_dependency_index():
             try:
                 v = prod_pose_attr(ch, attr)
                 row[key] = prod_pose_h(v) if v is not None else None
+                if key == u"to":
+                    row[u"to_type"] = prod_pose_type(v) if v is not None else None
             except Exception:
                 row[key] = u"unreadable"
+                if key == u"to":
+                    row[u"to_type"] = u"unreadable"
         try:
             m = prod_pose_attr(ch, u"mode")
             row[u"mode"] = int(m) if isinstance(m, prod_pose_int_types()) and not isinstance(m, bool) else \
@@ -46080,8 +46126,10 @@ def prod_scope_dependency_index():
             row[u"mode"] = u"unreadable"
         if row[u"from"] is not None:
             readers.append(row)
-    return {u"constraints": constraints, u"readers": readers,
-            u"children": dict((k, sorted(v)) for k, v in children.items()), u"transforms": transforms}
+    return {u"constraints": constraints, u"readers": readers, u"value_operators": value_operators,
+            u"children": dict((k, sorted(v)) for k, v in children.items()),
+            u"transforms": dict((k, sorted(v)) for k, v in transforms.items()), u"dag_transform": dag_transform,
+            u"dags": sorted(dags)}
 
 
 # --- classification: direct_fk_v1 and the coverage roles --------------------------------------------------------------
@@ -46967,7 +47015,9 @@ def prod_scope_dependencies(D, S):
 
     Moving inputs: the affected bones (their DAGs and transforms) and the written channels' source controls.
     Relationships followed, transitively, including chains that leave the character and re-enter it:
-    - DAG hierarchy: a moving DAG moves its children; a transform and its DAG move together;
+    - DAG hierarchy: a moving DAG moves its children;
+    - transform ownership: a DAG and its transform move together, and a moving transform moves EVERY DAG that shares
+      it (all owners are traced; enumeration order never selects one);
     - supported constraints (point, orient, IK): one whose inputs or read DAGs (targets, pole) move moves its slave
       DAGs; an unknown (unreadable) read set is treated as reading a moving input, an unreadable write set refuses;
     - channels: any channel other than the planned written ones whose source moves moves its destination (Pass, and
@@ -46975,15 +47025,22 @@ def prod_scope_dependencies(D, S):
       unreadable or unknown mode, source or destination is treated as relevant and refuses when it can matter.
       Expression and pack-color operators are reached through their channels.
 
-    Classification of each element reached: an affected bone through the hierarchy, or an excluded confined bone
-    through the hierarchy or a supported constraint (R3 4 one-way head-follow), moves legitimately; any other bone
-    of the character, the model, a rig handle, a control, a channel or an operator element of the instance is
-    protected, so the scope refuses before any write (shared-input; evidence-unreadable when only an unknown effect
-    reaches it; structure-unsupported for a Record reader). Elements outside the character are admitted as external
-    followers: they stay under their own SFM relationships, CPM does not verify their rendered pose, and tracing
-    continues from them. Returns {confined, external, edges}, compared exactly at P2 and P7."""
+    Admission invariant: an element reached is admitted only on positive evidence.
+    - Moves legitimately: an affected bone through the hierarchy or its own transform; an excluded, confined bone
+      through the hierarchy, its transform or a supported constraint (R3 4 one-way head-follow).
+    - Protected (refuses, shared-input): any other bone, the model, a rig handle, a control, a channel, an operator
+      element, a log, layer, control group, rig element, the animation set or the channels clip of the instance,
+      and any transform shared between the instance and another DAG.
+    - External (admitted, traced onward, not verified by CPM): only a scene DAG or the transform of scene DAGs that
+      share no transform with the instance, a supported value operator (expression, pack-color), or an element of a
+      supported constraint; each has a bounded effect set that the tracing itself follows.
+    - Anything else (a log, layer, control or element of unknown ownership or kind outside the instance, a transform
+      no scene DAG owns, a constraint slave that is not a scene DAG): no positive evidence that its effects are
+      bounded, so the scope refuses (structure-unsupported; evidence-unreadable when only an unknown effect reaches
+      it). Unknown ownership is never treated as external.
+    Returns {confined, external, edges}, compared exactly at P2 / Abort recovery and P7."""
     dep = D.get(u"dependencies")
-    if not isinstance(dep, dict):
+    if not isinstance(dep, dict) or not isinstance(D.get(u"instance_elements"), dict):
         raise prod_scope_error(u"evidence-unreadable", u"no dependency evidence")
     affected = set(S[u"affected"])
     opaque = [n for n in S[u"excluded"] if n not in S[u"preserved"]]
@@ -46992,13 +47049,18 @@ def prod_scope_dependencies(D, S):
     for n, b in D[u"bones"].items():
         bone_of[b[u"handle"]] = n
         bone_of[b[u"transform"]] = n
-    inst = {D[u"model"][u"handle"]: u"model", D[u"model"][u"transform"]: u"model"}
+    inst = dict((int(k), v) for k, v in D[u"instance_elements"].items())
+    inst[D[u"model"][u"handle"]] = inst[D[u"model"][u"transform"]] = u"model"
     for n, h in D[u"rig"][u"handles"].items():
         inst[h[u"handle"]] = inst[h[u"transform"]] = u"rig handle %s" % n
     for n, c in D[u"controls"].items():
         inst[c[u"handle"]] = u"control %s" % n
     for n, ch in D[u"channels"].items():
         inst[ch[u"handle"]] = u"channel %s" % n
+        if ch.get(u"log_handle") is not None:
+            inst[ch[u"log_handle"]] = u"log of channel %s" % n
+        for layer in ch.get(u"layer_handles") or []:
+            inst[layer] = u"layer of channel %s" % n
     for op in D[u"operators"]:
         inst[op[u"handle"]] = u"operator %s" % op[u"name"]
         for s in op[u"slaves"].values():
@@ -47008,10 +47070,14 @@ def prod_scope_dependencies(D, S):
             inst[t[u"handle"]] = u"operator %s" % op[u"name"]
     written = set(D[u"channels"][w[u"channel"]][u"handle"] for w in S[u"written"])
     children = dict((int(k), v) for k, v in dep[u"children"].items())
-    dag_of = dict((int(k), v) for k, v in dep[u"transforms"].items())
-    transform_of = dict((v, k) for k, v in dag_of.items())
+    owners = dict((int(k), v) for k, v in dep[u"transforms"].items())
+    dag_transform = dict((int(k), v) for k, v in dep[u"dag_transform"].items())
+    dags = set(dep[u"dags"])
+    value_ops = set(dep[u"value_operators"])
+    constraint_elements = set()
     by_input, by_source = {}, {}
     for i, row in enumerate(dep[u"constraints"]):
+        constraint_elements.update(row[u"inputs"])
         for h in row[u"inputs"] + (row[u"reads"] or []):
             by_input.setdefault(h, []).append(i)
     for row in dep[u"readers"]:
@@ -47019,35 +47085,52 @@ def prod_scope_dependencies(D, S):
             by_source.setdefault(row[u"from"], []).append(row)
     moving, queue, failures, external, edges = {}, [], [], set(), set()
 
+    def protected(h):
+        return h in bone_of or h in inst
+
+    def label(h):
+        return bone_of.get(h) or inst.get(h) or u"element %d" % h
+
     def move(h, uncertain):
         if h not in moving or (moving[h] and not uncertain):
             moving[h] = uncertain
             queue.append(h)
 
-    def fail(label, uncertain, record=False):
-        failures.append((label, uncertain, record))
+    def fail(what, uncertain, kind):
+        failures.append((what, uncertain, kind))
 
-    def reach(dest, kind, via, uncertain):
+    def reach(dest, kind, via, uncertain, dest_type=None):
         name = bone_of.get(dest)
         if name is not None:
-            if (name in affected and kind == u"hierarchy") or (name in confined and kind in (u"hierarchy",
-                                                                                              u"constraint")):
+            if (name in affected and kind in (u"hierarchy", u"alias")) or (
+                    name in confined and kind in (u"hierarchy", u"alias", u"constraint")):
                 if name not in affected:
                     edges.add((kind, via, dest))
                 move(dest, uncertain)
             else:
-                fail(name, uncertain)
-        elif dest in inst:
-            fail(inst[dest], uncertain)
-        else:
-            external.add(dest)
-            edges.add((kind, via, dest))
-            move(dest, uncertain)
+                fail(name, uncertain, u"protected")
+            return
+        if dest in inst:
+            fail(inst[dest], uncertain, u"protected")
+            return
+        bounded = (kind in (u"hierarchy", u"alias") or
+                   (kind == u"constraint" and dest in dags) or
+                   (kind == u"channel" and (dest in dags or dest in owners or dest in value_ops or
+                                            dest in constraint_elements)))
+        if not bounded:
+            if dest_type == u"unreadable":
+                fail(u"element %d" % dest, True, u"unknown")
+            else:
+                fail(u"%s %d" % (dest_type or u"element", dest), uncertain, u"unsupported")
+            return
+        external.add(dest)
+        edges.add((kind, via, dest))
+        move(dest, uncertain)
 
     def trigger(i, uncertain):
         row = dep[u"constraints"][i]
         if row[u"slaves"] is None:
-            fail(u"operator %d" % row[u"handle"], True)
+            fail(u"operator %d" % row[u"handle"], True, u"unknown")
             return
         for s in row[u"slaves"]:
             reach(s, u"constraint", row[u"handle"], uncertain)
@@ -47059,11 +47142,11 @@ def prod_scope_dependencies(D, S):
         if mode == 0:
             return
         if mode == 2:
-            fail(u"channel %d" % row[u"handle"], uncertain, record=True)
+            fail(u"channel %d" % row[u"handle"], uncertain, u"record")
         elif mode not in (1, 3) or row[u"to"] == u"unreadable":
-            fail(u"channel %d" % row[u"handle"], True)
+            fail(u"channel %d" % row[u"handle"], True, u"unknown")
         elif row[u"to"] is not None:
-            reach(row[u"to"], u"channel", row[u"handle"], uncertain)
+            reach(row[u"to"], u"channel", row[u"handle"], uncertain, row.get(u"to_type"))
     for n in affected:
         move(D[u"bones"][n][u"handle"], False)
         move(D[u"bones"][n][u"transform"], False)
@@ -47084,9 +47167,17 @@ def prod_scope_dependencies(D, S):
         if done.get(h) is False or (h in done and uncertain):
             continue
         done[h] = uncertain
-        for alias in (dag_of.get(h), transform_of.get(h)):
-            if alias is not None:
-                move(alias, uncertain)
+        if h in dag_transform:
+            reach(dag_transform[h], u"alias", h, uncertain)
+        if h in owners:
+            sharers = owners[h]
+            if protected(h) and any(not protected(d) for d in sharers):
+                fail(u"transform of %s shared with another element" % label(h), uncertain, u"protected")
+            elif not protected(h) and any(protected(d) for d in sharers):
+                fail(u"transform shared with %s" % label([d for d in sharers if protected(d)][0]), uncertain,
+                     u"protected")
+            for d in sharers:
+                reach(d, u"alias", h, uncertain)
         for c in children.get(h, []):
             reach(c, u"hierarchy", h, uncertain)
         for i in by_input.get(h, []):
@@ -47095,15 +47186,15 @@ def prod_scope_dependencies(D, S):
             read(row, uncertain)
     if failures:
         labels = sorted(set(f[0] for f in failures))
-        if any(f[2] for f in failures):
+        certain = [f for f in failures if not f[1]]
+        if any(f[2] in (u"record", u"unsupported") for f in certain):
             code = u"structure-unsupported"
-        elif all(f[1] for f in failures):
-            code = u"evidence-unreadable"
-        else:
+        elif any(f[2] == u"protected" for f in certain):
             code = u"shared-input"
-        raise prod_scope_error(code, u"the pose would move protected parts of the character through %s" %
-                               labels[:8], parts=[x for x in labels if not x.startswith((u"channel ", u"operator "))]
-                               or labels)
+        else:
+            code = u"evidence-unreadable"
+        raise prod_scope_error(code, u"the pose would reach %s, which CPM cannot keep isolated" % labels[:8],
+                               parts=[x for x in labels if x in D[u"bones"] or x == u"model"] or labels)
     return {u"confined": sorted(n for n in confined - affected if D[u"bones"][n][u"handle"] in moving),
             u"external": sorted(external), u"edges": sorted([list(e) for e in edges])}
 
