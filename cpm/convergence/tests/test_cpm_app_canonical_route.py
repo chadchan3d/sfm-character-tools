@@ -407,6 +407,38 @@ F01_UI_NEW_METHODS = set(["pose_ui_state", "set_pose_list_message", "open_pose_i
                           "show_rename_menu", "prompt_rename", "rename_kind", "rename_selected_pose",
                           # Final UI polish: Update Animation Groups Master opens the installed updater.
                           "open_master_updater"])
+# F-01 SFP-1 scoped poses (F01_SCOPED_POSE_BLUEPRINT_R3_20261108.md; Owner authorization of stages A/B 2026-11-08): one
+# appended block after stage E (version 3 records, direct_fk_v1 discovery, the scope compiler and its live layer);
+# stages A-C gain small version 3 dispatch hooks; ProdWindow gains the Save dialog.
+F01_SFP1_NEW_TOP = set([
+    "PROD_SCOPE_AUTH_SCHEMA", "PROD_SCOPE_CARRIED_ENABLED", "PROD_SCOPE_CARRIED_REVISION", "PROD_SCOPE_CARRIED_RULE",
+    "PROD_SCOPE_COMPLETENESS", "PROD_SCOPE_CONSTRAINTS", "PROD_SCOPE_CONTROL_CHANNELS",
+    "PROD_SCOPE_EXTRAPOLATION_QUALIFIED", "PROD_SCOPE_FK_POSITION_LIMIT", "PROD_SCOPE_KINDS",
+    "PROD_SCOPE_LEDGER_ROLES", "PROD_SCOPE_MAX_BONES", "PROD_SCOPE_MAX_GROUPS", "PROD_SCOPE_MAX_RECORD_BYTES",
+    "PROD_SCOPE_MESSAGES", "PROD_SCOPE_MODEL_FRAME", "PROD_SCOPE_PART_KEYS", "PROD_SCOPE_POSE_VERSION",
+    "PROD_SCOPE_PROVENANCE", "PROD_SCOPE_REVIEW_SCOPE_COPY", "PROD_SCOPE_RULE", "PROD_SCOPE_RULES",
+    "PROD_SCOPE_SCALE_OPERATORS", "PROD_SCOPE_SLAVE_SLOTS", "PROD_SCOPE_SOURCE_ATTRIBUTES", "PROD_SCOPE_TOLERANCES",
+    "PROD_SCOPE_TRANSFORM_TYPES", "prod_scope_ancestors", "prod_scope_apply", "prod_scope_authorize",
+    "prod_scope_availability", "prod_scope_bindings", "prod_scope_bone_order", "prod_scope_capture",
+    "prod_scope_carried_admission", "prod_scope_carried_inputs", "prod_scope_channel_value",
+    "prod_scope_check_against_source", "prod_scope_check_authority", "prod_scope_check_composition",
+    "prod_scope_check_oracle", "prod_scope_children", "prod_scope_classify", "prod_scope_compatible",
+    "prod_scope_compile", "prod_scope_compose", "prod_scope_cumulative", "prod_scope_current_time",
+    "prod_scope_descendants", "prod_scope_dialog_state", "prod_scope_discover", "prod_scope_effective_inputs",
+    "prod_scope_error", "prod_scope_exact", "prod_scope_exclusion_boundary", "prod_scope_expected", "prod_scope_f32",
+    "prod_scope_field_value", "prod_scope_followers", "prod_scope_group_view", "prod_scope_groups",
+    "prod_scope_highlighted", "prod_scope_identity", "prod_scope_info", "prod_scope_inventory",
+    "prod_scope_is_record", "prod_scope_label", "prod_scope_layout_signature", "prod_scope_list_phrase",
+    "prod_scope_live", "prod_scope_model_scale", "prod_scope_noop",
+    "prod_scope_oracle", "prod_scope_order", "prod_scope_parts", "prod_scope_payload", "prod_scope_pending",
+    "prod_scope_plan", "prod_scope_planned_values", "prod_scope_preflight", "prod_scope_procedural_guard",
+    "prod_scope_reason_text", "prod_scope_record_request", "prod_scope_record_schema",
+    "prod_scope_relative", "prod_scope_request", "prod_scope_row", "prod_scope_rule_usable", "prod_scope_same_state",
+    "prod_scope_state", "prod_scope_structure", "prod_scope_summary", "prod_scope_time_names",
+    "prod_scope_typed_scale", "prod_scope_validate", "prod_scope_verify", "prod_scope_verify_applied",
+    "prod_scope_world", "prod_scope_wrap"
+])
+F01_SFP1_NEW_METHODS = set(["prompt_pose_scope"])
 EXPECTED_CHANGED_TOP = (STEP2B_CHANGED_TOP | STEP3_CHANGED_TOP | STEP4_CHANGED_TOP | R14_CHANGED_TOP
                         | R15_CHANGED_TOP | ITEM6_CHANGED_TOP | ITEM7_CHANGED_TOP | UIPASS_CHANGED_TOP
                         | LOGFIX_CHANGED_TOP | M05_CHANGED_TOP | M06_CHANGED_TOP | M06W1_CHANGED_TOP
@@ -499,7 +531,7 @@ def section_derivation(app):
     check("derivation.added_top_level_is_bounded",
           added == EXPECTED_NEW_TOP | R15_NEW_TOP | ITEM6_NEW_TOP | UIPASS_NEW_TOP | LOGFIX_NEW_TOP | M05_NEW_TOP
           | M06_NEW_TOP | M06W1_NEW_TOP | F01_STAGEA_NEW_TOP | F01_STAGEB_NEW_TOP | F01_STAGEC_NEW_TOP | F01_STAGED_NEW_TOP
-          | F01_UI_NEW_TOP | F01_STAGEE_NEW_TOP,
+          | F01_UI_NEW_TOP | F01_STAGEE_NEW_TOP | F01_SFP1_NEW_TOP,
           sorted(added))
     check("derivation.removed_is_exactly_item6_and_item7", removed == ITEM6_REMOVED_TOP | ITEM7_REMOVED_TOP
           | LOGFIX_REMOVED_TOP, sorted(removed ^ (ITEM6_REMOVED_TOP | ITEM7_REMOVED_TOP | LOGFIX_REMOVED_TOP)))
@@ -514,7 +546,7 @@ def section_derivation(app):
     check("derivation.changed_methods_are_bounded", m_changed == expected_methods, sorted(m_changed))
     check("derivation.added_methods_are_bounded",
           set(am) - set(bm) == EXPECTED_NEW_METHODS | R15_NEW_METHODS | M05_NEW_METHODS | F01_STAGEC_NEW_METHODS
-          | F01_STAGED_NEW_METHODS | F01_UI_NEW_METHODS,
+          | F01_STAGED_NEW_METHODS | F01_UI_NEW_METHODS | F01_SFP1_NEW_METHODS,
           sorted(set(am) - set(bm)))
     check("derivation.removed_methods_are_exactly_item6", set(bm) - set(am) == ITEM6_REMOVED_METHODS,
           sorted(set(bm) - set(am)))

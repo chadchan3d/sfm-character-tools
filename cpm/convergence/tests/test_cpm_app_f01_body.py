@@ -49,7 +49,9 @@ BLOCKS = ((core.BLOCK_START, core.BLOCK_END),
           (u"# F-01 Pose Library M1, stage B: offline pose library", u"# === end of F-01 stage B block ==="),
           (u"# F-01 Pose Library M1, stage C: CPM integration seams", u"# === end of F-01 stage C block ==="),
           (u"# F-01 Pose Library M1, stage D: the left-arm live layer", u"# === end of F-01 stage D block ==="),
-          (u"# F-01 Pose Library full body, stage E: complete skeletal poses", u"# === end of F-01 stage E block ==="))
+          (u"# F-01 Pose Library full body, stage E: complete skeletal poses", u"# === end of F-01 stage E block ==="),
+          # SFP-1: the Save New dialog of the qualification build consults the scoped block (version 3 records).
+          (u"# F-01 Pose Library scoped poses, SFP-1", u"# === end of F-01 scoped pose block ==="))
 HELPERS = ("u", "dm", "prod_outcome", "prod_apply_deferred_unverified", "ProdRecoveryUnverifiedError",
            "PROD_INSTANCE_TOKEN_KIND", "prod_instance_token", "_PROD_PRIVATE_WINDLL", "prod_private_windll",
            "p02_ensure_dir", "p02_json_text", "p02_unique_temp", "p02_safe_write_json")
@@ -98,7 +100,7 @@ def build_namespace(app):
     for name in HELPERS:
         route._run_source(app.top_text(name), "app:%s" % name, ns)
     prefixes = core.PREFIXES
-    core.PREFIXES = prefixes + ("prod_body_", "PROD_BODY_")      # the stage E names
+    core.PREFIXES = prefixes + ("prod_body_", "PROD_BODY_", "prod_scope_", "PROD_SCOPE_")   # stage E and SFP-1 names
     try:
         blocks = [core.extract_block(route.APP_PATH, start, end)[0] for start, end in BLOCKS]
     finally:
@@ -861,6 +863,13 @@ class FakeWindow(object):
 
     def prompt(self, title, default):
         return self.prompts.pop(0) if self.prompts else None
+
+    def prompt_pose_scope(self, inventory, body_route):
+        # SFP-1 harness adaptation: the qualification build's Save dialog, answered with the queued name and the
+        # default scope, Full body (the version 2 route of this registry character).
+        if not self.prompts:
+            return None
+        return {u"name": self.prompts.pop(0), u"kind": u"full_body", u"request": None}
 
     def operation_revalidate(self):
         pass

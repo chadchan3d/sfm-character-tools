@@ -35865,7 +35865,15 @@ class ProdWindow(QtGui.QDialog):
                 reg,
             )
             self.operation_revalidate()
-            authorization = prod_pose_authorize(
+            # Dispatch on the validated pose payload version (SFP-1): version 3 is authorized by the engine's own
+            # rule table and the common context gates, never through a registry rig class.
+            version = fresh[u"record"][u"pose"].get(u"version")
+            authorize = (
+                prod_scope_authorize
+                if version == 3
+                else prod_pose_authorize
+            )
+            authorization = authorize(
                 self.operation[
                     "context"
                 ],
@@ -35876,8 +35884,10 @@ class ProdWindow(QtGui.QDialog):
                 fresh,
             )
             apply_fn = (
-                prod_body_apply
-                if fresh[u"record"][u"pose"].get(u"version") == 2
+                prod_scope_apply
+                if version == 3
+                else prod_body_apply
+                if version == 2
                 else prod_pose_apply
             )
             result = apply_fn(
@@ -35957,9 +35967,13 @@ class ProdWindow(QtGui.QDialog):
         self,
         name,
         regions,
+        scope=None,
     ):
-        """Save New: pose authorization, the time pinned when the Save dialog opens, read-only capture of exactly
-        the chosen regions at that time, then the store. name=None prompts for the name."""
+        """Save New. Interactive (name None) where the build supports scoped poses: the Save dialog chooses Full
+        body (default) or Selected parts with the grouped control picker and shows the coverage from the actual
+        ledger; Full body of a character with a usable registry profile keeps its version 2 route, everything else
+        is a version 3 scoped pose. Otherwise the earlier flow: the name prompt and the registry capture. `scope` (a
+        scoped request) with a name saves a version 3 pose directly."""
         def work():
             ident = self.current()
             reg = prod_pose_load_registry()
@@ -35968,89 +35982,174 @@ class ProdWindow(QtGui.QDialog):
             )
             chosen = sorted(
                 set(
-                    regions
+                    regions or ()
                 )
             )
-            # Stage E: Save New creates a complete pose (full_body); the left-arm capture stays for version 1 only.
-            full_body = chosen == [u"full_body"]
-            authorization = prod_pose_authorize(
-                self.operation[
-                    "context"
-                ],
-                ident,
-                reg,
-                self.pose_registry_mode(),
-                u"Save Pose",
-            )
+            mode = self.pose_registry_mode()
+            request = scope
+            signature = None
             pinned = None
             pose_name = name
+            # The Save dialog replaces the interactive full-body flow only; the left-arm (version 1) flow is unchanged.
+            interactive = (
+                request is None
+                and pose_name is None
+                and chosen == [u"full_body"]
+                and prod_scope_rule_usable(mode)
+            )
+            body_route = False
 
-            if pose_name is None:
-                pinned = (
-                    prod_body_current_time(
+            if interactive:
+                # The registry route for this character's full body, when it has one (version 2, deterministic).
+                try:
+                    legacy = prod_pose_authorize(
+                        self.operation["context"],
                         ident,
-                        authorization,
                         reg,
+                        mode,
+                        u"Save Pose",
                     )
-                    if full_body
-                    else prod_pose_current_time(
-                        ident,
-                        authorization,
-                        reg,
-                        chosen,
-                    )
-                )
-                pose_name = self.prompt(
-                    "Save Pose",
-                    u"Pose",
+                except ProdPoseIntegrationError as exc:
+                    if exc.code != u"not-qualified":
+                        raise
+                    legacy = None
+                body_route = bool(
+                    legacy is not None
+                    and prod_body_usable(reg, legacy)
                 )
 
-                if pose_name is None:
+            if interactive:
+                scoped = prod_scope_authorize(
+                    self.operation["context"],
+                    ident,
+                    reg,
+                    mode,
+                    u"Save Pose",
+                )
+                pinned = prod_scope_current_time(
+                    ident,
+                    scoped,
+                )
+                inventory = prod_scope_inventory(
+                    ident,
+                    scoped,
+                )
+                choice = self.prompt_pose_scope(
+                    inventory,
+                    body_route,
+                )
+
+                if choice is None:
                     prod_log_outcome(
                         u"no-op",
                         {"reason": u"cancelled", "kind": PROD_POSE_KIND},
                     )
                     return None
 
-                # Modal return is an operation boundary (section 6.1 step 2).
+                # Modal return is an operation boundary.
                 self.operation_revalidate()
+                pose_name = choice[u"name"]
+
+                if not (choice[u"kind"] == u"full_body" and body_route):
+                    request = choice[u"request"]
+                    signature = inventory[u"signature"]
+
+            if request is not None:
+                scoped = prod_scope_authorize(
+                    self.operation["context"],
+                    ident,
+                    reg,
+                    mode,
+                    u"Save Pose",
+                )
+                pose = prod_scope_capture(
+                    ident,
+                    scoped,
+                    request,
+                    pinned_time=pinned,
+                    signature=signature,
+                )
+                parts = prod_scope_parts({u"pose": pose})
+            else:
+                # The registry route (version 1 left arm, version 2 full body), unchanged.
+                full_body = chosen == [u"full_body"]
                 authorization = prod_pose_authorize(
                     self.operation[
                         "context"
                     ],
                     ident,
                     reg,
-                    self.pose_registry_mode(),
+                    mode,
                     u"Save Pose",
                 )
 
-            pose = (
-                prod_body_capture(
-                    ident,
-                    authorization,
-                    reg,
-                    pinned_time=pinned,
-                )
-                if full_body
-                else prod_pose_capture(
-                    ident,
-                    authorization,
-                    chosen,
-                    reg,
-                    pinned_time=pinned,
-                )
-            )
+                if pose_name is None:
+                    pinned = (
+                        prod_body_current_time(
+                            ident,
+                            authorization,
+                            reg,
+                        )
+                        if full_body
+                        else prod_pose_current_time(
+                            ident,
+                            authorization,
+                            reg,
+                            chosen,
+                        )
+                    )
+                    pose_name = self.prompt(
+                        "Save Pose",
+                        u"Pose",
+                    )
 
-            if sorted(
-                pose[
-                    u"regions"
-                ]
-            ) != chosen:
-                # Section 4.3: the chosen set is never reduced silently.
-                raise ProdPoseIntegrationError(
-                    u"save-region-unreadable",
-                    u"The pose wasn't saved: the chosen parts couldn't all be read. Nothing was saved.",
+                    if pose_name is None:
+                        prod_log_outcome(
+                            u"no-op",
+                            {"reason": u"cancelled", "kind": PROD_POSE_KIND},
+                        )
+                        return None
+
+                    # Modal return is an operation boundary (section 6.1 step 2).
+                    self.operation_revalidate()
+                    authorization = prod_pose_authorize(
+                        self.operation[
+                            "context"
+                        ],
+                        ident,
+                        reg,
+                        mode,
+                        u"Save Pose",
+                    )
+
+                pose = (
+                    prod_body_capture(
+                        ident,
+                        authorization,
+                        reg,
+                        pinned_time=pinned,
+                    )
+                    if full_body
+                    else prod_pose_capture(
+                        ident,
+                        authorization,
+                        chosen,
+                        reg,
+                        pinned_time=pinned,
+                    )
                 )
+
+                if sorted(
+                    pose[
+                        u"regions"
+                    ]
+                ) != chosen:
+                    # Section 4.3: the chosen set is never reduced silently.
+                    raise ProdPoseIntegrationError(
+                        u"save-region-unreadable",
+                        u"The pose wasn't saved: the chosen parts couldn't all be read. Nothing was saved.",
+                    )
+                parts = chosen
 
             self.operation_revalidate()
             saved = prod_pose_save_new(
@@ -36087,7 +36186,7 @@ class ProdWindow(QtGui.QDialog):
                         ]
                     ),
                     u"parts": prod_pose_parts_phrase(
-                        chosen
+                        parts
                     ),
                 },
                 u"success",
@@ -36107,6 +36206,186 @@ class ProdWindow(QtGui.QDialog):
             )
 
         return result
+
+    def prompt_pose_scope(
+        self,
+        inventory,
+        body_route,
+    ):
+        """The Save dialog (SFP-1): a name, Full body (default) or Selected parts, the compact grouped skeletal
+        control picker, the coverage summary from prod_scope_dialog_state and, when needed, the scope review of
+        highlighted controls. Returns {name, kind, request} or None when cancelled. Every enabling decision and
+        message comes from prod_scope_dialog_state; this method only presents it."""
+        dialog = QtGui.QDialog(
+            self
+        )
+        tool_keep_modal_dialog_in_front(
+            dialog
+        )
+        result = {}
+
+        try:
+            dialog.setWindowTitle(
+                "Save Pose"
+            )
+            dialog.setMinimumWidth(460)
+            layout = QtGui.QVBoxLayout(dialog)
+            layout.setContentsMargins(8, 10, 8, 10)
+            layout.addWidget(
+                QtGui.QLabel(
+                    "Name:"
+                )
+            )
+            edit = QtGui.QLineEdit(
+                u"Pose"
+            )
+            edit.selectAll()
+            layout.addWidget(edit)
+            kinds = QtGui.QHBoxLayout()
+            full = QtGui.QRadioButton(
+                "Full body"
+            )
+            parts = QtGui.QRadioButton(
+                "Selected parts"
+            )
+            full.setChecked(True)
+            kinds.addWidget(full)
+            kinds.addWidget(parts)
+            kinds.addStretch(1)
+            layout.addLayout(kinds)
+            tree = QtGui.QTreeWidget()
+            tree.setObjectName("pose_scope_picker")
+            tree.setHeaderHidden(True)
+            tree.setRootIsDecorated(True)
+            members = {}
+
+            for row in inventory[u"view"]:
+                group = QtGui.QTreeWidgetItem(
+                    [u" > ".join(row[u"path"])]
+                )
+                group.setFlags(
+                    group.flags()
+                    | QtCore.Qt.ItemIsUserCheckable
+                    | QtCore.Qt.ItemIsTristate
+                )
+                group.setCheckState(0, QtCore.Qt.Unchecked)
+
+                for bone in row[u"bones"]:
+                    child = QtGui.QTreeWidgetItem(
+                        [u(bone)]
+                    )
+                    child.setFlags(
+                        child.flags()
+                        | QtCore.Qt.ItemIsUserCheckable
+                    )
+                    child.setCheckState(0, QtCore.Qt.Unchecked)
+                    group.addChild(child)
+                    members.setdefault(bone, []).append(child)
+
+                for bad in row[u"unavailable"]:
+                    child = QtGui.QTreeWidgetItem(
+                        [u"%s: %s" % (u(bad[u"control"] or bad[u"bone"]), u(bad[u"reason"]))]
+                    )
+                    child.setFlags(
+                        QtCore.Qt.ItemIsEnabled
+                    )
+                    child.setDisabled(True)
+                    group.addChild(child)
+
+                tree.addTopLevelItem(group)
+
+            layout.addWidget(tree, 1)
+            review_box = QtGui.QGroupBox(
+                "Review scope"
+            )
+            review_layout = QtGui.QVBoxLayout(review_box)
+            review_note = QtGui.QLabel(
+                PROD_SCOPE_REVIEW_SCOPE_COPY
+            )
+            review_note.setWordWrap(True)
+            review_layout.addWidget(review_note)
+            review_list = QtGui.QListWidget()
+            review_list.setSelectionMode(QtGui.QAbstractItemView.NoSelection)
+            review_list.setFocusPolicy(QtCore.Qt.NoFocus)
+            review_layout.addWidget(review_list)
+            leave = QtGui.QCheckBox(
+                "Leave these controls unchanged"
+            )
+            review_layout.addWidget(leave)
+            layout.addWidget(review_box)
+            summary = QtGui.QLabel()
+            summary.setWordWrap(True)
+            layout.addWidget(summary)
+            buttons = QtGui.QDialogButtonBox()
+            save_button = buttons.addButton(
+                "Save",
+                QtGui.QDialogButtonBox.AcceptRole,
+            )
+            cancel_button = buttons.addButton(
+                "Cancel",
+                QtGui.QDialogButtonBox.RejectRole,
+            )
+            save_button.clicked.connect(
+                dialog.accept
+            )
+            cancel_button.clicked.connect(
+                dialog.reject
+            )
+            layout.addWidget(buttons)
+
+            def chosen_bones():
+                out = []
+                for bone, items in members.items():
+                    if any(i.checkState(0) == QtCore.Qt.Checked for i in items):
+                        out.append(bone)
+                return sorted(out)
+
+            def refresh(*args):
+                kind = u"selected_parts" if parts.isChecked() else u"full_body"
+                choice = {u"kind": kind, u"bones": chosen_bones(), u"exclude_highlighted": leave.isChecked()}
+                if kind == u"full_body" and body_route:
+                    state = {u"save_enabled": True, u"summary": u"Full body with the character's rig; facial "
+                                                                  u"controls unchanged.", u"review": [],
+                             u"picker_enabled": False, u"request": None}
+                else:
+                    state = prod_scope_dialog_state(inventory, choice)
+                tree.setEnabled(bool(state[u"picker_enabled"]))
+                review_list.clear()
+                for bone in state[u"review"]:
+                    review_list.addItem(u(bone))
+                review_box.setVisible(kind == u"full_body" and bool(state[u"review"]))
+                summary.setText(u(state[u"summary"]))
+                save_button.setEnabled(bool(state[u"save_enabled"]) and bool(u(edit.text()).strip()))
+                result[u"state"] = state
+                result[u"kind"] = kind
+
+            full.toggled.connect(refresh)
+            parts.toggled.connect(refresh)
+            leave.toggled.connect(refresh)
+            tree.itemChanged.connect(refresh)
+            edit.textChanged.connect(refresh)
+            cancel_button.setAutoDefault(False)
+            save_button.setDefault(True)
+            tool_apply_visual_theme(dialog)
+            tool_apply_dialog_font(dialog)
+            refresh()
+            edit.setFocus()
+
+            if dialog.exec_() != QtGui.QDialog.Accepted:
+                return None
+
+            pose_name = u(edit.text()).strip()
+
+            if not pose_name:
+                return None
+
+            return {
+                u"name": pose_name,
+                u"kind": result[u"kind"],
+                u"request": result[u"state"][u"request"],
+            }
+        finally:
+            dialog.deleteLater()
 
     def pose_begin_verification(
         self,
@@ -36290,6 +36569,7 @@ class ProdWindow(QtGui.QDialog):
             self.pose_unusable = 0
             self.pose_rig_class = None
             self.pose_body_available = False
+            self.pose_scoped_available = False
             self.pose_registry_unavailable = False
             self.pose_library_count = 0
 
@@ -36324,6 +36604,10 @@ class ProdWindow(QtGui.QDialog):
                             and m[u"to"] == self.pose_rig_class
                             for m in self.pose_selection[u"mappings"]
                         )
+                    )
+                    # SFP-1: scoped poses need no registry rig class; the engine's rule table decides.
+                    self.pose_scoped_available = prod_scope_rule_usable(
+                        self.pose_registry_mode()
                     )
                 except Exception as exc:
                     try:
@@ -36516,8 +36800,11 @@ class ProdWindow(QtGui.QDialog):
         selected = None
 
         if item is not None:
-            saved = sorted(
-                item[u"record"][u"pose"][u"regions"]
+            saved = prod_scope_parts(
+                item[u"record"]
+            )
+            scoped_record = prod_scope_is_record(
+                item[u"record"]
             )
             eligible = (
                 prod_pose_browse_eligible(
@@ -36525,7 +36812,7 @@ class ProdWindow(QtGui.QDialog):
                     item[u"record"],
                     rig_class,
                 )
-                if selection is not None
+                if selection is not None and not scoped_record
                 else []
             )
             selected = {
@@ -36538,7 +36825,13 @@ class ProdWindow(QtGui.QDialog):
                 u"availability": dict(
                     (
                         r,
-                        u"available"
+                        prod_scope_availability(
+                            item[u"record"],
+                            self.identity,
+                            self.pose_registry_mode(),
+                        )
+                        if scoped_record
+                        else u"available"
                         if r in eligible and (r in PROD_POSE_LIVE_REGIONS or r == u"full_body")
                         else u"not-qualified",
                     )
@@ -36557,7 +36850,7 @@ class ProdWindow(QtGui.QDialog):
                     if self.identity is not None
                     else None
                 ),
-                u"supported": rig_class is not None,
+                u"supported": rig_class is not None or bool(getattr(self, "pose_scoped_available", False)),
                 u"instance_valid": getattr(self, "selection_token", None) is not None,
                 u"mode": u"this",
                 u"visible_count": len(getattr(self, "pose_items", [])),
@@ -36565,7 +36858,8 @@ class ProdWindow(QtGui.QDialog):
                 u"busy": bool(self.busy),
                 u"recovery_blocked": bool(getattr(self, "pose_recovery_blocked", False)) or
                 PROD_POSE_RECOVERY_BLOCK[0] is not None,
-                u"save_available": bool(getattr(self, "pose_body_available", False)),
+                u"save_available": bool(getattr(self, "pose_body_available", False))
+                or bool(getattr(self, "pose_scoped_available", False)),
                 u"selected": selected,
             }
         )
@@ -36613,7 +36907,13 @@ class ProdWindow(QtGui.QDialog):
         def work():
             record = item[u"record"]
             pose = record[u"pose"]
-            saved = [r for r in PROD_POSE_REGIONS + (u"full_body",) if r in pose[u"regions"]]
+            scoped_record = prod_scope_is_record(record)
+            saved = (
+                prod_scope_parts(record)
+                if scoped_record
+                else [r for r in PROD_POSE_REGIONS + (u"full_body",) if r in pose[u"regions"]]
+            )
+            info = prod_scope_info(record) if scoped_record else None
             character = u((self.identity or {}).get("animset_name") or u"")
             dialog = QtGui.QDialog(self)
             dialog.setWindowTitle("Pose Info")
@@ -36657,8 +36957,18 @@ class ProdWindow(QtGui.QDialog):
             parts.setObjectName("pose_info_parts")
             parts.setSelectionMode(QtGui.QAbstractItemView.NoSelection)
             parts.setFocusPolicy(QtCore.Qt.NoFocus)
-            for r in saved:
-                parts.addItem(PROD_POSE_PART_NAMES[r])
+            if info is not None:
+                for label, text in info[u"rows"]:
+                    row_label = QtGui.QLabel(u(text))
+                    row_label.setWordWrap(True)
+                    form.addRow(u(label), row_label)
+                for bone in info[u"bones"] if pose[u"scope"][u"kind"] == u"selected_parts" else []:
+                    parts.addItem(u(bone))
+                if pose[u"scope"][u"kind"] == u"full_body":
+                    parts.addItem(PROD_POSE_PART_NAMES[u"full_body"])
+            else:
+                for r in saved:
+                    parts.addItem(PROD_POSE_PART_NAMES[r])
             form.addRow("Body parts:", parts)
             outer.addWidget(summary)
             # A compatibility note only when a saved part really can't be applied to the selected character.
@@ -36669,10 +36979,13 @@ class ProdWindow(QtGui.QDialog):
                     record,
                     getattr(self, "pose_rig_class", None),
                 )
-                if selection is not None
+                if selection is not None and not scoped_record
                 else []
             )
             unavailable = [r for r in saved if not (r in eligible and (r in PROD_POSE_LIVE_REGIONS or r == u"full_body"))]
+            if scoped_record:
+                reason = prod_scope_availability(record, self.identity, self.pose_registry_mode())
+                unavailable = [] if reason == u"available" else saved
             if self.identity is not None and unavailable:
                 note = QtGui.QLabel(
                     u"Can't be applied to %s: %s."
@@ -36694,6 +37007,8 @@ class ProdWindow(QtGui.QDialog):
                 QtCore.Qt.TextSelectableByMouse
             )
             details_form.addRow("Model path:", model_label)
+            if info is not None:
+                details_form.addRow("Pose rule:", QtGui.QLabel(u(info[u"engine"])))
             outer.addWidget(details)
             outer.addStretch(1)
             buttons = QtGui.QDialogButtonBox(
@@ -36808,7 +37123,8 @@ class ProdWindow(QtGui.QDialog):
     ):
         """Update Pose: replace exactly the saved parts of an own pose with the character's pose at the playhead,
         after the overwrite confirmation. The same authorization, time pin and read-only capture as Save New; the
-        store (prod_pose_update) keeps the pose's identity, name, creation time and file."""
+        store (prod_pose_update) keeps the pose's identity, name, creation time, file, format and declared scope (a
+        version 3 pose is recaptured with its frozen scope; a changed scope is Save New)."""
         def work():
             ident = self.current()
             reg = prod_pose_load_registry()
@@ -36827,8 +37143,16 @@ class ProdWindow(QtGui.QDialog):
                     PROD_POSE_MESSAGES[u"foreign-locked"],
                 )
 
-            saved = sorted(
-                fresh[u"record"][u"pose"][u"regions"]
+            version = fresh[u"record"][u"pose"].get(u"version")
+            scoped = version == 3
+            saved = (
+                prod_scope_parts(
+                    fresh[u"record"]
+                )
+                if scoped
+                else sorted(
+                    fresh[u"record"][u"pose"][u"regions"]
+                )
             )
             parts = prod_pose_parts_phrase(
                 saved
@@ -36837,7 +37161,12 @@ class ProdWindow(QtGui.QDialog):
                 u"update-refused",
                 PROD_POSE_MESSAGES[u"update-refused"] % {u"part": parts},
             )
-            authorization = prod_pose_authorize(
+            authorize = (
+                prod_scope_authorize
+                if scoped
+                else prod_pose_authorize
+            )
+            authorization = authorize(
                 self.operation[
                     "context"
                 ],
@@ -36847,12 +37176,17 @@ class ProdWindow(QtGui.QDialog):
                 u"Update Pose",
             )
             # Stage E: a version 2 (full-body) record is replaced by a complete capture; version 1 keeps its
-            # left-arm Update.
-            full_body = fresh[u"record"][u"pose"].get(u"version") == 2
+            # left-arm Update; version 3 keeps its declared scope.
+            full_body = version == 2
 
             try:
                 pinned = (
-                    prod_body_current_time(
+                    prod_scope_current_time(
+                        ident,
+                        authorization,
+                    )
+                    if scoped
+                    else prod_body_current_time(
                         ident,
                         authorization,
                         reg,
@@ -36871,6 +37205,11 @@ class ProdWindow(QtGui.QDialog):
                         u"capture-clock",
                         PROD_POSE_UPDATE_CLOCK_COPY,
                     )
+                if scoped:
+                    raise ProdPoseIntegrationError(
+                        exc.code,
+                        u"The pose wasn't updated. %s" % exc,
+                    )
                 raise refused
 
             if not self.confirm_pose_update(
@@ -36885,7 +37224,7 @@ class ProdWindow(QtGui.QDialog):
 
             # Modal return is an operation boundary (section 6.1 step 2).
             self.operation_revalidate()
-            authorization = prod_pose_authorize(
+            authorization = authorize(
                 self.operation[
                     "context"
                 ],
@@ -36902,7 +37241,17 @@ class ProdWindow(QtGui.QDialog):
 
             try:
                 pose = (
-                    prod_body_capture(
+                    prod_scope_capture(
+                        ident,
+                        authorization,
+                        prod_scope_record_request(
+                            fresh[u"record"][u"pose"]
+                        ),
+                        pinned_time=pinned,
+                        label=u"Update Pose",
+                    )
+                    if scoped
+                    else prod_body_capture(
                         ident,
                         authorization,
                         reg,
@@ -36926,9 +37275,14 @@ class ProdWindow(QtGui.QDialog):
                     )
                 if exc.code in (u"stale", u"time-mapping"):
                     raise
+                if scoped:
+                    raise ProdPoseIntegrationError(
+                        exc.code,
+                        u"The pose wasn't updated. %s" % exc,
+                    )
                 raise refused
 
-            if sorted(
+            if not scoped and sorted(
                 pose[
                     u"regions"
                 ]
@@ -40341,7 +40695,8 @@ PROD_POSE_CONVENTIONS = {
     u"quaternion_unit_tolerance": 1e-4,
 }
 PROD_POSE_REGIONS = (u"left_arm", u"right_arm")
-PROD_POSE_PART_NAMES = {u"left_arm": u"Left arm", u"right_arm": u"Right arm", u"full_body": u"Full body"}
+PROD_POSE_PART_NAMES = {u"left_arm": u"Left arm", u"right_arm": u"Right arm", u"full_body": u"Full body",
+                        u"selected_parts": u"Selected parts"}
 PROD_POSE_REGISTRY_FORMAT = u"cpm-pose-profiles"
 PROD_POSE_MAPPING_STATUSES = (u"experimental", u"qualified")
 PROD_POSE_SOLVER_FIELDS = (u"startOffset", u"midOffset", u"poleVector", u"mode")
@@ -40691,6 +41046,11 @@ def prod_pose_payload_digest(pose):
 
 def prod_pose_validate(record, reg):
     """Validate a decoded pose record against the closed schema and the registry's region profiles."""
+    if isinstance(record, dict) and isinstance(record.get(u"pose"), dict) and record[u"pose"].get(u"version") == 3:
+        scoped = globals().get("prod_scope_validate")    # SFP-1: a scoped pose (no registry profile involved)
+        if scoped is None:
+            raise ProdPoseError(u"invalid-file", u"version 3 poses are not supported by this build")
+        return scoped(record)
     if reg.get(u"_body") is not None and isinstance(record, dict) and isinstance(record.get(u"pose"), dict) and             record[u"pose"].get(u"version") == 2:
         return prod_body_validate(record, reg)         # stage E: a complete (full-body) pose
     schema = prod_pose_record_schema()
@@ -40728,10 +41088,13 @@ def prod_pose_parse(raw, reg):
     """Strict parse and validation of one pose record file's exact bytes. A version 1 record keeps its own size
     limit; only a version 2 (full-body) record, with the body registry attached, may be larger."""
     body = reg.get(u"_body")
-    if body is None or len(raw) <= PROD_POSE_MAX_BYTES:
+    if len(raw) <= PROD_POSE_MAX_BYTES:
         return prod_pose_validate(prod_pose_strict_json(raw, PROD_POSE_MAX_BYTES), reg)
-    record = prod_pose_strict_json(raw, body[u"_max_record_bytes"])
-    if not (isinstance(record, dict) and isinstance(record.get(u"pose"), dict) and record[u"pose"].get(u"version") == 2):
+    # SFP-1: a version 3 (scoped) record may use the existing large-record limit without the body registry.
+    record = prod_pose_strict_json(raw, body[u"_max_record_bytes"] if body is not None else 4 << 20)
+    version = record[u"pose"].get(u"version") if isinstance(record, dict) and isinstance(record.get(u"pose"), dict) \
+        else None
+    if not (version == 3 or (body is not None and version == 2)):
         raise ProdPoseError(u"invalid-file", u"file exceeds %d bytes" % PROD_POSE_MAX_BYTES)
     return prod_pose_validate(record, reg)
 
@@ -41235,8 +41598,10 @@ PROD_POSE_MESSAGES = {
 
 
 def prod_pose_parts_phrase(regions):
-    if u"full_body" in regions:                     # stage E: a version 2 complete pose
+    if u"full_body" in regions:                     # stage E: a version 2 complete pose (or a v3 full body)
         return u"Full body"
+    if u"selected_parts" in regions:                # SFP-1: a version 3 selected-parts pose
+        return u"Selected parts"
     regions = [r for r in PROD_POSE_REGIONS if r in regions]
     if len(regions) == 2:
         return u"Both arms"
@@ -41298,7 +41663,7 @@ def prod_pose_ui_state(st):
         out[u"tooltips"][u"rename"] = PROD_POSE_MESSAGES[u"foreign-locked"]
         out[u"tooltips"][u"delete_pose"] = PROD_POSE_MESSAGES[u"foreign-locked"]
     # The parts a pose can hold: the arm regions (version 1) and the complete pose (version 2, stage E).
-    saved = [r for r in PROD_POSE_REGIONS + (u"full_body",) if r in sel.get(u"saved", [])]
+    saved = [r for r in PROD_POSE_REGIONS + (u"full_body", u"selected_parts") if r in sel.get(u"saved", [])]
     availability = sel.get(u"availability") or {}
     known = all(availability.get(r) is not None for r in saved)
     available = [r for r in saved if availability.get(r) == u"available"]
@@ -41627,7 +41992,14 @@ def prod_pose_update(selected, target, pose, now, reg):
     """Replace the saved arm data of an own pose. Identity, name, creation time and file name are kept."""
     item = prod_pose_require(selected, target, reg)
     old = item[u"record"]
-    if sorted(pose.get(u"regions", {})) != sorted(old[u"pose"][u"regions"]):
+    if old[u"pose"].get(u"version") == 3 or pose.get(u"version") == 3:
+        # SFP-1: Update keeps the record's format and its declared scope (a changed scope is Save New).
+        keys = (u"kind", u"requested", u"posed", u"carried", u"preserved", u"exclusions", u"ledger",
+                u"root_translation")
+        if pose.get(u"version") != old[u"pose"].get(u"version") or any(
+                pose[u"scope"].get(k) != old[u"pose"][u"scope"].get(k) for k in keys):
+            raise ProdPoseLibraryError(u"regions", u"Update Pose must replace exactly the saved parts.")
+    elif sorted(pose.get(u"regions", {})) != sorted(old[u"pose"][u"regions"]):
         raise ProdPoseLibraryError(u"regions", u"Update Pose must replace exactly the saved parts.")
     record = prod_pose_build_record(old[u"character_key"], old[u"model_ref"], old[u"preset_id"], old[u"name"], pose,
                                     old[u"created_at"], now, reg)
@@ -41895,6 +42267,8 @@ def prod_pose_deferred_verify(pending):
         return prod_apply_deferred_unverified(reason)
     if (pending or {}).get(u"body"):
         return prod_body_verify_applied(pending)
+    if (pending or {}).get(u"scoped"):
+        return globals()["prod_scope_verify_applied"](pending)      # SFP-1 scoped pose
     return prod_pose_verify_applied(pending)
 
 # === end of F-01 stage C block ===
@@ -45069,3 +45443,2009 @@ def prod_body_verify_applied(pending):
     return {u"phase": u"committed-verified"}
 
 # === end of F-01 stage E block ===
+
+
+# ===========================================================================
+# F-01 Pose Library scoped poses, SFP-1 stages A/B: version 3 records
+# (cpm/qualification/F01_SCOPED_POSE_BLUEPRINT_R3_20261108.md; Owner authorization of SFP-1 stages A/B, 2026-11-08). One scope
+# compiler for Full body and Selected parts under the engine rule direct_fk_v1: automatic discovery of directly
+# animated (control -> channel -> bone) transforms without a per-character profile, the W/A/D/P sets, scope-aware
+# compatibility, parent-first skeletal composition with unselected bridges and cumulative uniform scale, and the
+# existing P1-P7 transaction primitives of stages D/E. Version 1 (left arm) and version 2 (registry full body) records
+# keep their own paths. Unqualified capabilities stay disabled: direct_fk_v1 is experimental (qualification build
+# only) and constant_channel_carried_v1 is unavailable until a native procedural-state guard is qualified.
+# ===========================================================================
+
+PROD_SCOPE_POSE_VERSION = 3
+PROD_SCOPE_RULE = u"direct_fk_v1"
+# The engine supplies the rules; a file only names one. status: experimental = qualification build only.
+PROD_SCOPE_RULES = {u"direct_fk_v1": {u"revision": 1, u"status": u"experimental"}}
+PROD_SCOPE_CARRIED_RULE = u"constant_channel_carried_v1"
+PROD_SCOPE_CARRIED_REVISION = 1
+# constant_channel_carried_v1 (R3 3.1): disabled. Its admission also needs a supported procedural-state guard
+# (prod_scope_procedural_guard), whose native contract is not established, and qualified constant-log extrapolation.
+PROD_SCOPE_CARRIED_ENABLED = [False]
+PROD_SCOPE_EXTRAPOLATION_QUALIFIED = [False]
+PROD_SCOPE_KINDS = (u"full_body", u"selected_parts")
+PROD_SCOPE_COMPLETENESS = {u"full_body": u"declared_body", u"selected_parts": u"declared_scope"}
+PROD_SCOPE_LEDGER_ROLES = (u"posed", u"carried", u"carried-constant", u"excluded-expression", u"outside")
+PROD_SCOPE_PROVENANCE = (u"user_confirmed", u"supported_metadata")
+PROD_SCOPE_MODEL_FRAME = u"@model"
+PROD_SCOPE_MAX_BONES = 4096
+PROD_SCOPE_MAX_RECORD_BYTES = 4 << 20            # the existing bounded pose-record reader's large-record limit
+# Provisional, versioned with direct_fk_v1 revision 1 (R3 5): the largest saved/destination structural offset
+# difference that is compatible. The destination always keeps its own offsets.
+PROD_SCOPE_FK_POSITION_LIMIT = 0.00005
+# The established observation tolerances (body_krystal_v1), unchanged.
+PROD_SCOPE_TOLERANCES = {u"angle_degrees": 0.01, u"effective_angle_degrees": 0.001, u"position": 0.001}
+PROD_SCOPE_TRANSFORM_TYPES = {u"position": (u"DmeVector3Log", u"DmeVector3LogLayer"),
+                              u"orientation": (u"DmeQuaternionLog", u"DmeQuaternionLogLayer")}
+PROD_SCOPE_SOURCE_ATTRIBUTES = {u"position": u"valuePosition", u"orientation": u"valueOrientation"}
+PROD_SCOPE_CONTROL_CHANNELS = {u"position": u"positionChannel", u"orientation": u"orientationChannel"}
+PROD_SCOPE_SCALE_OPERATORS = (u"DmeExpressionOperator",)
+PROD_SCOPE_CONSTRAINTS = (u"DmeRigIKConstraintOperator", u"DmeRigOrientConstraintOperator",
+                          u"DmeRigPointConstraintOperator")
+PROD_SCOPE_SLAVE_SLOTS = (u"slave", u"startJoint", u"midJoint", u"endJoint")
+PROD_SCOPE_MAX_GROUPS = 4096
+PROD_SCOPE_AUTH_SCHEMA = u"cpm-scoped-pose-authorization-v1"
+PROD_SCOPE_PART_KEYS = {u"full_body": u"full_body", u"selected_parts": u"selected_parts"}
+PROD_SCOPE_MESSAGES = {
+    u"not-qualified": u"This kind of pose isn't available in this build yet. Nothing was changed.",
+    u"rig-driven": u"Full body can't be saved: parts of this character's body are driven by its rig. Choose Selected "
+                   u"parts to save a smaller pose.",
+    u"unsupported-body": u"%(parts)s can't be captured yet. Choose Selected parts to save a smaller pose.",
+    u"carried-unsupported": u"Some bones of this character have no controls, and CPM can't confirm they stay fixed. "
+                            u"Choose Selected parts to save a smaller pose.",
+    u"unsupported-selection": u"These controls can't be saved in a pose: %(parts)s. Choose other controls.",
+    u"carried-selection": u"A part below your selection can't follow it safely: %(parts)s. Choose other controls.",
+    u"shared-input": u"This control also drives other parts of the character: %(parts)s. Choose a supported scope or "
+                     u"select finger controls.",
+    u"empty-selection": u"Select at least one body control.",
+    u"review-required": u"Review these controls before saving: CPM cannot determine whether they belong to the body "
+                        u"pose.",
+    u"exclusion-boundary": u"The controls you chose to leave unchanged also affect the body pose, so they can't be "
+                           u"left out. Include them or choose Selected parts.",
+    u"different-model": u"This pose was saved on a different character model. Nothing was changed.",
+    u"skeleton-differs": u"This character's skeleton differs from the one this pose was saved on. Nothing was changed.",
+    u"scope-differs": u"This character's controls differ from the ones this pose was saved with. Nothing was changed.",
+    u"proportions": u"This pose was saved with different body proportions and can't be applied safely. Nothing was "
+                    u"changed.",
+    u"fk-position": u"This pose uses different bone positions and can't be applied safely.",
+    u"placement-ambiguous": u"CPM can't identify this character's body root, so a full-body pose can't be used here. "
+                            u"Nothing was changed.",
+    u"scale-unsupported": u"This character's scale isn't supported for poses yet. Nothing was changed.",
+    u"shared-authority": u"This character's animation is driven in a way CPM can't change safely. Nothing was changed.",
+    u"evidence-unreadable": u"CPM couldn't read everything it needs to check this character safely. Nothing was "
+                            u"changed.",
+    u"structure-unsupported": u"This character's animation isn't in a form CPM can change safely. Nothing was "
+                              u"changed.",
+    u"invalid-file": u"This pose file can't be read. It won't be applied.",
+}
+PROD_SCOPE_REVIEW_SCOPE_COPY = u"Review these controls before saving: CPM cannot determine whether they belong to the " \
+                               u"body pose."
+
+
+def prod_scope_error(code, detail, copy=None, parts=None):
+    """A scoped refusal: user copy as the message (naming the parts when given), the detail in the log only."""
+    try:
+        prod_pose_log(u"SCOPE-refused", {u"code": code, u"detail": detail})
+    except Exception:
+        pass
+    text = copy or PROD_SCOPE_MESSAGES.get(code) or PROD_SCOPE_MESSAGES[u"structure-unsupported"]
+    if u"%(parts)s" in text:
+        text = text % {u"parts": prod_scope_list_phrase(parts or [])}
+    err = ProdPoseError(code, text)
+    err.scoped = True                       # user copy already; never re-wrapped
+    return err
+
+
+def prod_scope_list_phrase(names, limit=6):
+    names = list(names)
+    if len(names) > limit:
+        return u", ".join(names[:limit]) + u" and %d more" % (len(names) - limit)
+    return u", ".join(names) or u"none"
+
+
+def prod_scope_f32(values):
+    return [prod_pose_f32(c) for c in values]
+
+
+def prod_scope_exact(a, b):
+    """Exact equality of finite native float32 vectors."""
+    if not isinstance(a, list) or not isinstance(b, list) or len(a) != len(b):
+        return False
+    for x, y in zip(a, b):
+        if not prod_pose_is_number(x) or not prod_pose_is_number(y):
+            return False
+        fx, fy = float(x), float(y)
+        if math.isnan(fx) or math.isinf(fx) or math.isnan(fy) or math.isinf(fy):
+            return False
+        if prod_pose_f32(fx) != fx or prod_pose_f32(fy) != fy or fx != fy:
+            return False
+    return True
+
+
+def prod_scope_field_value(f):
+    return f.get(u"value") if isinstance(f, dict) and f.get(u"status") == u"READ" else None
+
+
+# --- engine rule table and capability gate --------------------------------------------------------------------------
+
+def prod_scope_rule_usable(mode, rule=PROD_SCOPE_RULE, revision=None):
+    """Whether the engine supports `rule` (and `revision`, when given) in this build mode. A record never enables a
+    rule: production needs a qualified rule; the qualification build also admits experimental ones."""
+    entry = PROD_SCOPE_RULES.get(rule)
+    if entry is None or (revision is not None and revision != entry[u"revision"]):
+        return False
+    if mode == u"production":
+        return entry[u"status"] == u"qualified"
+    return mode == u"qualification" and entry[u"status"] in (u"qualified", u"experimental")
+
+
+# --- the version 3 record ---------------------------------------------------------------------------------------------
+
+def prod_scope_record_schema():
+    s, i = (u"str",), (u"int", 1000000)
+    v3, q, typed, num = (u"vec", 3), (u"quat",), (u"typed",), (u"num",)
+    names = (u"list", s, 0, PROD_SCOPE_MAX_BONES)
+    exclusion = (u"obj", {u"id": s, u"bones": (u"list", s, 1, PROD_SCOPE_MAX_BONES), u"reason": s,
+                          u"provenance": (u"enum", PROD_SCOPE_PROVENANCE), u"policy_revision": (u"nullable", (u"int", 1000)),
+                          u"label": s})
+    bone = (u"obj", {u"id": s, u"index": i, u"parent": (u"nullable", s)})
+    oracle_bone = (u"obj", {u"local_position": v3, u"local_orientation": q, u"relative_position": v3,
+                            u"relative_orientation": q})
+    pose = (u"obj", {
+        u"format": (u"const", PROD_POSE_FORMAT), u"version": (u"const", PROD_SCOPE_POSE_VERSION),
+        u"conventions": (u"obj", dict((k, (u"const", v)) for k, v in PROD_POSE_CONVENTIONS.items())),
+        u"engine": (u"obj", {u"rule": (u"const", PROD_SCOPE_RULE), u"revision": (u"int", 1000),
+                             u"carried_rule": (u"nullable", (u"obj", {u"rule": (u"const", PROD_SCOPE_CARRIED_RULE),
+                                                                     u"revision": (u"int", 1000)}))}),
+        u"source": (u"obj", {u"model_ref": s, u"model_key": s, u"model_checksum": (u"nullable", (u"int", 1 << 62)),
+                             u"layout_signature": s, u"shot_name": s, u"t_doc_ticks": (u"int", 1 << 40),
+                             u"t_shot_ticks": (u"int", 1 << 40)}),
+        u"scope": (u"obj", {u"kind": (u"enum", PROD_SCOPE_KINDS),
+                            u"completeness": (u"enum", (u"declared_body", u"declared_scope")),
+                            u"requested": names, u"posed": (u"list", s, 1, PROD_SCOPE_MAX_BONES), u"carried": names,
+                            u"preserved": names,
+                            u"root_translation": (u"enum", (u"included", u"excluded")),
+                            u"ledger": (u"map", None, (u"enum", PROD_SCOPE_LEDGER_ROLES), False),
+                            u"exclusions": (u"list", exclusion, 0, 16), u"label": s}),
+        u"structure": (u"obj", {u"bones": (u"list", bone, 1, PROD_SCOPE_MAX_BONES), u"root": (u"nullable", s),
+                                u"placement": (u"const", u"model"),
+                                u"boundaries": (u"map", None, s, False),
+                                u"offsets": (u"map", None, v3, False),
+                                u"scales": (u"obj", {u"model": typed, u"bones": (u"map", None, typed, False),
+                                                     u"boundaries": (u"map", None, num, False)})}),
+        u"values": (u"obj", {u"orientations": (u"map", None, q, False), u"root_translation": (u"nullable", v3)}),
+        u"oracle": (u"obj", {u"frame": (u"const", u"component-boundary"),
+                             u"bones": (u"map", None, oracle_bone, False)})})
+    return (u"obj", {
+        u"schema_version": (u"const", 3), u"record_kind": (u"const", u"preset"), u"kind": (u"const", u"pose"),
+        u"character_key": s, u"model_ref": s, u"preset_id": s, u"name": s, u"created_at": s, u"updated_at": s,
+        u"payload_sha256": s, u"pose": pose})
+
+
+def prod_scope_is_record(record):
+    return isinstance(record, dict) and isinstance(record.get(u"pose"), dict) and \
+        record[u"pose"].get(u"version") == PROD_SCOPE_POSE_VERSION
+
+
+def prod_scope_layout_signature(bones):
+    """The skeleton layout: every bone's index, name and parent, in index order."""
+    rows = sorted([b[u"index"], b[u"id"], b[u"parent"]] for b in bones)
+    return hashlib.sha256(prod_pose_canonical_bytes(rows)).hexdigest()
+
+
+def prod_scope_order(parents):
+    """Names parent first (the hierarchy, not names); a cycle or an unknown parent refuses."""
+    order, done, pending = [], set(), sorted(parents)
+    while pending:
+        progressed = False
+        for name in list(pending):
+            parent = parents[name]
+            if parent is not None and parent not in parents:
+                raise ProdPoseError(u"invalid-file", u"bone %s has an unknown parent" % name)
+            if parent is None or parent in done:
+                order.append(name)
+                done.add(name)
+                pending.remove(name)
+                progressed = True
+        if not progressed:
+            raise ProdPoseError(u"invalid-file", u"the bone hierarchy has a cycle")
+    return order
+
+
+def prod_scope_validate(record):
+    """Validate a decoded version 3 record: the closed schema, then every structural rule (no unknown fields,
+    duplicate or contradictory memberships, cycles, nonfinite or non-float32 values, missing evidence, forged rule
+    revisions). Refuses with invalid-file."""
+    prod_pose_check(prod_scope_record_schema(), record, u"")
+    if len(record[u"preset_id"]) != 32 or any(c not in u"0123456789abcdef" for c in record[u"preset_id"]):
+        raise ProdPoseError(u"invalid-file", u"preset_id is not 32 lowercase hex digits")
+    pose = record[u"pose"]
+    engine = pose[u"engine"]
+    if PROD_SCOPE_RULES.get(engine[u"rule"], {}).get(u"revision") != engine[u"revision"]:
+        raise ProdPoseError(u"invalid-file", u"the engine rule revision is not one this build supports")
+    if engine[u"carried_rule"] is not None and engine[u"carried_rule"][u"revision"] != PROD_SCOPE_CARRIED_REVISION:
+        raise ProdPoseError(u"invalid-file", u"the carried rule revision is not one this build supports")
+    st, sc, val, orc = pose[u"structure"], pose[u"scope"], pose[u"values"], pose[u"oracle"]
+    ids = [b[u"id"] for b in st[u"bones"]]
+    indices = [b[u"index"] for b in st[u"bones"]]
+    if len(set(ids)) != len(ids) or len(set(indices)) != len(indices):
+        raise ProdPoseError(u"invalid-file", u"duplicate bone ids or indices")
+    parents = dict((b[u"id"], b[u"parent"]) for b in st[u"bones"])
+    prod_scope_order(parents)
+    if pose[u"source"][u"layout_signature"] != prod_scope_layout_signature(st[u"bones"]):
+        raise ProdPoseError(u"invalid-file", u"the layout signature does not match the structure")
+    known = set(ids)
+    for key in (u"requested", u"posed", u"carried", u"preserved"):
+        if len(set(sc[key])) != len(sc[key]) or not set(sc[key]) <= known:
+            raise ProdPoseError(u"invalid-file", u"scope %s has duplicate or unknown bones" % key)
+    posed, carried, preserved = set(sc[u"posed"]), set(sc[u"carried"]), set(sc[u"preserved"])
+    if posed & carried or preserved & (posed | carried):
+        raise ProdPoseError(u"invalid-file", u"a bone is in more than one of posed, carried and preserved")
+    if sorted(sc[u"ledger"]) != sorted(ids):
+        raise ProdPoseError(u"invalid-file", u"the coverage ledger must account for every bone exactly once")
+    for name, role in sc[u"ledger"].items():
+        if (role == u"posed") != (name in posed) or (role in (u"carried", u"carried-constant")) != (name in carried):
+            raise ProdPoseError(u"invalid-file", u"the ledger contradicts the scope membership of %s" % name)
+    excluded = []
+    for e in sc[u"exclusions"]:
+        excluded.extend(e[u"bones"])
+    if len(set(excluded)) != len(excluded) or set(excluded) != set(
+            n for n, r in sc[u"ledger"].items() if r == u"excluded-expression"):
+        raise ProdPoseError(u"invalid-file", u"exclusions do not match the ledger")
+    if not preserved <= set(excluded):
+        raise ProdPoseError(u"invalid-file", u"a preserved branch is not an explicit exclusion")
+    if len(set(e[u"id"] for e in sc[u"exclusions"])) != len(sc[u"exclusions"]):
+        raise ProdPoseError(u"invalid-file", u"duplicate exclusion ids")
+    if sc[u"completeness"] != PROD_SCOPE_COMPLETENESS[sc[u"kind"]]:
+        raise ProdPoseError(u"invalid-file", u"the completeness claim does not match the scope kind")
+    if sc[u"kind"] == u"full_body":
+        if sorted(sc[u"requested"]) != sorted(ids) or any(r in (u"outside", u"carried") for r in sc[u"ledger"].values()):
+            raise ProdPoseError(u"invalid-file", u"a full-body scope must account for every bone as posed, carried "
+                                                 u"constant or an explicit exclusion")
+        if st[u"root"] is None or st[u"root"] not in posed or sc[u"root_translation"] != u"included" or \
+                val[u"root_translation"] is None:
+            raise ProdPoseError(u"invalid-file", u"a full-body scope needs its posed root and translation")
+        if any(r == u"carried-constant" for r in sc[u"ledger"].values()) and engine[u"carried_rule"] is None:
+            raise ProdPoseError(u"invalid-file", u"carried constants need their rule")
+    else:
+        if sorted(sc[u"requested"]) != sorted(posed) or sc[u"exclusions"] or sc[u"root_translation"] != u"excluded" \
+                or val[u"root_translation"] is not None:
+            raise ProdPoseError(u"invalid-file", u"a selected-parts scope poses exactly its requested bones, with no "
+                                                 u"exclusions and no body translation")
+        if any(r in (u"excluded-expression",) for r in sc[u"ledger"].values()):
+            raise ProdPoseError(u"invalid-file", u"a selected-parts scope has no expression exclusions")
+        below, pending, kids = set(), list(posed), {}
+        for n, p in parents.items():
+            kids.setdefault(p, []).append(n)
+        while pending:
+            for c in kids.get(pending.pop(), []):
+                if c not in below:
+                    below.add(c)
+                    pending.append(c)
+        if carried != below - posed:
+            raise ProdPoseError(u"invalid-file", u"carried bones must be exactly the unselected descendants")
+    if st[u"root"] is not None and (st[u"root"] not in known or parents[st[u"root"]] is not None):
+        raise ProdPoseError(u"invalid-file", u"the root is not a top-level bone")
+    affected = posed | carried | preserved
+    if sorted(val[u"orientations"]) != sorted(posed):
+        raise ProdPoseError(u"invalid-file", u"the saved orientations must be exactly the posed bones")
+    if sorted(orc[u"bones"]) != sorted(affected) or sorted(st[u"offsets"]) != sorted(affected):
+        raise ProdPoseError(u"invalid-file", u"the oracle and offsets must cover exactly the affected bones")
+    tops = sorted(n for n in affected if parents[n] is None or parents[n] not in affected)
+    if sorted(st[u"boundaries"]) != tops or sorted(st[u"scales"][u"boundaries"]) != tops:
+        raise ProdPoseError(u"invalid-file", u"boundaries must name exactly the top bone of each component")
+    for top in tops:
+        expected = parents[top] if parents[top] is not None else PROD_SCOPE_MODEL_FRAME
+        if st[u"boundaries"][top] != expected:
+            raise ProdPoseError(u"invalid-file", u"component %s has the wrong boundary" % top)
+        if not 0.0 < float(st[u"scales"][u"boundaries"][top]) < 1.0e6:
+            raise ProdPoseError(u"invalid-file", u"component %s has an invalid boundary scale" % top)
+    if not set(st[u"scales"][u"bones"]) >= affected or not set(st[u"scales"][u"bones"]) <= known:
+        raise ProdPoseError(u"invalid-file", u"bone scales must cover the affected bones")
+    for name, v in list(val[u"orientations"].items()) + list(st[u"offsets"].items()) + (
+            [(u"root_translation", val[u"root_translation"])] if val[u"root_translation"] is not None else []):
+        if not prod_scope_exact(v, prod_scope_f32(v)):
+            raise ProdPoseError(u"invalid-file", u"%s is not a native float32 value" % name)
+    if record[u"payload_sha256"] != prod_pose_payload_digest(pose):
+        raise ProdPoseError(u"invalid-file", u"payload digest does not match")
+    prod_scope_check_oracle(pose)
+    return record
+
+
+def prod_scope_check_oracle(pose):
+    """The record's internal skeletal consistency: composing the saved local transforms parent-first from each
+    component boundary, with the recorded cumulative scales, reproduces the recorded boundary-relative transforms."""
+    st, orc = pose[u"structure"], pose[u"oracle"][u"bones"]
+    parents = dict((b[u"id"], b[u"parent"]) for b in st[u"bones"])
+    relative, scale = {}, {}
+    identity = ([0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0])
+    for name in prod_scope_order(parents):
+        if name not in orc:
+            continue
+        parent = parents[name]
+        if parent in orc:
+            frame, s = relative[parent], scale[parent]
+        else:
+            frame, s = identity, float(st[u"scales"][u"boundaries"][name])
+        o = orc[name]
+        relative[name] = prod_scope_compose(frame, s, (o[u"local_position"], o[u"local_orientation"]))
+        scale[name] = s * prod_scope_typed_scale(st[u"scales"][u"bones"][name], name, u"invalid-file")
+        if prod_pose_distance(relative[name][0], o[u"relative_position"]) > PROD_SCOPE_TOLERANCES[u"position"] or \
+                prod_pose_angle_deg(relative[name][1], o[u"relative_orientation"]) > PROD_SCOPE_TOLERANCES[
+                    u"angle_degrees"]:
+            raise ProdPoseError(u"invalid-file", u"the saved skeletal evidence of %s is inconsistent" % name)
+
+
+def prod_scope_typed_scale(field, name, code=u"scale-unsupported"):
+    """A uniform positive scale from a typed or native field (absent: 1). Anything else refuses."""
+    if not isinstance(field, dict):
+        raise prod_scope_error(code, u"%s has no readable scale" % name)
+    if field.get(u"present") is False or field.get(u"status") == u"ABSENT":
+        return 1.0
+    v = field.get(u"value") if (field.get(u"present") is True or field.get(u"status") == u"READ") else None
+    if isinstance(v, bool) or not prod_pose_is_number(v) or not 0.0 < float(v) < 1.0e3:
+        raise prod_scope_error(code, u"%s has an unsupported scale %r" % (name, v))
+    return float(v)
+
+
+def prod_scope_compose(parent, parent_scale, local):
+    """R3 5: P_b = P_parent + rotate(Q_parent, S_parent * p_b); Q_b = Q_parent * q_b. The parent's cumulative scale
+    acts on the child's offset; the child's own scale acts on its descendants only."""
+    (pp, pq), (lp, lq) = parent, local
+    q = prod_pose_unit(pq)
+    moved = prod_pose_qrot(q, [float(c) * parent_scale for c in lp])
+    return ([pp[k] + moved[k] for k in range(3)], prod_pose_unit(prod_pose_qmul(q, prod_pose_unit(lq))))
+
+
+def prod_scope_relative(boundary, world):
+    """world expressed in the boundary frame (rotation only; the boundary's scale is recorded separately)."""
+    (bp, bq), (wp, wq) = boundary, world
+    inv = [-bq[0], -bq[1], -bq[2], bq[3]]
+    inv = prod_pose_unit(inv)
+    return (prod_pose_qrot(inv, [wp[k] - bp[k] for k in range(3)]), prod_pose_unit(prod_pose_qmul(inv, wq)))
+
+
+# --- live layer: the pinned instance, with or without a rig -----------------------------------------------------------
+
+def prod_scope_wrap(fn):
+    try:
+        return fn()
+    except ProdPoseUnreadable as exc:
+        raise prod_scope_error(u"evidence-unreadable", u"%s" % exc)
+    except ProdPoseError as exc:
+        if getattr(exc, "scoped", False) or exc.code in (u"capture-clock", u"editor-mode", u"time-mapping", u"stale"):
+            raise
+        # A stage D/E primitive's technical refusal: user copy for its code, the detail logged.
+        code = exc.code if exc.code in PROD_SCOPE_MESSAGES else u"structure-unsupported"
+        raise prod_scope_error(code, u"%s" % exc)
+
+
+def prod_scope_live(row):
+    """Every native element of the pinned instance a scoped operation depends on, resolved by identity inside the
+    instance (as prod_body_live, without requiring a rig: rig presence elsewhere is not a refusal)."""
+    shot, animset, gm = row["shot"], row["animset"], row["gm"]
+    L = {u"shot": shot, u"animset": animset, u"gm": gm}
+    nodes, parents = prod_pose_walk(prod_pose_attr(shot, u"scene"))
+    if prod_pose_h(gm) not in nodes:
+        raise prod_scope_error(u"skeleton-differs", u"the character model is not in the current shot's scene")
+    L[u"nodes"], L[u"parents"] = nodes, parents
+    rigs = []
+    for obj in nodes.values():
+        if prod_pose_type(obj) == u"DmeRig":
+            for reg in prod_pose_seq(prod_pose_attr(obj, u"animSetList")):
+                linked = prod_pose_attr(reg, u"animationSet")
+                if linked is not None and prod_pose_h(linked) == prod_pose_h(animset):
+                    rigs.append((obj, reg))
+    L[u"rigs"] = rigs
+    L[u"owned"] = []
+    handles = {}
+    for rig, reg in rigs:
+        owned = prod_pose_seq(prod_pose_attr(reg, u"elementList"))
+        L[u"owned"].extend(owned)
+        for obj in owned:
+            if obj is not None and prod_pose_type(obj) == u"DmeRigHandle":
+                name = prod_pose_text(obj.GetName())
+                if name in handles:
+                    raise prod_scope_error(u"structure-unsupported", u"rig handle %s is duplicated" % name)
+                handles[name] = obj
+    L[u"rig_handles"] = handles
+    L[u"all_controls"] = prod_pose_seq(prod_pose_attr(animset, u"controls"))
+    controls = {}
+    for c in L[u"all_controls"]:
+        name = prod_pose_text(c.GetName())
+        if name in controls:
+            raise prod_scope_error(u"structure-unsupported", u"control %s is duplicated" % name)
+        controls[name] = c
+    L[u"controls"] = controls
+    L[u"clip"] = prod_instance_channels_clip(animset, shot)
+    L[u"clip_channels"] = prod_pose_seq(prod_pose_attr(L[u"clip"], u"channels"), 16384)
+    channels = {}
+    for ch in L[u"clip_channels"]:
+        name = prod_pose_text(ch.GetName())
+        if name in channels:
+            raise prod_scope_error(u"structure-unsupported", u"channel %s is duplicated" % name)
+        channels[name] = ch
+    L[u"channels"] = channels
+    bones = prod_pose_seq(prod_pose_attr(gm, u"bones"))
+    by_transform = dict((prod_pose_h(b), b) for b in bones)
+    L[u"bones"] = {}
+    for obj in nodes.values():
+        if not prod_pose_has(obj, u"transform"):
+            continue
+        t = prod_pose_attr(obj, u"transform")
+        if t is None or prod_pose_h(t) not in by_transform:
+            continue
+        m = PROD_POSE_BONE_NAME_RE.match(prod_pose_text(t.GetName()))
+        if m is None:
+            raise prod_scope_error(u"structure-unsupported", u"unrecognised bone transform %s" %
+                                   prod_pose_text(t.GetName()))
+        name = m.group(2)
+        if name in L[u"bones"]:
+            raise prod_scope_error(u"structure-unsupported", u"bone %s is duplicated" % name)
+        L[u"bones"][name] = {u"dag": obj, u"transform": t, u"index": int(m.group(1))}
+    if len(L[u"bones"]) != len(bones) or not L[u"bones"] or len(L[u"bones"]) > PROD_SCOPE_MAX_BONES:
+        raise prod_scope_error(u"structure-unsupported", u"not every model bone has exactly one scene element")
+    operators = prod_pose_seq(prod_pose_attr(animset, u"operators"))
+    seen = set(prod_pose_h(x) for x in operators)
+    for op in prod_pose_seq(prod_pose_attr(shot, u"operators")):
+        if prod_pose_h(op) not in seen:
+            operators.append(op)
+            seen.add(prod_pose_h(op))
+    L[u"operators"] = operators
+    L[u"profile"] = None
+    return L
+
+
+def prod_scope_groups(L):
+    """The animation set's control groups (organization only, never authority): [{path, controls: [handles]}].
+    Absent: []. A cycle or an unbounded walk refuses."""
+    present, root = prod_pose_opt_attr(L[u"animset"], u"rootControlGroup")
+    if not present or root is None:
+        return []
+    rows, pending, seen = [], [(root, [])], set()
+    while pending:
+        g, path = pending.pop(0)
+        h = prod_pose_h(g)
+        if h in seen:
+            raise prod_scope_error(u"evidence-unreadable", u"control groups repeat")
+        seen.add(h)
+        if len(seen) > PROD_SCOPE_MAX_GROUPS:
+            raise prod_scope_error(u"evidence-unreadable", u"control groups exceed their bound")
+        here = path + [prod_pose_text(g.GetName())]
+        present, controls = prod_pose_opt_attr(g, u"controls")
+        rows.append({u"path": here, u"controls": [prod_pose_h(c) for c in prod_pose_seq(controls) if c is not None]
+                     if present and controls is not None else []})
+        present, children = prod_pose_opt_attr(g, u"children")
+        if present and children is not None:
+            for child in prod_pose_seq(children):
+                if child is not None:
+                    pending.append((child, here))
+    return rows
+
+
+def prod_scope_discover(L, t_chan, index):
+    """The portable discovery data of the pinned instance at the mapped tick (prod_body_discover's form, which
+    reads no profile), plus each bone's parent DAG and the authored channel binding indices."""
+    D = prod_body_discover(L, t_chan, index)
+    for name, b in L[u"bones"].items():
+        ps = [p for p in L[u"parents"].get(prod_pose_h(b[u"dag"]), []) if p is not None]
+        D[u"bones"][name][u"parent_dags"] = ps
+    D[u"model"][u"parent_count"] = len([p for p in L[u"parents"].get(prod_pose_h(L[u"gm"]), []) if p is not None])
+    for name, ch in L[u"channels"].items():
+        D[u"channels"][name][u"indices"] = [prod_pose_field(ch, u"fromIndex"), prod_pose_field(ch, u"toIndex")]
+    return prod_pose_roundtrip(D)
+
+
+# --- classification: direct_fk_v1 and the coverage roles --------------------------------------------------------------
+
+def prod_scope_classify(D):
+    """Every bone's role from binding evidence alone (no profile, no names): direct-fk (one control's own position
+    and orientation channels, nothing else writes or constrains it), constrained (slaved by a rig constraint),
+    carried-candidate (one source-less channel per attribute; constant_channel_carried_v1 may admit it) or
+    unresolved. Also the model placement channels, supported scale operators and the anatomical root."""
+    bones, channels = D[u"bones"], D[u"channels"]
+    owner_of = {D[u"model"][u"transform"]: (u"model", u"model")}
+    label = {D[u"model"][u"handle"]: u"model"}
+    for n, b in bones.items():
+        owner_of[b[u"transform"]] = (u"bone", n)
+        label[b[u"handle"]] = u"bone:" + n
+    for n, h in D[u"rig"][u"handles"].items():
+        owner_of[h[u"transform"]] = (u"handle", n)
+        label[h[u"handle"]] = u"handle:" + n
+    slaved, reads = {}, {}
+    for op in D[u"operators"]:
+        if op[u"type"] not in PROD_SCOPE_CONSTRAINTS:
+            continue
+        for slot, s in op[u"slaves"].items():
+            if s is not None and s.get(u"target") is not None:
+                slaved.setdefault(label.get(s[u"target"], u"element:%d" % s[u"target"]), []).append(op[u"name"])
+    control_of = {}
+    for cname, c in D[u"controls"].items():
+        for attr, ch in c[u"channels"].items():
+            if ch is not None:
+                control_of[ch] = (cname, c[u"type"], attr)
+    by_owner, roles = {}, {}
+    for name in sorted(channels):
+        ch = channels[name]
+        to = ch[u"to"]
+        if to is None or to[u"handle"] not in owner_of:
+            roles[name] = {u"role": u"other", u"owner": None, u"attribute": ch[u"to_attribute"]}
+            continue
+        kind, owner = owner_of[to[u"handle"]]
+        by_owner.setdefault((kind, owner, ch[u"to_attribute"]), []).append(name)
+        roles[name] = {u"role": u"model-placement" if kind == u"model" else u"rig-handle" if kind == u"handle" else
+                       u"bone", u"owner": owner, u"attribute": ch[u"to_attribute"]}
+
+    def control_channel(cname, attr):
+        ch = channels[cname]
+        ctl = control_of.get(ch[u"handle"])
+        return (ctl is not None and ctl[1] == u"DmeTransformControl" and ctl[2] == PROD_SCOPE_CONTROL_CHANNELS[attr]
+                and ch[u"from"] is not None and ch[u"from"][u"handle"] == D[u"controls"][ctl[0]][u"handle"]
+                and ch[u"from_attribute"] == PROD_SCOPE_SOURCE_ATTRIBUTES[attr] and ch[u"mode"] == 3
+                and len(ch[u"layers"]) == 1 and (ch[u"log_type"], ch[u"layers"][0]) == PROD_SCOPE_TRANSFORM_TYPES[attr])
+
+    def unique_writer(cname):
+        ch = channels[cname]
+        return D[u"writers"].get(u"%d:%s" % (ch[u"to"][u"handle"], ch[u"to_attribute"])) == 1
+    out = {}
+    for name in sorted(bones):
+        lab = u"bone:" + name
+        writers = dict((attr, by_owner.get((u"bone", name, attr), [])) for attr in (u"position", u"orientation"))
+        others = sorted(a for (k, o, a) in by_owner if k == u"bone" and o == name and
+                        a not in (u"position", u"orientation"))
+        row = {u"class": u"unresolved", u"reason": None, u"channels": {}, u"control": None, u"scale_channels": []}
+        bad_other = []
+        for attr in others:
+            for cname in by_owner[(u"bone", name, attr)]:
+                ch = channels[cname]
+                if attr == u"scale" and ch[u"from"] is not None and ch[u"from"][u"type"] in PROD_SCOPE_SCALE_OPERATORS:
+                    row[u"scale_channels"].append(cname)
+                    roles[cname][u"role"] = u"scale-operator"
+                else:
+                    bad_other.append(cname)
+        if lab in slaved:
+            row[u"class"], row[u"reason"] = u"constrained", u"rig-driven"
+        elif bad_other:
+            row[u"reason"] = u"other writers %s" % bad_other[:4]
+        elif any(len(ws) != 1 for ws in writers.values()):
+            row[u"reason"] = u"not one channel per attribute"
+        elif not all(unique_writer(ws[0]) for ws in writers.values()):
+            row[u"reason"] = u"shared-authority"
+        elif all(control_channel(writers[a][0], a) for a in writers):
+            ctls = set(control_of[channels[writers[a][0]][u"handle"]][0] for a in writers)
+            if len(ctls) == 1:
+                row[u"class"], row[u"control"] = u"direct-fk", ctls.pop()
+                row[u"channels"] = dict((a, writers[a][0]) for a in writers)
+            else:
+                row[u"reason"] = u"two controls drive one bone"
+        elif all(channels[writers[a][0]][u"from"] is None and channels[writers[a][0]][u"mode"] == 3 and
+                 len(channels[writers[a][0]][u"layers"]) == 1 and channels[writers[a][0]][u"handle"] not in control_of
+                 and (channels[writers[a][0]][u"log_type"], channels[writers[a][0]][u"layers"][0]) ==
+                 PROD_SCOPE_TRANSFORM_TYPES[a] for a in writers):
+            row[u"class"], row[u"reason"] = u"carried-candidate", u"control-less"
+            row[u"channels"] = dict((a, writers[a][0]) for a in writers)
+        else:
+            row[u"reason"] = u"unsupported channel binding"
+        for attr, ws in writers.items():
+            for cname in ws:
+                roles[cname][u"role"] = {u"direct-fk": u"fk-" + attr, u"carried-candidate": u"carried-" + attr}.get(
+                    row[u"class"], u"bone")
+        out[name] = row
+    roots = sorted(n for n, b in bones.items() if b[u"parent"] is None)
+    root, root_problem = None, None
+    if len(roots) != 1:
+        root_problem = u"%d top-level bones" % len(roots)
+    else:
+        b = bones[roots[0]]
+        if b.get(u"parent_dags") != [D[u"model"][u"handle"]]:
+            root_problem = u"the top-level bone is not directly under the model"
+        else:
+            root = roots[0]
+    return prod_pose_roundtrip({u"bones": out, u"channels": roles, u"root": root, u"root_problem": root_problem,
+                                u"slaved": dict((k, sorted(v)) for k, v in slaved.items()),
+                                u"rule": PROD_SCOPE_RULE, u"revision": PROD_SCOPE_RULES[PROD_SCOPE_RULE][u"revision"]})
+
+
+def prod_scope_children(D):
+    children = {}
+    for name, b in D[u"bones"].items():
+        children.setdefault(b[u"parent"], []).append(name)
+    for k in children:
+        children[k].sort()
+    return children
+
+
+def prod_scope_descendants(D, names):
+    children, out, pending = prod_scope_children(D), set(), list(names)
+    while pending:
+        for c in children.get(pending.pop(), []):
+            if c not in out:
+                out.add(c)
+                pending.append(c)
+    return out
+
+
+def prod_scope_ancestors(D, name):
+    out, node = [], D[u"bones"][name][u"parent"]
+    while node is not None:
+        out.append(node)
+        node = D[u"bones"][node][u"parent"]
+    return out
+
+
+def prod_scope_bone_order(D, names=None):
+    order = prod_scope_order(dict((n, b[u"parent"]) for n, b in D[u"bones"].items()))
+    return [n for n in order if names is None or n in names]
+
+
+# --- organization: control groups, highlighted expression candidates and the picker -----------------------------------
+
+def prod_scope_group_view(D, C):
+    """The picker: each control group's eligible skeletal bones (resolved control -> channel -> bone, or a
+    constraint slave -> its bone, by native identity), its unavailable skeletal entries with a reason, and an
+    ungrouped remainder. Placement, gaze, flex and other non-skeletal controls are never listed. Groups organize
+    only; they never authorize."""
+    by_handle = dict((c[u"handle"], n) for n, c in D[u"controls"].items())
+    channel_by_handle = dict((ch[u"handle"], n) for n, ch in D[u"channels"].items())
+    bone_of_dag = dict((b[u"handle"], n) for n, b in D[u"bones"].items())
+    bone_of_slave = {}
+    for op in D[u"operators"]:
+        for s in op[u"slaves"].values():
+            if s is not None and s.get(u"target") in bone_of_dag:
+                bone_of_slave[s[u"slave"]] = bone_of_dag[s[u"target"]]
+    handle_transforms = dict((h[u"transform"], n) for n, h in D[u"rig"][u"handles"].items())
+    entry = {}
+    for cname in sorted(D[u"controls"]):
+        c = D[u"controls"][cname]
+        for attr in sorted(c[u"channels"]):
+            cn = channel_by_handle.get(c[u"channels"][attr])
+            if cn is None:
+                continue
+            role, to = C[u"channels"][cn], D[u"channels"][cn][u"to"]
+            if role[u"role"] in (u"fk-position", u"fk-orientation", u"carried-position", u"carried-orientation",
+                                 u"bone"):
+                entry.setdefault(cname, (u"bone", role[u"owner"]))
+            elif to is not None and to[u"handle"] in bone_of_slave:
+                entry.setdefault(cname, (u"bone", bone_of_slave[to[u"handle"]]))
+            elif to is not None and to[u"handle"] in handle_transforms:
+                entry.setdefault(cname, (u"handle", handle_transforms[to[u"handle"]]))
+
+    def classify(cname):
+        kind, name = entry[cname]
+        if kind == u"handle":
+            return None, {u"control": cname, u"bone": None, u"reason": u"rig control (not supported in poses yet)"}
+        if C[u"bones"][name][u"class"] == u"direct-fk":
+            return name, None
+        return None, {u"control": cname, u"bone": name, u"reason": prod_scope_reason_text(C[u"bones"][name])}
+    rows, grouped = [], set()
+    for g in D.get(u"groups") or []:
+        eligible, unavailable = [], []
+        for h in g[u"controls"]:
+            cname = by_handle.get(h)
+            if cname is None or cname not in entry:
+                continue
+            grouped.add(cname)
+            bone, bad = classify(cname)
+            if bone is not None and bone not in eligible:
+                eligible.append(bone)
+            if bad is not None:
+                unavailable.append(bad)
+        if eligible or unavailable:
+            rows.append({u"path": g[u"path"][1:] or g[u"path"], u"bones": eligible, u"unavailable": unavailable})
+    listed = set(b for r in rows for b in r[u"bones"])
+    eligible, unavailable = [], []
+    for cname in sorted(entry):
+        if cname in grouped:
+            continue
+        bone, bad = classify(cname)
+        if bone is not None and bone not in listed and bone not in eligible:
+            eligible.append(bone)
+        if bad is not None:
+            unavailable.append(bad)
+    for b in prod_scope_bone_order(D):          # control-less bones have no control to list: say so
+        if C[u"bones"][b][u"control"] is None and C[u"bones"][b][u"class"] == u"carried-candidate":
+            unavailable.append({u"control": None, u"bone": b, u"reason": prod_scope_reason_text(C[u"bones"][b])})
+    if eligible or unavailable:
+        rows.append({u"path": [u"Other skeletal controls"], u"bones": eligible, u"unavailable": unavailable})
+    return rows
+
+
+def prod_scope_reason_text(row):
+    return {u"constrained": u"driven by the rig", u"carried-candidate": u"no control"}.get(
+        row[u"class"], u"not a supported control")
+
+
+def prod_scope_highlighted(D, C, view=None):
+    """Bones offered for scope review: members of a top-level control group labelled Face (an organizational hint:
+    it proposes, it never authorizes an exclusion)."""
+    out = []
+    for row in view if view is not None else prod_scope_group_view(D, C):
+        if row[u"path"] and row[u"path"][0].strip().lower() == u"face":
+            for b in row[u"bones"] + [x[u"bone"] for x in row[u"unavailable"] if x[u"bone"] is not None]:
+                if b not in out:
+                    out.append(b)
+    return out
+
+
+# --- the scope compiler: W, A, D and P --------------------------------------------------------------------------------
+
+def prod_scope_request(kind, bones=None, exclusions=None):
+    return {u"kind": kind, u"bones": list(bones or []), u"exclusions": [dict(e) for e in exclusions or []]}
+
+
+def prod_scope_compile(D, C, request, carried_admitted=None):
+    """One operation's sets from the declared request and the fresh classification: W (written channels with their
+    value source), A (affected bones: posed and carried), D (read-only dependencies: ancestor chains, boundaries,
+    model placement and scales), P (everything else), and the coverage ledger. Never adds a parent to W, never drops
+    a requested bone. carried_admitted: bones admitted by constant_channel_carried_v1 (none while it is disabled)."""
+    carried_admitted = set(carried_admitted or [])
+    kind = request.get(u"kind")
+    if kind not in PROD_SCOPE_KINDS:
+        raise prod_scope_error(u"structure-unsupported", u"unknown scope kind %r" % (kind,))
+    bones = C[u"bones"]
+    all_bones = prod_scope_bone_order(D)
+    exclusions = request.get(u"exclusions") or []
+    excluded = []
+    for e in exclusions:
+        excluded.extend(e[u"bones"])
+    if kind == u"selected_parts" and exclusions:
+        raise prod_scope_error(u"structure-unsupported", u"selected parts have no exclusions")
+    unknown = sorted(set(excluded) - set(bones))
+    if unknown or len(set(excluded)) != len(excluded):
+        raise prod_scope_error(u"scope-differs", u"excluded bones unknown or repeated: %s" % unknown[:8])
+    if kind == u"full_body":
+        requested = list(all_bones)
+        refusals = {}
+        for name in requested:
+            if name in excluded:
+                continue
+            cls = bones[name][u"class"]
+            if cls == u"direct-fk" or (cls == u"carried-candidate" and name in carried_admitted):
+                continue
+            refusals.setdefault(u"rig-driven" if cls == u"constrained" else u"carried-unsupported"
+                                if cls == u"carried-candidate" else u"unsupported-body", []).append(name)
+        for code in (u"unsupported-body", u"rig-driven", u"carried-unsupported"):
+            if code in refusals:
+                raise prod_scope_error(code, u"full body: %s %s" % (code, refusals[code][:16]),
+                                       parts=refusals[code])
+        if C[u"root"] is None:
+            raise prod_scope_error(u"placement-ambiguous", u"root: %s" % C[u"root_problem"])
+        if C[u"root"] in excluded or bones[C[u"root"]][u"class"] != u"direct-fk":
+            raise prod_scope_error(u"placement-ambiguous", u"the root is not a posed direct-FK bone")
+        posed = [n for n in requested if n not in excluded and bones[n][u"class"] == u"direct-fk"]
+        carried = [n for n in requested if n not in excluded and n in carried_admitted and
+                   bones[n][u"class"] == u"carried-candidate"]
+        # Excluded bones that are direct FK keep their destination articulation and are verified as preserved
+        # branches; any other excluded bone must have no posed descendant (it could not be interpreted).
+        opaque = [n for n in excluded if bones[n][u"class"] != u"direct-fk"]
+        for n in opaque:
+            below = prod_scope_descendants(D, [n]) - set(excluded)
+            if below:
+                raise prod_scope_error(u"exclusion-boundary", u"excluded %s has posed descendants %s" % (
+                    n, sorted(below)[:4]))
+        ledger = {}
+        for n in requested:
+            ledger[n] = u"posed" if n in posed else u"carried-constant" if n in carried else u"excluded-expression"
+        preserved = [n for n in excluded if bones[n][u"class"] == u"direct-fk"]
+        root_translation = u"included"
+    else:
+        requested = []
+        for n in request.get(u"bones") or []:
+            if n not in requested:
+                requested.append(n)
+        if not requested:
+            raise prod_scope_error(u"empty-selection", u"no bones selected")
+        missing = [n for n in requested if n not in bones]
+        if missing:
+            raise prod_scope_error(u"scope-differs", u"selected bones not found: %s" % missing[:8],
+                                   parts=missing)
+        bad = [n for n in requested if bones[n][u"class"] != u"direct-fk"]
+        shared = [n for n in bad if bones[n][u"reason"] == u"shared-authority"]
+        if shared:
+            raise prod_scope_error(u"shared-authority", u"another channel also writes %s" % shared[:16])
+        if bad:
+            raise prod_scope_error(u"unsupported-selection", u"not direct FK: %s" % bad[:16], parts=bad)
+        posed = [n for n in all_bones if n in requested]
+        below = prod_scope_descendants(D, posed) - set(posed)
+        bad = sorted(n for n in below if not (bones[n][u"class"] == u"direct-fk" or (
+            bones[n][u"class"] == u"carried-candidate" and n in carried_admitted)))
+        if bad:
+            raise prod_scope_error(u"carried-selection", u"descendants not supported: %s" % bad[:16], parts=bad)
+        carried = [n for n in all_bones if n in below]
+        ledger = dict((n, u"posed" if n in posed else u"carried-constant" if n in carried and bones[n][u"class"] ==
+                       u"carried-candidate" else u"carried" if n in carried else u"outside") for n in all_bones)
+        preserved = []
+        root_translation = u"excluded"
+    affected = set(posed) | set(carried) | set(preserved)
+    written = []
+    for n in posed:
+        written.append({u"channel": bones[n][u"channels"][u"orientation"], u"bone": n, u"attribute": u"orientation",
+                        u"source": u"saved"})
+        if n == C[u"root"]:
+            if kind == u"full_body":
+                written.append({u"channel": bones[n][u"channels"][u"position"], u"bone": n,
+                                u"attribute": u"position", u"source": u"root-translation"})
+            continue                                     # a selected root: articulation only
+        written.append({u"channel": bones[n][u"channels"][u"position"], u"bone": n, u"attribute": u"position",
+                        u"source": u"pinned"})
+    tops = [n for n in all_bones if n in affected and (D[u"bones"][n][u"parent"] is None or
+                                                       D[u"bones"][n][u"parent"] not in affected)]
+    chain = set()
+    for n in tops:
+        chain.update(prod_scope_ancestors(D, n))
+    boundaries = dict((n, D[u"bones"][n][u"parent"] or PROD_SCOPE_MODEL_FRAME) for n in tops)
+    names = sorted(x[u"channel"] for x in written)
+    if len(set(names)) != len(names):
+        raise prod_scope_error(u"structure-unsupported", u"a channel is planned twice")
+    return prod_pose_roundtrip({
+        u"kind": kind, u"requested": requested, u"posed": posed, u"carried": carried, u"preserved": preserved,
+        u"excluded": excluded, u"exclusions": exclusions, u"ledger": ledger, u"written": written,
+        u"written_names": names, u"affected": [n for n in all_bones if n in affected],
+        u"chain": [n for n in all_bones if n in chain], u"tops": tops, u"boundaries": boundaries,
+        u"root": C[u"root"], u"root_translation": root_translation,
+        u"outside": [n for n in all_bones if n not in affected and n not in chain]})
+
+
+def prod_scope_exclusion_boundary(D, C, S):
+    """R3 4: an excluded expression subsystem must not drive the posed body, the carried bones, their structural
+    dependencies or their control sources, must not feed back from them, and must not share a mutable channel, log
+    or layer with the plan. Known constraint operators have explicit write sets (their slaves) and read sets (targets
+    and pole); anything else touching an excluded bone and the body refuses."""
+    excluded = set(S[u"excluded"])
+    if not excluded:
+        return
+    body = set(S[u"affected"]) | set(S[u"chain"])
+    bone_of_handle = dict((b[u"handle"], n) for n, b in D[u"bones"].items())
+    for op in D[u"operators"]:
+        writes, reads = set(), set()
+        for s in op[u"slaves"].values():
+            if s is not None and s.get(u"target") in bone_of_handle:
+                writes.add(bone_of_handle[s[u"target"]])
+        for t in op[u"targets"]:
+            if t.get(u"target") in bone_of_handle:
+                reads.add(bone_of_handle[t[u"target"]])
+        if op[u"pole"] in bone_of_handle:
+            reads.add(bone_of_handle[op[u"pole"]])
+        if op[u"type"] not in PROD_SCOPE_CONSTRAINTS:
+            continue
+        if writes & excluded and writes - excluded:
+            raise prod_scope_error(u"exclusion-boundary", u"operator %s writes across the boundary" % op[u"name"])
+        if writes & body and reads & excluded:
+            raise prod_scope_error(u"exclusion-boundary", u"operator %s feeds an excluded bone into the body" %
+                                   op[u"name"])
+    written_logs = set()
+    for w in S[u"written"]:
+        written_logs.add(D[u"channels"][w[u"channel"]].get(u"log_handle"))
+    for cname, role in C[u"channels"].items():
+        if role[u"owner"] in excluded and D[u"channels"][cname].get(u"log_handle") in written_logs:
+            raise prod_scope_error(u"exclusion-boundary", u"excluded channel %s shares a log with the plan" % cname)
+
+
+def prod_scope_check_authority(D, C, S):
+    """Per-attribute exclusive authority for the plan (R3 3, 4), from document-wide discovery: each written channel
+    is the only writer of its destination, owns its log and layer, and its control's value is not itself driven; no
+    channel outside the instance writes an affected or dependency bone; no constraint drives an affected bone; no
+    operator feeds an affected bone back into its own dependencies. Proven unrelated differences elsewhere do not
+    refuse."""
+    A = D.get(u"authority")
+    if not isinstance(A, dict):
+        raise prod_scope_error(u"evidence-unreadable", u"no authority evidence")
+    mine = set(A[u"channels"])
+    for w in S[u"written"]:
+        ch = D[u"channels"][w[u"channel"]]
+        key = u"%d:%s" % (ch[u"to"][u"handle"], ch[u"to_attribute"])
+        if A[u"destinations"].get(key) != [ch[u"handle"]] or D[u"writers"].get(key) != 1:
+            raise prod_scope_error(u"shared-authority", u"%s is not the only writer of its bone" % w[u"channel"])
+        log, layers = ch.get(u"log_handle"), ch.get(u"layer_handles") or []
+        if log is None or A[u"logs"].get(u"%d" % log) != [ch[u"handle"]]:
+            raise prod_scope_error(u"shared-authority", u"written channel %s does not own its log" % w[u"channel"])
+        if len(layers) != 1 or A[u"layers"].get(u"%d" % layers[0]) != [log]:
+            raise prod_scope_error(u"shared-authority", u"written channel %s does not own its layer" % w[u"channel"])
+        source = ch[u"from"]
+        for attr in (u"valuePosition", u"valueOrientation"):
+            if source is not None and A[u"destinations"].get(u"%d:%s" % (source[u"handle"], attr)):
+                raise prod_scope_error(u"shared-input", u"a channel drives the control of %s" % w[u"channel"],
+                                       parts=[w[u"bone"]])
+    for name in list(S[u"affected"]) + list(S[u"chain"]):
+        b = D[u"bones"][name]
+        for attr in (u"position", u"orientation", u"scale"):
+            writers = A[u"destinations"].get(u"%d:%s" % (b[u"transform"], attr)) or []
+            outside = [x for x in writers if x not in mine]
+            if outside:
+                raise prod_scope_error(u"shared-authority", u"channels outside the instance write %s.%s" % (name, attr))
+        if name in S[u"affected"] and A[u"slave_targets"].get(u"%d" % b[u"handle"]):
+            raise prod_scope_error(u"shared-authority", u"a constraint drives affected bone %s" % name)
+        foreign = [o for o in A[u"slave_targets"].get(u"%d" % b[u"handle"]) or [] if o not in A[u"operators"]]
+        if foreign:
+            raise prod_scope_error(u"shared-authority", u"operators outside the animation set drive %s" % name)
+    bone_of_handle = dict((b[u"handle"], n) for n, b in D[u"bones"].items())
+    affected, chain = set(S[u"affected"]), set(S[u"chain"])
+    for op in D[u"operators"]:
+        if op[u"type"] not in PROD_SCOPE_CONSTRAINTS:
+            continue
+        reads = set(bone_of_handle.get(t.get(u"target")) for t in op[u"targets"]) | set([bone_of_handle.get(op[u"pole"])])
+        writes = set(bone_of_handle.get(s[u"target"]) for s in op[u"slaves"].values()
+                     if s is not None and s.get(u"target") is not None)
+        if reads & affected and writes & (affected | chain):
+            raise prod_scope_error(u"shared-input", u"operator %s feeds the pose back into %s" % (
+                op[u"name"], sorted(x for x in writes & (affected | chain) if x)[:4]),
+                parts=sorted(x for x in writes & (affected | chain) if x))
+    prod_scope_exclusion_boundary(D, C, S)
+    return A
+
+
+# --- constant_channel_carried_v1 (R3 3.1): read-only admission, disabled -------------------------------------------
+
+def prod_scope_procedural_guard(L, D):
+    """The procedural-state guard. No supported native contract establishes what evaluateProceduralBones (or any
+    other model attribute) means, so the guard reports unsupported: control-less bones are never admitted from a
+    name, a null source, identical keys or a stable snapshot. Native qualification dependency NQ-PROC."""
+    return {u"status": u"unsupported", u"evidence": u"no qualified procedural-state contract"}
+
+
+def prod_scope_carried_admission(D, C, names, snaps, authored, guard, t_chan):
+    """constant_channel_carried_v1 admission of control-less bones. Returns (admitted, refusals {bone: reason}).
+    Every criterion of R3 3.1 is required; any missing evidence refuses that bone. Disabled unless the capability is
+    enabled and the guard is positive."""
+    admitted, refusals = [], {}
+    if not PROD_SCOPE_CARRIED_ENABLED[0]:
+        return admitted, dict((n, u"constant_channel_carried_v1 is disabled") for n in names)
+    if not isinstance(guard, dict) or guard.get(u"status") != u"procedural-disabled" or \
+            sorted(guard.get(u"bones") or []) != sorted(set(guard.get(u"bones") or []) | set(names)):
+        return admitted, dict((n, u"procedural state is not positively established") for n in names)
+    A = D.get(u"authority") or {}
+    authored_by_handle = dict((row[u"id"][u"handle"], row) for row in authored[u"channels"])
+    for name in names:
+        row = C[u"bones"][name]
+        why = None
+        if row[u"class"] != u"carried-candidate":
+            why = u"not a control-less bone"
+        for attr in (u"position", u"orientation"):
+            if why:
+                break
+            cname = row[u"channels"][attr]
+            ch = D[u"channels"][cname]
+            snap = snaps.get(cname)
+            binding = (authored_by_handle.get(ch[u"handle"]) or {}).get(u"binding") or {}
+            if binding.get(u"fromElement", {}).get(u"status") != u"READ" or \
+                    binding[u"fromElement"].get(u"value") is not None:
+                why = u"%s source is not verified null" % cname
+            elif any(binding.get(k, {}).get(u"status") != u"READ" or binding[k].get(u"value") != 0
+                     for k in (u"fromIndex", u"toIndex")):
+                why = u"%s endpoint indices are not supported" % cname
+            elif snap is None or prod_pose_snapshot_evidence_problems(snap):
+                why = u"%s representation evidence is incomplete" % cname
+            elif snap[u"mode"] != 3 or snap[u"layer_count"] != 1 or (snap[u"log_type"], snap[u"layer_type"]) != \
+                    PROD_SCOPE_TRANSFORM_TYPES[attr]:
+                why = u"%s is not one supported layer" % cname
+            elif snap[u"curveinfo"] not in (u"absent", u"null") or snap[u"curvetypes"] != u"absent" or \
+                    snap[u"compressed"] != u"empty":
+                why = u"%s curve or compression data is present" % cname
+            elif not snap[u"times"] or any(snap[u"times"][k] <= snap[u"times"][k - 1]
+                                          for k in range(1, len(snap[u"times"]))):
+                why = u"%s keys are not strictly ordered" % cname
+            elif any(list(v) != list(snap[u"values"][0]) for v in snap[u"values"]):
+                why = u"%s keys are not one constant" % cname
+            elif snap[u"defaults"] and list(snap[u"defaults"]) != list(snap[u"values"][0]):
+                why = u"%s default contradicts the constant" % cname
+            elif not (snap[u"times"][0] <= t_chan <= snap[u"times"][-1]) and not PROD_SCOPE_EXTRAPOLATION_QUALIFIED[0]:
+                why = u"%s is evaluated outside its keys (extrapolation not qualified)" % cname
+            elif not isinstance(snap.get(u"evaluated_at_t"), list) or list(snap[u"evaluated_at_t"]) != \
+                    list(snap[u"values"][0]):
+                why = u"%s does not evaluate to its constant" % cname
+            else:
+                local = D[u"bones"][name][u"local_" + attr]
+                if attr == u"position" and not prod_scope_exact(prod_scope_f32(local), list(snap[u"values"][0])):
+                    why = u"%s local position differs from the constant" % name
+                elif attr == u"orientation" and prod_pose_angle_deg(local, snap[u"values"][0]) > \
+                        PROD_SCOPE_TOLERANCES[u"effective_angle_degrees"]:
+                    why = u"%s local orientation differs from the constant" % name
+                key = u"%d:%s" % (ch[u"to"][u"handle"], ch[u"to_attribute"])
+                log = ch.get(u"log_handle")
+                if not why and (A.get(u"destinations", {}).get(key) != [ch[u"handle"]] or
+                                A.get(u"logs", {}).get(u"%d" % log) != [ch[u"handle"]]):
+                    why = u"%s authority is not exclusive" % cname
+        if why:
+            refusals[name] = why
+        else:
+            admitted.append(name)
+    return admitted, refusals
+
+
+# --- capture values, structure and the independent oracle ------------------------------------------------------------
+
+def prod_scope_channel_value(D, name):
+    v = D[u"channels"][name].get(u"value")
+    if not isinstance(v, list) or len(v) not in (3, 4):
+        raise prod_scope_error(u"evidence-unreadable", u"channel %s value at the mapped tick is unreadable" % name)
+    out = prod_scope_f32(v)
+    if len(out) == 4:
+        prod_pose_quaternion_input(out, name, u"evidence-unreadable")
+    else:
+        prod_pose_finite_vector(out, 3, name, u"evidence-unreadable")
+    return out
+
+
+def prod_scope_world(D, name):
+    if name == PROD_SCOPE_MODEL_FRAME or name is None:
+        return (list(D[u"model"][u"world_position"]), prod_pose_unit(D[u"model"][u"world_orientation"]))
+    b = D[u"bones"][name]
+    return (list(b[u"world_position"]), prod_pose_unit(b[u"world_orientation"]))
+
+
+def prod_scope_model_scale(D):
+    """The model's own scale: supported only when absent or exactly 1 (R3 5: wrapper scale is never assumed)."""
+    f = D[u"model"][u"scale"]
+    if f.get(u"status") == u"ABSENT" or (f.get(u"status") == u"READ" and prod_pose_is_number(f.get(u"value")) and
+                                        not isinstance(f.get(u"value"), bool) and float(f[u"value"]) == 1.0):
+        return 1.0
+    raise prod_scope_error(u"scale-unsupported", u"model scale %r is not supported" % (f,))
+
+
+def prod_scope_cumulative(D, name):
+    """The cumulative uniform scale of a bone (its own scale times every ancestor's, seeded by the model's)."""
+    s = prod_scope_model_scale(D)
+    for n in reversed([name] + prod_scope_ancestors(D, name)):
+        s *= prod_scope_typed_scale(D[u"bones"][n][u"scale"], n)
+    return s
+
+
+def prod_scope_check_composition(D, names, tol=None):
+    """The admitted composition against independently observed transforms: each listed bone's observed local
+    transform, composed parent-first from its observed parent (or the model) with the cumulative scale, reproduces
+    its observed world transform. A disagreement refuses (an unsupported scale or wrapper arrangement)."""
+    tol = tol or PROD_SCOPE_TOLERANCES
+    problems = []
+    for name in prod_scope_bone_order(D, set(names)):
+        b = D[u"bones"][name]
+        parent = b[u"parent"]
+        frame = prod_scope_world(D, parent)
+        s = prod_scope_cumulative(D, parent) if parent is not None else prod_scope_model_scale(D)
+        got = prod_scope_compose(frame, s, (b[u"local_position"], b[u"local_orientation"]))
+        if prod_pose_distance(got[0], b[u"world_position"]) > tol[u"position"] or \
+                prod_pose_angle_deg(got[1], b[u"world_orientation"]) > tol[u"angle_degrees"]:
+            problems.append(name)
+    return problems
+
+
+def prod_scope_effective_inputs(D, C, S):
+    """Each posed bone's orientation channel value at the mapped tick is its evaluated local orientation (within the
+    effective tolerance), and each affected direct-FK bone's position channel equals its evaluated local position
+    exactly (finite native float32). Returns (orientations, offsets)."""
+    orientations, offsets, bad = {}, {}, []
+    for name in S[u"affected"]:
+        row = C[u"bones"][name]
+        b = D[u"bones"][name]
+        if row[u"class"] == u"direct-fk":
+            p = prod_scope_channel_value(D, row[u"channels"][u"position"])
+            if not prod_scope_exact(p, prod_scope_f32(b[u"local_position"])) or \
+                    not prod_scope_exact(prod_scope_f32(b[u"local_position"]), list(b[u"local_position"])):
+                bad.append(row[u"channels"][u"position"])
+            offsets[name] = p
+            if name in S[u"posed"]:
+                q = prod_scope_channel_value(D, row[u"channels"][u"orientation"])
+                if prod_pose_angle_deg(q, b[u"local_orientation"]) > PROD_SCOPE_TOLERANCES[u"effective_angle_degrees"]:
+                    bad.append(row[u"channels"][u"orientation"])
+                orientations[name] = q
+        else:
+            offsets[name] = prod_scope_f32(b[u"local_position"])
+            if not prod_scope_exact(offsets[name], list(b[u"local_position"])):
+                bad.append(name)
+    if bad:
+        raise prod_scope_error(u"evidence-unreadable", u"not evaluated at their log values: %s" % bad[:8])
+    return orientations, offsets
+
+
+def prod_scope_oracle(D, S):
+    """Independently observed skeletal evidence (native local and absolute transform readers, never channel plans):
+    each affected bone's local transform and its transform relative to its component boundary, and each boundary's
+    cumulative scale."""
+    bones = {}
+    top_of = {}
+    for name in S[u"affected"]:
+        node = name
+        while node not in S[u"tops"]:
+            node = D[u"bones"][node][u"parent"]
+        top_of[name] = node
+    for name in S[u"affected"]:
+        b = D[u"bones"][name]
+        rel = prod_scope_relative(prod_scope_world(D, S[u"boundaries"][top_of[name]]), prod_scope_world(D, name))
+        bones[name] = {u"local_position": prod_scope_f32(b[u"local_position"]),
+                       u"local_orientation": prod_pose_unit(b[u"local_orientation"]),
+                       u"relative_position": [float(c) for c in rel[0]], u"relative_orientation": rel[1]}
+    scales = {}
+    for top in S[u"tops"]:
+        boundary = S[u"boundaries"][top]
+        scales[top] = prod_scope_cumulative(D, boundary) if boundary != PROD_SCOPE_MODEL_FRAME else \
+            prod_scope_model_scale(D)
+    return bones, scales
+
+
+def prod_scope_structure(D, C, S, offsets, boundary_scales):
+    bones = [{u"id": n, u"index": b[u"index"], u"parent": b[u"parent"]} for n, b in D[u"bones"].items()]
+    bones.sort(key=lambda r: r[u"index"])
+    scales = dict((n, prod_body_typed(D[u"bones"][n][u"scale"], n + u".scale")) for n in
+                  set(S[u"affected"]) | set(S[u"chain"]))
+    return {u"bones": bones, u"root": C[u"root"], u"placement": u"model", u"boundaries": S[u"boundaries"],
+            u"offsets": offsets, u"scales": {u"model": prod_body_typed(D[u"model"][u"scale"], u"model.scale"),
+                                             u"bones": scales, u"boundaries": boundary_scales}}
+
+
+def prod_scope_label(S, view):
+    """A short descriptive label of the scope (descriptive only; never authority)."""
+    if S[u"kind"] == u"full_body":
+        return u"Full body"
+    chosen = set(S[u"posed"])
+    for row in view or []:
+        if row[u"bones"] and set(row[u"bones"]) == chosen:
+            return row[u"path"][-1][:120]
+    return u"Selected parts (%d)" % len(chosen)
+
+
+def prod_scope_payload(D, C, S, view, source):
+    """The version 3 pose payload of Save New / Update (no runtime handles)."""
+    orientations, offsets = prod_scope_effective_inputs(D, C, S)
+    problems = prod_scope_check_composition(D, set(S[u"affected"]) | set(S[u"chain"]))
+    if problems:
+        raise prod_scope_error(u"scale-unsupported", u"observed source transforms do not compose: %s" % problems[:8])
+    oracle, boundary_scales = prod_scope_oracle(D, S)
+    root_translation = None
+    if S[u"root_translation"] == u"included":
+        root_translation = prod_scope_channel_value(D, C[u"bones"][S[u"root"]][u"channels"][u"position"])
+    exclusions = []
+    for k, e in enumerate(S[u"exclusions"]):
+        exclusions.append({u"id": e.get(u"id") or u"exclusion-%d" % (k + 1), u"bones": list(e[u"bones"]),
+                           u"reason": e.get(u"reason") or u"expression controls left unchanged",
+                           u"provenance": e.get(u"provenance") or u"user_confirmed",
+                           u"policy_revision": e.get(u"policy_revision"), u"label": e.get(u"label") or u"Face"})
+    carried_constant = any(r == u"carried-constant" for r in S[u"ledger"].values())
+    return prod_pose_roundtrip({
+        u"format": PROD_POSE_FORMAT, u"version": PROD_SCOPE_POSE_VERSION, u"conventions": dict(PROD_POSE_CONVENTIONS),
+        u"engine": {u"rule": PROD_SCOPE_RULE, u"revision": PROD_SCOPE_RULES[PROD_SCOPE_RULE][u"revision"],
+                    u"carried_rule": {u"rule": PROD_SCOPE_CARRIED_RULE, u"revision": PROD_SCOPE_CARRIED_REVISION}
+                    if carried_constant else None},
+        u"source": source,
+        u"scope": {u"kind": S[u"kind"], u"completeness": PROD_SCOPE_COMPLETENESS[S[u"kind"]],
+                   u"requested": S[u"requested"], u"posed": S[u"posed"], u"carried": S[u"carried"],
+                   u"preserved": S[u"preserved"], u"root_translation": S[u"root_translation"], u"ledger": S[u"ledger"], u"exclusions": exclusions,
+                   u"label": prod_scope_label(S, view)},
+        u"structure": prod_scope_structure(D, C, S, offsets, boundary_scales),
+        u"values": {u"orientations": orientations, u"root_translation": root_translation},
+        u"oracle": {u"frame": u"component-boundary", u"bones": oracle}})
+
+
+def prod_scope_record_request(pose):
+    """The frozen request of a saved scope (Update and Apply reuse it; they never repeat a heuristic)."""
+    sc = pose[u"scope"]
+    return prod_scope_request(sc[u"kind"], sc[u"requested"] if sc[u"kind"] == u"selected_parts" else [],
+                              [{u"id": e[u"id"], u"bones": e[u"bones"], u"reason": e[u"reason"],
+                                u"provenance": e[u"provenance"], u"policy_revision": e[u"policy_revision"],
+                                u"label": e[u"label"]} for e in sc[u"exclusions"]])
+
+
+# --- compatibility, the parent-first expected skeleton and verification ----------------------------------------------
+
+def prod_scope_compatible(pose, D, C, S, identity):
+    """Scope-aware compatibility of a destination with a saved v3 pose: the same validated model and skeleton
+    layout, the same resolved scope (posed, carried, ledger, root), the same scales of every affected bone and
+    boundary, and structural offsets within the provisional direct_fk_v1 limit. Returns the pinned destination
+    offsets. Different wrist or arm posture is allowed; different bone lengths, scale state or bindings are not."""
+    src = pose[u"source"]
+    if prod_pose_model_key(identity[u"model"]) != src[u"model_key"] or (
+            src[u"model_checksum"] is not None and identity.get(u"checksum") is not None and
+            int(identity[u"checksum"]) != src[u"model_checksum"]):
+        raise prod_scope_error(u"different-model", u"model %r / %r" % (identity.get(u"model"), src[u"model_ref"]))
+    bones = [{u"id": n, u"index": b[u"index"], u"parent": b[u"parent"]} for n, b in D[u"bones"].items()]
+    if prod_scope_layout_signature(bones) != src[u"layout_signature"]:
+        raise prod_scope_error(u"skeleton-differs", u"layout signature differs")
+    sc = pose[u"scope"]
+    for key in (u"posed", u"carried", u"preserved"):
+        if list(S[key]) != list(sc[key]):
+            raise prod_scope_error(u"scope-differs", u"%s differs" % key)
+    if S[u"ledger"] != sc[u"ledger"] or S[u"root"] != pose[u"structure"][u"root"] or \
+            S[u"root_translation"] != sc[u"root_translation"] or S[u"boundaries"] != pose[u"structure"][u"boundaries"]:
+        raise prod_scope_error(u"scope-differs", u"ledger, root or boundaries differ")
+    st = pose[u"structure"]
+    for name in sorted(st[u"scales"][u"bones"]):
+        if prod_body_typed(D[u"bones"][name][u"scale"], name + u".scale") != st[u"scales"][u"bones"][name]:
+            raise prod_scope_error(u"proportions", u"bone %s scale differs" % name)
+    if prod_body_typed(D[u"model"][u"scale"], u"model.scale") != st[u"scales"][u"model"]:
+        raise prod_scope_error(u"proportions", u"model scale differs")
+    _, scales = prod_scope_oracle(D, S)
+    for top, s in scales.items():
+        if prod_pose_f32(s) != prod_pose_f32(st[u"scales"][u"boundaries"][top]):
+            raise prod_scope_error(u"proportions", u"boundary scale of %s differs" % top)
+    _, here = prod_scope_effective_inputs(D, C, S)
+    limit = prod_pose_f32(PROD_SCOPE_FK_POSITION_LIMIT)
+    far = []
+    for name, value in sorted(here.items()):
+        if name == S[u"root"]:
+            continue          # the body root's translation is pose data (full body) or a pinned dependency
+        saved = st[u"offsets"][name]
+        d = math.sqrt(sum((float(saved[k]) - float(value[k])) ** 2 for k in range(3)))
+        if not (d == 0.0 or prod_pose_f32(d) <= limit):
+            far.append((name, d))
+    if far:
+        raise prod_scope_error(u"fk-position", u"offsets differ beyond %r: %s" % (limit, far[:8]))
+    # R3 3.1: a carried constant's local orientation is body state, not an input: it must match the saved evidence.
+    turned = [n for n, role in sorted(S[u"ledger"].items()) if role == u"carried-constant" and prod_pose_angle_deg(
+        D[u"bones"][n][u"local_orientation"], pose[u"oracle"][u"bones"][n][u"local_orientation"]) >
+        PROD_SCOPE_TOLERANCES[u"angle_degrees"]]
+    if turned:
+        raise prod_scope_error(u"proportions", u"carried constant orientations differ: %s" % turned[:8])
+    return here
+
+
+def prod_scope_expected(pose, D, S, pinned):
+    """The expected world transform of every affected bone after the Apply (R3 5), parent first: external
+    boundaries from their observed destination frames and verified cumulative scale; posed bones from the saved,
+    independently observed local orientation with the destination's pinned offset (the body root: the saved
+    translation, full body only); carried bridges and descendants from their destination local state. Never from
+    the values just written, and never the source's unselected articulation."""
+    orc = pose[u"oracle"][u"bones"]
+    expected, scale = {}, {}
+    affected = set(S[u"affected"])
+    for name in prod_scope_bone_order(D, affected):
+        b = D[u"bones"][name]
+        parent = b[u"parent"]
+        if parent in affected:
+            frame, s = expected[parent], scale[parent]
+        else:
+            frame = prod_scope_world(D, parent)
+            s = prod_scope_cumulative(D, parent) if parent is not None else prod_scope_model_scale(D)
+        if name in S[u"posed"]:
+            if name == S[u"root"] and S[u"root_translation"] == u"included":
+                p = pose[u"values"][u"root_translation"]
+            else:
+                p = pinned[name]
+            q = orc[name][u"local_orientation"]
+        else:
+            p, q = b[u"local_position"], b[u"local_orientation"]
+        expected[name] = prod_scope_compose(frame, s, (p, q))
+        scale[name] = s * prod_scope_typed_scale(b[u"scale"], name)
+    return expected
+
+
+def prod_scope_check_against_source(pose, expected, D, S):
+    """Independent cross-check of the expected result against the saved source observations: where a posed bone's
+    path from its component boundary has no carried bridge, its expected boundary-relative transform must equal the
+    source's recorded one (offsets and scales are compatible). Under a selected root whose translation is not part
+    of the pose, the comparison is made relative to the root. Returns the problems."""
+    orc = pose[u"oracle"][u"bones"]
+    tol = PROD_SCOPE_TOLERANCES
+    free_root = S[u"root"] if S[u"root"] in S[u"posed"] and S[u"root_translation"] != u"included" else None
+    problems = []
+    for name in S[u"posed"]:
+        node, bridged, via_root = name, False, name == free_root
+        while node not in S[u"tops"]:
+            node = D[u"bones"][node][u"parent"]
+            if node == free_root:
+                via_root = True
+            if node not in S[u"posed"]:
+                bridged = True
+        if bridged:
+            continue
+        if via_root:
+            if name == free_root:
+                rel = prod_scope_relative(prod_scope_world(D, S[u"boundaries"][node]), expected[name])
+                if prod_pose_angle_deg(rel[1], orc[name][u"relative_orientation"]) > tol[u"angle_degrees"]:
+                    problems.append(name)
+                continue
+            rel = prod_scope_relative(expected[free_root], expected[name])
+            src = prod_scope_relative((orc[free_root][u"relative_position"], orc[free_root][u"relative_orientation"]),
+                                      (orc[name][u"relative_position"], orc[name][u"relative_orientation"]))
+        else:
+            rel = prod_scope_relative(prod_scope_world(D, S[u"boundaries"][node]), expected[name])
+            src = (orc[name][u"relative_position"], orc[name][u"relative_orientation"])
+        if prod_pose_distance(rel[0], src[0]) > tol[u"position"] or \
+                prod_pose_angle_deg(rel[1], src[1]) > tol[u"angle_degrees"]:
+            problems.append(name)
+    return problems
+
+
+def prod_scope_verify(D_now, D_base, expected, pose, S, values, followers=()):
+    """The evaluated destination against the expected state (P7 and no-op): every affected bone at its expected
+    world transform; posed bones at their saved local orientation and planned offset; carried bones with their own
+    unchanged local transforms; dependency chain, outside branches, scales and the model placement unchanged.
+    Returns the problems (empty: verified)."""
+    tol = PROD_SCOPE_TOLERANCES
+    problems = []
+    orc = pose[u"oracle"][u"bones"]
+    for name, (p, q) in expected.items():
+        now, was = D_now[u"bones"][name], D_base[u"bones"][name]
+        if prod_pose_distance(now[u"world_position"], p) > tol[u"position"] or \
+                prod_pose_angle_deg(now[u"world_orientation"], q) > tol[u"angle_degrees"]:
+            problems.append(u"bone %s" % name)
+        if name in S[u"posed"]:
+            if prod_pose_angle_deg(now[u"local_orientation"], orc[name][u"local_orientation"]) > tol[u"angle_degrees"]:
+                problems.append(u"bone %s local orientation" % name)
+        elif prod_pose_distance(now[u"local_position"], was[u"local_position"]) > tol[u"position"] or \
+                prod_pose_angle_deg(now[u"local_orientation"], was[u"local_orientation"]) > tol[u"angle_degrees"]:
+            problems.append(u"carried bone %s local" % name)
+    unchanged = [n for n in D_now[u"bones"] if n not in expected and n not in set(followers)]
+    for name in unchanged:
+        now, was = D_now[u"bones"][name], D_base[u"bones"][name]
+        if prod_pose_distance(now[u"world_position"], was[u"world_position"]) > tol[u"position"] or \
+                prod_pose_angle_deg(now[u"world_orientation"], was[u"world_orientation"]) > tol[u"angle_degrees"] or \
+                prod_pose_distance(now[u"local_position"], was[u"local_position"]) > tol[u"position"] or \
+                prod_pose_angle_deg(now[u"local_orientation"], was[u"local_orientation"]) > tol[u"angle_degrees"]:
+            problems.append(u"unaffected bone %s" % name)
+    for name in D_now[u"bones"]:
+        if D_now[u"bones"][name][u"scale"] != D_base[u"bones"][name][u"scale"]:
+            problems.append(u"bone %s scale" % name)
+    for key in (u"world", u"local"):
+        if prod_pose_distance(D_now[u"model"][key + u"_position"], D_base[u"model"][key + u"_position"]) > \
+                tol[u"position"] or prod_pose_angle_deg(D_now[u"model"][key + u"_orientation"],
+                                                         D_base[u"model"][key + u"_orientation"]) > tol[u"angle_degrees"]:
+            problems.append(u"model %s placement" % key)
+    if D_now[u"model"][u"scale"] != D_base[u"model"][u"scale"]:
+        problems.append(u"model scale")
+    for w in S[u"written"]:
+        if w[u"attribute"] != u"position":
+            continue
+        row = D_now[u"bones"][w[u"bone"]]
+        if not prod_scope_exact(prod_scope_f32(row[u"local_position"]), list(values[w[u"channel"]])):
+            problems.append(u"input %s" % w[u"channel"])
+    return problems
+
+
+def prod_scope_followers(D, S):
+    """Bones outside the scope whose world transform legitimately follows it through a known constraint reading an
+    affected bone (a prop held in a posed hand), with their descendants. Their inputs are still verified exactly."""
+    bone_of_handle = dict((b[u"handle"], n) for n, b in D[u"bones"].items())
+    follow, moving = set(), set(S[u"affected"])
+    changed = True
+    while changed:
+        changed = False
+        for op in D[u"operators"]:
+            if op[u"type"] not in PROD_SCOPE_CONSTRAINTS:
+                continue
+            reads = set(bone_of_handle.get(t.get(u"target")) for t in op[u"targets"])
+            if not reads & moving:
+                continue
+            for s in op[u"slaves"].values():
+                n = bone_of_handle.get(s[u"target"]) if s is not None and s.get(u"target") is not None else None
+                if n is not None and n not in moving:
+                    group = set([n]) | prod_scope_descendants(D, [n])
+                    follow |= group
+                    moving |= group
+                    changed = True
+    for n in list(follow):
+        follow |= prod_scope_descendants(D, [n])
+    return sorted(follow - set(S[u"affected"]))
+
+
+# --- planning ---------------------------------------------------------------------------------------------------------
+
+def prod_scope_planned_values(pose, S, D, pinned):
+    """The one authoritative planned-value map: saved orientations, the saved body translation (full body), and
+    the pinned destination offsets for every other written position."""
+    values = {}
+    for w in S[u"written"]:
+        if w[u"source"] == u"saved":
+            values[w[u"channel"]] = list(pose[u"values"][u"orientations"][w[u"bone"]])
+        elif w[u"source"] == u"root-translation":
+            values[w[u"channel"]] = list(pose[u"values"][u"root_translation"])
+        else:
+            values[w[u"channel"]] = list(pinned[w[u"bone"]])
+    return values
+
+
+def prod_scope_plan(S, values, snaps, t_chan):
+    """One deduplicated exact-time key plan per written channel (stage A's planner). A pinned offset is never
+    written with a different value: a missing key is inserted with the destination's own value, a correct key is
+    left alone, and a contradicting key at t refuses."""
+    if sorted(snaps) != sorted(S[u"written_names"]) or sorted(values) != sorted(S[u"written_names"]):
+        raise prod_scope_error(u"evidence-unreadable", u"layer evidence is missing")
+    plans = []
+    for w in sorted(S[u"written"], key=lambda x: x[u"channel"]):
+        name = w[u"channel"]
+        plan = prod_pose_key_plan(snaps[name], t_chan, values[name], PROD_SCOPE_TRANSFORM_TYPES[w[u"attribute"]])
+        if w[u"source"] == u"pinned":
+            evaluated = snaps[name].get(u"evaluated_at_t")
+            if plan[u"action"] == u"update" or not isinstance(evaluated, list) or \
+                    not prod_scope_exact(prod_scope_f32(evaluated), list(values[name])):
+                raise prod_scope_error(u"evidence-unreadable", u"%s: the key at t contradicts the pinned offset" % name)
+        plans.append(plan)
+    return plans
+
+
+def prod_scope_noop(plans, D, expected, pose, S, values, followers):
+    """True no-op: every planned channel already holds its exact key AND the evaluated skeleton already verifies."""
+    if not prod_pose_noop_test(plans, {u"rig_inputs_ok": True, u"skeletal_oracle_ok": True}):
+        return False
+    return not prod_scope_verify(D, D, expected, pose, S, values, followers)
+
+
+# --- live state, capture and the P1-P7 transaction --------------------------------------------------------------------
+
+def prod_scope_time_names(L, D=None):
+    """The channels the time triple is read for: every channel writing a bone transform of the instance."""
+    bones = set(prod_pose_h(b[u"transform"]) for b in L[u"bones"].values())
+    names = []
+    for name, ch in L[u"channels"].items():
+        to = prod_pose_attr(ch, u"toElement")
+        if to is not None and prod_pose_h(to) in bones:
+            names.append(name)
+    if not names:
+        raise prod_scope_error(u"structure-unsupported", u"no channel animates a bone of the character")
+    return sorted(names)
+
+
+def prod_scope_identity(L):
+    """Every native identity a scoped operation depends on; compared exactly between its phases."""
+    out = {u"shot": prod_pose_h(L[u"shot"]), u"animset": prod_pose_h(L[u"animset"]), u"gm": prod_pose_h(L[u"gm"]),
+           u"rigs": [[prod_pose_h(r), prod_pose_h(g)] for r, g in L[u"rigs"]], u"clip": prod_pose_h(L[u"clip"]),
+           u"handles": dict((n, prod_pose_h(v)) for n, v in L[u"rig_handles"].items()),
+           u"bones": dict((n, [prod_pose_h(b[u"dag"]), prod_pose_h(b[u"transform"]), b[u"index"]])
+                          for n, b in L[u"bones"].items()),
+           u"operators": sorted(prod_pose_h(op) for op in L[u"operators"]), u"channels": {}}
+    for name, ch in L[u"channels"].items():
+        log = ch.GetLog()
+        out[u"channels"][name] = [prod_pose_h(ch), prod_pose_h(log) if log is not None else None] + (
+            [prod_pose_h(log.GetLayer(i)) for i in range(int(log.GetNumLayers()))] if log is not None else [])
+    return out
+
+
+def prod_scope_state(row, request=None, carried=None):
+    """Resolve, read and classify the pinned instance; compile the request when given."""
+    def read():
+        L = prod_scope_live(row)
+        index = prod_pose_writer_index()
+        time = prod_pose_time_read(L, prod_scope_time_names(L))
+        D = prod_scope_discover(L, time[u"t_chan"], index)
+        D[u"groups"] = prod_scope_groups(L)
+        C = prod_scope_classify(D)
+        S = prod_scope_compile(D, C, request, carried) if request is not None else None
+        if S is not None:
+            prod_scope_check_authority(D, C, S)
+        return {u"L": L, u"D": D, u"C": C, u"S": S, u"time": time, u"authored": prod_pose_capture_authored(L),
+                u"observed": prod_pose_capture_observed(L), u"identity": prod_scope_identity(L)}
+    return prod_scope_wrap(read)
+
+
+def prod_scope_bindings(L, names):
+    out = {}
+    for name in names:
+        ch = L[u"channels"][name]
+        log = ch.GetLog()
+        quat = prod_pose_type(log) == u"DmeQuaternionLog"
+        out[name] = {u"name": name, u"channel": ch, u"log": log, u"layer": log.GetLayer(0),
+                     u"kind": u"quaternion" if quat else u"vector"}
+    return out
+
+
+def prod_scope_carried_inputs(st, request):
+    """Admission of control-less bones the request needs (disabled: none admitted; refusals name them)."""
+    if not PROD_SCOPE_CARRIED_ENABLED[0]:
+        return []                       # constant_channel_carried_v1 disabled: compile refuses control-less bones
+    D, C = st[u"D"], st[u"C"]
+    if request[u"kind"] == u"full_body":
+        candidates = [n for n, r in C[u"bones"].items() if r[u"class"] == u"carried-candidate" and
+                      n not in set(b for e in request.get(u"exclusions") or [] for b in e[u"bones"])]
+    else:
+        below = prod_scope_descendants(D, [n for n in request.get(u"bones") or [] if n in D[u"bones"]])
+        candidates = [n for n in below if C[u"bones"][n][u"class"] == u"carried-candidate"]
+    if not candidates:
+        return []
+    names = []
+    for n in candidates:
+        names.extend(C[u"bones"][n][u"channels"].values())
+    bindings = prod_scope_bindings(st[u"L"], names)
+    snaps = dict((n, prod_scope_wrap(lambda n=n: prod_pose_layer_snapshot(bindings[n], st[u"time"][u"t_chan"])))
+                 for n in names)
+    guard = prod_scope_procedural_guard(st[u"L"], D)
+    admitted, refusals = prod_scope_carried_admission(D, C, sorted(candidates), snaps, st[u"authored"], guard,
+                                                      st[u"time"][u"t_chan"])
+    if refusals:
+        prod_pose_log(u"SCOPE-carried-refused", {u"bones": dict(list(sorted(refusals.items()))[:16])})
+    return admitted
+
+
+def prod_scope_authorize(operation_context, identity, reg, mode, label, item=None):
+    """Generic v3 authorization (R3 6.1): the same pinned selected-instance context, library identity, mode and
+    lifecycle gates as prod_pose_authorize, and the engine's own capability table, without resolving a Krystal
+    registry entry or rig class. Imported records never enable a rule or capability."""
+    if label not in PROD_POSE_SCENE_LABELS:
+        raise ProdPoseIntegrationError(u"label", u"Unknown pose operation %r." % (label,))
+    if mode not in (u"production", u"qualification"):
+        raise ProdPoseIntegrationError(u"registry", u"unknown build mode %r" % (mode,))
+    if prod_instance_token(operation_context) is None or not isinstance(operation_context.get("library_identity"),
+                                                                       dict):
+        raise ProdPoseIntegrationError(u"no-instance", u"Select the character in the scene first.")
+    pinned = operation_context["library_identity"]
+    if (u(pinned.get("model")).lower() != u(identity.get("model")).lower()
+            or int(pinned.get("checksum")) != int(identity.get("checksum"))):
+        raise ProdPoseIntegrationError(u"stale", PROD_POSE_MESSAGES[u"stale"])
+    try:
+        prod_validate_context_token(operation_context)
+    except Exception:
+        raise ProdPoseIntegrationError(u"stale", PROD_POSE_MESSAGES[u"stale"])
+    record = None
+    if item is not None:
+        r = item[u"record"]
+        if not prod_scope_is_record(r):
+            raise ProdPoseIntegrationError(u"invalid-file", PROD_POSE_MESSAGES[u"invalid-file"])
+        engine = r[u"pose"][u"engine"]
+        if not prod_scope_rule_usable(mode, engine[u"rule"], engine[u"revision"]):
+            raise ProdPoseIntegrationError(u"not-qualified", PROD_SCOPE_MESSAGES[u"not-qualified"])
+        record = {u"character_key": r[u"character_key"], u"preset_id": r[u"preset_id"],
+                  u"revision": item[u"revision"], u"payload_sha256": r[u"payload_sha256"], u"name": r[u"name"],
+                  u"scope": r[u"pose"][u"scope"][u"kind"], u"regions": [r[u"pose"][u"scope"][u"kind"]]}
+    elif label == u"Apply Pose":
+        raise ProdPoseIntegrationError(u"record-changed", PROD_POSE_MESSAGES[u"record-changed"])
+    if not prod_scope_rule_usable(mode):
+        raise ProdPoseIntegrationError(u"not-qualified", PROD_SCOPE_MESSAGES[u"not-qualified"])
+    return {u"schema": PROD_SCOPE_AUTH_SCHEMA, u"operation": label, u"mode": mode,
+            u"engine": {u"rule": PROD_SCOPE_RULE, u"revision": PROD_SCOPE_RULES[PROD_SCOPE_RULE][u"revision"]},
+            u"destination": {u"model": u(identity["model"]), u"checksum": int(identity["checksum"])},
+            u"context": operation_context, u"record": record, u"scoped": True}
+
+
+def prod_scope_row(identity, authorization):
+    if not authorization or authorization.get(u"schema") != PROD_SCOPE_AUTH_SCHEMA or \
+            not prod_scope_rule_usable(authorization[u"mode"]):
+        raise ProdPoseError(u"not-qualified", PROD_SCOPE_MESSAGES[u"not-qualified"])
+    return prod_resolve_instance(prod_instance_token(authorization[u"context"]), identity)
+
+
+def prod_scope_current_time(identity, authorization):
+    """The time triple pinned when the Save or Update dialog opens; every channel's clock must be the mapped tick."""
+    row = prod_scope_row(identity, authorization)
+
+    def read():
+        L = prod_scope_live(row)
+        return L, prod_pose_time_read(L, prod_scope_time_names(L))
+    L, time = prod_scope_wrap(read)
+    prod_pose_capture_clock_check(L, time[u"t_chan"])
+    return time
+
+
+def prod_scope_inventory(identity, authorization):
+    """Read-only inventory for the Save dialog: classification, the grouped picker, highlighted review candidates,
+    the full-body coverage outcome and a signature pinned for revalidation after the dialog."""
+    row = prod_scope_row(identity, authorization)
+    st = prod_scope_state(row)
+    D, C = st[u"D"], st[u"C"]
+    view = prod_scope_group_view(D, C)
+    highlighted = prod_scope_highlighted(D, C, view)
+    carried = prod_scope_carried_inputs(st, prod_scope_request(u"full_body"))
+    full = {u"status": u"available", u"code": None, u"message": None, u"review": []}
+    try:
+        S = prod_scope_compile(D, C, prod_scope_request(u"full_body"), carried)
+        prod_scope_check_authority(D, C, S)
+    except ProdPoseError as exc:
+        full = {u"status": u"refused", u"code": exc.code, u"message": u"%s" % exc, u"review": []}
+        # Unsupported components that are only highlighted expression candidates can be left out by the artist.
+        if exc.code in (u"unsupported-body", u"carried-unsupported", u"rig-driven"):
+            unsupported = [n for n, r in C[u"bones"].items() if r[u"class"] != u"direct-fk" and n not in carried]
+            if unsupported and set(unsupported) <= set(highlighted):
+                full = {u"status": u"review-required", u"code": u"review-required",
+                        u"message": PROD_SCOPE_MESSAGES[u"review-required"], u"review": sorted(unsupported)}
+    signature = hashlib.sha256(prod_pose_canonical_bytes([st[u"identity"], C, D[u"groups"]])).hexdigest()
+    return {u"view": view, u"highlighted": highlighted, u"full_body": full, u"signature": signature,
+            u"time": st[u"time"], u"root": C[u"root"], u"carried": carried,
+            u"classes": dict((n, r[u"class"]) for n, r in C[u"bones"].items())}
+
+
+def prod_scope_capture(identity, authorization, request, pinned_time=None, label=u"Save Pose", signature=None):
+    """Save New and Update Pose: read-only capture of the declared scope of the pinned instance at the mapped tick.
+    Never moves the playhead, writes or opens Undo. Refuses whenever the scope is not completely supported, a
+    channel's clock is not the mapped tick, a written layer is unsupported, the time or the dialog's pinned
+    inventory changed."""
+    row = prod_scope_row(identity, authorization)
+    carried = prod_scope_carried_inputs(prod_scope_state(row), request) if PROD_SCOPE_CARRIED_ENABLED[0] else []
+    st = prod_scope_state(row, request, carried)
+    if signature is not None and hashlib.sha256(prod_pose_canonical_bytes(
+            [st[u"identity"], st[u"C"], st[u"D"][u"groups"]])).hexdigest() != signature:
+        raise ProdPoseError(u"stale", PROD_POSE_MESSAGES[u"stale"])
+    t_chan = st[u"time"][u"t_chan"]
+    prod_pose_capture_clock_check(st[u"L"], t_chan)
+    S = st[u"S"]
+    bindings = prod_scope_bindings(st[u"L"], S[u"written_names"])
+    for name in sorted(bindings):
+        snap = prod_scope_wrap(lambda: prod_pose_layer_snapshot(bindings[name], t_chan))
+        attr = [w[u"attribute"] for w in S[u"written"] if w[u"channel"] == name][0]
+        problems = prod_pose_snapshot_evidence_problems(snap) or prod_pose_layer_problems(
+            snap, PROD_SCOPE_TRANSFORM_TYPES[attr])
+        if problems:
+            raise prod_scope_error(u"structure-unsupported", u"%s: %s" % (name, problems))
+    if pinned_time is not None and (st[u"time"][u"t_doc"], st[u"time"][u"t_shot"], t_chan) != (
+            pinned_time[u"t_doc"], pinned_time[u"t_shot"], pinned_time[u"t_chan"]):
+        raise ProdPoseError(u"stale", PROD_POSE_MESSAGES[u"stale"])
+    try:
+        shot_name = prod_pose_text(row["shot"].GetName()) or u"shot"
+    except Exception:
+        shot_name = u"shot"
+    D = st[u"D"]
+    bones = [{u"id": n, u"index": b[u"index"], u"parent": b[u"parent"]} for n, b in D[u"bones"].items()]
+    source = {u"model_ref": u(identity["model"]), u"model_key": prod_pose_model_key(u(identity["model"])),
+              u"model_checksum": int(identity["checksum"]) if identity.get("checksum") is not None else None,
+              u"layout_signature": prod_scope_layout_signature(bones), u"shot_name": shot_name[:256],
+              u"t_doc_ticks": st[u"time"][u"t_doc"], u"t_shot_ticks": st[u"time"][u"t_shot"]}
+    view = prod_scope_group_view(D, st[u"C"])
+    return prod_scope_payload(D, st[u"C"], S, view, source)
+
+
+def prod_scope_preflight(identity, authorization, item):
+    """P1: the fresh record; the fresh classification and the record's frozen scope compiled on the destination
+    (W/A/D/P); per-attribute authority and exclusion boundaries; scope-aware compatibility; the admitted
+    composition against observed destination transforms; the Motion Editor gate; one deduplicated plan; the one
+    expected authored state; the parent-first expected skeleton with its independent source cross-check; and the
+    true no-op decision."""
+    record = item[u"record"]
+    pose = record[u"pose"]
+    row = prod_scope_row(identity, authorization)
+    prod_pose_require_motion_editor()
+    undo = prod_pose_undo_state(dm())
+    if prod_pose_undo_problems(undo):
+        raise prod_scope_error(u"evidence-unreadable", u"the Undo history is unreadable: %s" %
+                               prod_pose_undo_problems(undo))
+    request = prod_scope_record_request(pose)
+    carried = prod_scope_carried_inputs(prod_scope_state(row), request) if PROD_SCOPE_CARRIED_ENABLED[0] else []
+    st = prod_scope_state(row, request, carried)
+    D, C, S, L = st[u"D"], st[u"C"], st[u"S"], st[u"L"]
+    pinned = prod_scope_compatible(pose, D, C, S, identity)
+    problems = prod_scope_check_composition(D, set(S[u"affected"]) | set(S[u"chain"]))
+    if problems:
+        raise prod_scope_error(u"scale-unsupported", u"destination transforms do not compose: %s" % problems[:8])
+    t_chan = st[u"time"][u"t_chan"]
+    gate = prod_pose_apply_gate(L, sorted(L[u"channels"]), t_chan)
+    bindings = prod_scope_bindings(L, S[u"written_names"])
+    snaps = dict((n, prod_scope_wrap(lambda n=n: prod_pose_layer_snapshot(bindings[n], t_chan))) for n in bindings)
+    values = prod_scope_planned_values(pose, S, D, pinned)
+    plans = prod_scope_wrap(lambda: prod_scope_plan(S, values, snaps, t_chan))
+    expected = prod_scope_expected(pose, D, S, pinned)
+    against = prod_scope_check_against_source(pose, expected, D, S)
+    if against:
+        raise prod_scope_error(u"proportions", u"the expected result disagrees with the saved observations: %s" %
+                               against[:8])
+    followers = prod_scope_followers(D, S)
+    opaque = [n for n in S[u"excluded"] if n not in S[u"preserved"]]
+    followers = sorted(set(followers) | set(opaque) | prod_scope_descendants(D, opaque))
+    noop = prod_scope_noop(plans, D, expected, pose, S, values, followers)
+    handles = dict((n, prod_pose_h(b[u"channel"])) for n, b in bindings.items())
+    return {u"state": st, u"undo": undo, u"time": st[u"time"], u"gate": gate, u"pose": pose, u"request": request,
+            u"carried": carried, u"pinned": pinned, u"bindings": bindings, u"snaps": snaps, u"plans": plans,
+            u"values": values, u"expected": expected, u"followers": followers, u"noop": noop,
+            u"expected_authored": prod_body_expected_authored(st[u"authored"], plans, handles), u"row": row}
+
+
+def prod_scope_same_state(identity, authorization, pre):
+    """P2 / Abort: a fresh read equals the P1 state exactly (identities, time, classification, compiled scope,
+    authority, authored, observed, every affected and dependency bone's evaluated transform and scale, the planned
+    layers, the gate, Undo) and the pinned offsets are unchanged. Returns the problems; unreadable is a problem."""
+    problems = []
+    try:
+        row = prod_scope_row(identity, authorization)
+        st = prod_scope_state(row, pre[u"request"], pre[u"carried"])
+    except Exception as exc:
+        return [u"unreadable: %s" % exc]
+    for key in (u"identity", u"time", u"authored", u"observed", u"C", u"S"):
+        if st[key] != pre[u"state"][key]:
+            problems.append(u"%s changed %s" % (key, prod_pose_differences(st[key], pre[u"state"][key])[:4]))
+    if st[u"D"][u"authority"] != pre[u"state"][u"D"][u"authority"]:
+        problems.append(u"authority changed")
+    S = pre[u"state"][u"S"]
+    for name in set(S[u"affected"]) | set(S[u"chain"]):
+        if st[u"D"][u"bones"][name] != pre[u"state"][u"D"][u"bones"][name]:
+            problems.append(u"bone %s changed" % name)
+    if st[u"D"][u"model"] != pre[u"state"][u"D"][u"model"]:
+        problems.append(u"model changed")
+    try:
+        if prod_scope_compatible(pre[u"pose"], st[u"D"], st[u"C"], st[u"S"], identity) != pre[u"pinned"]:
+            problems.append(u"pinned offsets changed")
+    except ProdPoseError as exc:
+        problems.append(u"compatibility refused: %s" % exc.code)
+    try:
+        bindings = prod_scope_bindings(st[u"L"], S[u"written_names"])
+    except Exception as exc:
+        return problems + [u"bindings unreadable %r" % (exc,)]
+    for name, snap in pre[u"snaps"].items():
+        try:
+            now = prod_pose_layer_snapshot(bindings[name], st[u"time"][u"t_chan"])
+        except Exception as exc:
+            problems.append(u"%s unreadable %r" % (name, exc))
+            continue
+        if now[u"unreadable"]:
+            problems.append(u"%s unreadable %s" % (name, now[u"unreadable"]))
+        for f in (u"times", u"values", u"metadata", u"defaults", u"bookmarks", u"curvetypes", u"compressed",
+                  u"curveinfo"):
+            if now[f] != snap[f]:
+                problems.append(u"%s %s changed" % (name, f))
+    try:
+        gate = prod_pose_apply_gate(st[u"L"], sorted(st[u"L"][u"channels"]), st[u"time"][u"t_chan"])
+        if gate != pre[u"gate"]:
+            problems.append(u"gate changed")
+    except Exception as exc:
+        problems.append(u"gate refused %r" % (exc,))
+    undo = prod_pose_undo_state(dm())
+    if prod_pose_undo_problems(undo) or undo != pre[u"undo"]:
+        problems.append(u"Undo history changed or unreadable")
+    return problems
+
+
+def prod_scope_apply(identity, authorization, item, reg=None, phase_callback=None):
+    """P1-P6 of one scoped Apply: one owned Undo transaction over the whole plan (stage E's transaction contract,
+    unchanged). Returns no-op, verification-pending or not-applied (aborted and verified unchanged); raises a
+    refusal before any write, or ProdRecoveryUnverifiedError when the scene state cannot be confirmed."""
+    mode = authorization[u"mode"]
+    name = item[u"record"][u"name"]
+    pre = prod_scope_preflight(identity, authorization, item)
+    prod_pose_log(u"SCOPE-P1", {u"time": pre[u"time"], u"noop": pre[u"noop"], u"scope": pre[u"state"][u"S"][u"kind"],
+                                u"actions": dict((a, sum(1 for p in pre[u"plans"] if p[u"action"] == a))
+                                                 for a in (u"none", u"update", u"insert"))})
+    if pre[u"noop"]:
+        if prod_pose_undo_state(dm()) != pre[u"undo"]:
+            raise ProdPoseError(u"stale", PROD_POSE_MESSAGES[u"stale"])
+        return {u"phase": u"no-op"}
+    fresh = prod_pose_read_file(item[u"path"], reg if reg is not None else {})
+    if fresh[1] != item[u"revision"]:
+        raise ProdPoseLibraryError(u"record-changed", PROD_POSE_MESSAGES[u"record-changed"])
+    changed = prod_scope_same_state(identity, authorization, pre)
+    if changed:
+        prod_pose_log(u"SCOPE-P2-refused", {u"problems": changed[:16]})
+        raise ProdPoseError(u"stale", PROD_POSE_MESSAGES[u"stale"])
+    dm_obj = dm()
+    label = u"Apply Pose %s" % name
+    finished = False
+    written = []
+    t_chan = pre[u"time"][u"t_chan"]
+    tol = PROD_SCOPE_TOLERANCES
+    native_labels = (prod_pose_native_name(label), prod_pose_native_name(u"Redo " + label))
+    undo_now = prod_pose_undo_state(dm_obj)
+    if prod_pose_undo_problems(undo_now) or undo_now != pre[u"undo"]:
+        prod_pose_log(u"SCOPE-P2-refused", {u"undo": undo_now})
+        raise ProdPoseError(u"stale", PROD_POSE_MESSAGES[u"stale"])
+    try:
+        dm_obj.StartUndo(native_labels[0], native_labels[1])
+    except Exception as exc:
+        prod_pose_log(u"SCOPE-start-undo-uncertain", {u"error": repr(exc)})
+        raise ProdRecoveryUnverifiedError(PROD_POSE_MESSAGES[u"recovery-unverified"] % {u"name": name})
+    try:
+        if phase_callback is not None:
+            phase_callback(u"P3-owned", {u"label": label})
+        for plan in pre[u"plans"]:
+            if plan[u"action"] != u"none":
+                prod_pose_write(pre[u"bindings"][plan[u"name"]], plan)
+                written.append(plan[u"name"])
+        prod_pose_qualification_fault(mode, u"after-writes")
+        problems = []
+        items = getattr(dm_obj, "ItemsAddedToCurrentUndo", None)
+        if written and callable(items) and items() is not True:
+            problems.append(u"the writes were not recorded in the open Undo operation")
+        for plan in pre[u"plans"]:
+            after = prod_pose_layer_snapshot(pre[u"bindings"][plan[u"name"]], t_chan)
+            problems.extend(prod_pose_check_postconditions(pre[u"snaps"][plan[u"name"]], after, plan,
+                                                           PROD_POSE_INSERT_ALLOWED_METADATA))
+            if after[u"metadata"] != pre[u"snaps"][plan[u"name"]][u"metadata"]:
+                problems.append(u"%s: log or layer metadata changed" % plan[u"name"])
+            got = after[u"evaluated_at_t"]
+            if got is None or (prod_pose_angle_deg(got, plan[u"value"]) > tol[u"effective_angle_degrees"]
+                               if len(plan[u"value"]) == 4 else not prod_scope_exact(list(got), list(plan[u"value"]))):
+                problems.append(u"%s: the log does not evaluate to the written value at t" % plan[u"name"])
+        L = pre[u"state"][u"L"]
+        if prod_pose_capture_authored(L) != pre[u"expected_authored"]:
+            problems.append(u"the instance's authored state is not exactly the one planned state")
+        if prod_pose_capture_observed(L) != pre[u"state"][u"observed"]:
+            problems.append(u"a constraint or operator attribute changed")
+        if problems:
+            raise ProdPoseError(u"structure-unsupported", u"P5: %s" % problems[:8])
+        finished = True
+        dm_obj.FinishUndo()
+    except Exception as exc:
+        prod_pose_log(u"SCOPE-P3-P6-failure", {u"error": repr(exc), u"finished": finished, u"written": len(written)})
+        if not finished:
+            try:
+                dm_obj.AbortUndoableOperation()
+            except Exception as abort_exc:
+                prod_pose_log(u"SCOPE-abort-failed", {u"error": repr(abort_exc)})
+                raise ProdRecoveryUnverifiedError(PROD_POSE_MESSAGES[u"recovery-unverified"] % {u"name": name})
+            problems = prod_scope_same_state(identity, authorization, pre)
+            prod_pose_log(u"SCOPE-abort-verified" if not problems else u"SCOPE-abort-unverified",
+                          {u"problems": problems[:16]})
+            if problems:
+                raise ProdRecoveryUnverifiedError(PROD_POSE_MESSAGES[u"recovery-unverified"] % {u"name": name})
+            return {u"phase": u"not-applied", u"reason": repr(exc)}
+        prod_pose_log(u"SCOPE-finish-undo-uncertain", {u"error": repr(exc), u"undo": prod_pose_undo_state(dm_obj),
+                                                       u"pre_undo": pre[u"undo"], u"label": label,
+                                                       u"written": len(written)})
+        raise ProdRecoveryUnverifiedError(PROD_POSE_MESSAGES[u"recovery-unverified"] % {u"name": name})
+    if phase_callback is not None:
+        phase_callback(u"native-commit", {u"label": label})
+    undo = prod_pose_undo_state(dm_obj)
+    owned = not prod_pose_undo_problems(undo) and undo[u"can_undo"] is True and undo[u"undo_desc"] == label
+    prod_pose_log(u"SCOPE-P6", {u"undo": undo, u"owned": owned, u"written": len(written)})
+    if owned:
+        prod_pose_request_refresh(pre[u"time"][u"t_doc"])
+    return {u"phase": u"verification-pending", u"pending": prod_scope_pending(pre, label, owned_top=owned)}
+
+
+def prod_scope_pending(pre, label, finish_exception=False, owned_top=True):
+    """The P7 record: Python data only (no native object is kept for the deferred turn)."""
+    st = pre[u"state"]
+    return {u"scoped": True, u"label": label, u"undo_label": label, u"time": pre[u"time"], u"gate": pre[u"gate"],
+            u"identity": st[u"identity"], u"expected_authored": pre[u"expected_authored"],
+            u"observed": st[u"observed"], u"baseline": st[u"D"], u"classes": st[u"C"], u"scope": st[u"S"],
+            u"request": pre[u"request"], u"carried": pre[u"carried"], u"pose": pre[u"pose"],
+            u"expected": dict((k, [list(v[0]), list(v[1])]) for k, v in pre[u"expected"].items()),
+            u"values": pre[u"values"], u"pinned": pre[u"pinned"], u"followers": pre[u"followers"],
+            u"finish_exception": finish_exception, u"owned_top": owned_top,
+            u"regions": [PROD_SCOPE_PART_KEYS[st[u"S"][u"kind"]]]}
+
+
+def prod_scope_verify_applied(pending):
+    """P7 after the context gate: the owned Undo entry, identities, time and gate unchanged, then the one expected
+    authored state, unchanged operator attributes, fresh classification, scope and authority, the pinned offsets,
+    and the independently read skeleton against the parent-first expectation. Read-only. Any failed or unreadable
+    item gives committed-unverified."""
+    if pending.get(u"finish_exception") or not pending.get(u"owned_top"):
+        return prod_apply_deferred_unverified(u"ownership-uncertain")
+    authorization = pending[u"authorization"]
+    try:
+        row = prod_resolve_instance(prod_instance_token(authorization[u"context"]))
+        undo = prod_pose_undo_state(dm())
+        if prod_pose_undo_problems(undo) or undo[u"undo_desc"] != pending[u"undo_label"] or undo[u"can_undo"] is not True:
+            prod_pose_log(u"SCOPE-P7-unverified", {u"reason": u"undo", u"undo": undo})
+            return prod_apply_deferred_unverified(u"undo-history-changed")
+        L = prod_scope_live(row)
+        if prod_scope_identity(L) != pending[u"identity"]:
+            return prod_apply_deferred_unverified(u"context-changed")
+        time = prod_pose_time_read(L, prod_scope_time_names(L))
+        if time != pending[u"time"]:
+            prod_pose_log(u"SCOPE-P7-unverified", {u"reason": u"context-changed", u"time": time})
+            return prod_apply_deferred_unverified(u"context-changed")
+        try:
+            gate = prod_pose_apply_gate(L, sorted(L[u"channels"]), time[u"t_chan"])
+        except ProdPoseError as exc:
+            gate = repr(exc)
+        if gate != pending[u"gate"]:
+            prod_pose_log(u"SCOPE-P7-unverified", {u"reason": u"context-changed", u"gate": gate})
+            return prod_apply_deferred_unverified(u"context-changed")
+        problems = []
+        if prod_pose_capture_authored(L) != pending[u"expected_authored"]:
+            problems.append(u"authored keys")
+        if prod_pose_capture_observed(L) != pending[u"observed"]:
+            problems.append(u"constraint or operator attributes")
+        D = prod_scope_discover(L, time[u"t_chan"], prod_pose_writer_index())
+        D[u"groups"] = pending[u"baseline"].get(u"groups") or []
+        C = prod_scope_classify(D)
+        if C != pending[u"classes"]:
+            problems.append(u"classification")
+        if D[u"authority"] != pending[u"baseline"][u"authority"]:
+            problems.append(u"authority changed since P1")
+        try:
+            S = prod_scope_compile(D, C, pending[u"request"], pending[u"carried"])
+            if S != pending[u"scope"]:
+                problems.append(u"scope")
+            prod_scope_check_authority(D, C, pending[u"scope"])
+        except ProdPoseError as exc:
+            problems.append(u"scope or authority refused: %s" % exc.code)
+        for w in pending[u"scope"][u"written"]:
+            planned = list(pending[u"values"][w[u"channel"]])
+            try:
+                got = prod_scope_channel_value(D, w[u"channel"])
+            except ProdPoseError:
+                problems.append(u"written channel %s unreadable" % w[u"channel"])
+                continue
+            if (w[u"attribute"] == u"position" and not prod_scope_exact(got, planned)) or (
+                    w[u"attribute"] == u"orientation" and prod_pose_angle_deg(got, planned) >
+                    PROD_SCOPE_TOLERANCES[u"effective_angle_degrees"]):
+                problems.append(u"written channel %s does not hold its planned value" % w[u"channel"])
+        expected = dict((k, (v[0], v[1])) for k, v in pending[u"expected"].items())
+        problems.extend(prod_scope_verify(D, pending[u"baseline"], expected, pending[u"pose"], pending[u"scope"],
+                                          pending[u"values"], pending[u"followers"]))
+        if problems:
+            prod_pose_log(u"SCOPE-P7-unverified", {u"problems": problems[:16]})
+            return prod_apply_deferred_unverified(u"verify-failed")
+    except Exception as exc:
+        prod_pose_log(u"SCOPE-P7-unverified", {u"reason": u"verify-error", u"error": repr(exc)})
+        return prod_apply_deferred_unverified(u"verify-error")
+    prod_pose_log(u"SCOPE-P7-verified", {u"time": pending[u"time"]})
+    return {u"phase": u"committed-verified"}
+
+
+# --- the Poses page: parts, summaries, availability and the Save dialog (no Qt) --------------------------------------
+
+def prod_scope_parts(record):
+    """The parts a record holds, for the page: version 1/2 regions, or the version 3 scope kind."""
+    if prod_scope_is_record(record):
+        return [PROD_SCOPE_PART_KEYS[record[u"pose"][u"scope"][u"kind"]]]
+    return sorted(record[u"pose"][u"regions"])
+
+
+def prod_scope_availability(record, identity, mode):
+    """Offline availability of a v3 record for the selected character (the scene is checked at Apply): the rule is
+    usable in this build and the saved model is the selected model."""
+    engine = record[u"pose"][u"engine"]
+    if not prod_scope_rule_usable(mode, engine[u"rule"], engine[u"revision"]):
+        return u"not-qualified"
+    if identity is None or prod_pose_model_key(u(identity.get("model") or u"")) != \
+            record[u"pose"][u"source"][u"model_key"]:
+        return u"different-model"
+    return u"available"
+
+
+def prod_scope_summary(kind, inventory, bones=None, include_highlighted=True, root=None):
+    """The coverage line shown before saving, from the actual ledger inputs (never the label alone)."""
+    if kind == u"full_body":
+        full = inventory[u"full_body"]
+        if full[u"status"] == u"refused":
+            return full[u"message"]
+        if full[u"status"] == u"review-required" and include_highlighted:
+            return full[u"message"]
+        if inventory[u"highlighted"] and not include_highlighted:
+            return u"Full body: body articulation captured; the listed facial controls are left unchanged."
+        if inventory[u"highlighted"]:
+            return u"Includes supported facial bones; flex expressions unchanged."
+        return u"Full body: body articulation captured; flex expressions and placement unchanged."
+    bones = list(bones or [])
+    if not bones:
+        return PROD_SCOPE_MESSAGES[u"empty-selection"]
+    chosen = set(bones)
+    name = None
+    for row in inventory[u"view"]:
+        if row[u"bones"] and set(row[u"bones"]) == chosen:
+            name = row[u"path"][-1]
+    text = u"%s: articulation only. Unselected parts unchanged." % (name or u"%d parts" % len(chosen))
+    if root is not None and root in chosen:
+        text += u" The body root keeps its position."
+    return text
+
+
+def prod_scope_dialog_state(inventory, choice):
+    """The Save dialog from one choice {kind, bones, exclude_highlighted}: whether Save is enabled, the summary, the
+    review list and the request it would save. No Qt access."""
+    kind = choice.get(u"kind") or u"full_body"
+    out = {u"kind": kind, u"save_enabled": False, u"summary": u"", u"review": [], u"request": None,
+           u"picker_enabled": kind == u"selected_parts"}
+    if kind == u"selected_parts":
+        bones = [b for b in choice.get(u"bones") or [] if inventory[u"classes"].get(b) == u"direct-fk"]
+        rejected = [b for b in choice.get(u"bones") or [] if inventory[u"classes"].get(b) != u"direct-fk"]
+        if rejected:
+            out[u"summary"] = PROD_SCOPE_MESSAGES[u"unsupported-selection"] % {
+                u"parts": prod_scope_list_phrase(rejected)}
+            return out
+        out[u"summary"] = prod_scope_summary(kind, inventory, bones, root=inventory.get(u"root"))
+        out[u"save_enabled"] = bool(bones)
+        out[u"request"] = prod_scope_request(kind, bones) if bones else None
+        return out
+    full = inventory[u"full_body"]
+    highlighted = inventory[u"highlighted"]
+    exclude = bool(choice.get(u"exclude_highlighted"))
+    out[u"review"] = list(full[u"review"] or highlighted)
+    if full[u"status"] == u"refused":
+        out[u"summary"] = full[u"message"]
+        return out
+    if full[u"status"] == u"review-required" and not exclude:
+        out[u"summary"] = full[u"message"]
+        return out
+    out[u"summary"] = prod_scope_summary(kind, inventory, include_highlighted=not exclude)
+    exclusions = []
+    if exclude and highlighted:
+        exclusions = [{u"id": u"face", u"bones": sorted(set(highlighted)), u"reason": u"expression controls left "
+                       u"unchanged by the artist", u"provenance": u"user_confirmed", u"policy_revision": None,
+                       u"label": u"Face"}]
+    out[u"request"] = prod_scope_request(kind, [], exclusions)
+    out[u"save_enabled"] = True
+    return out
+
+
+def prod_scope_info(record):
+    """Pose Info rows for a v3 record: captured scope, exclusions with provenance, and the engine rule."""
+    pose = record[u"pose"]
+    sc = pose[u"scope"]
+    rows = [(u"Saved scope:", u"Full body" if sc[u"kind"] == u"full_body" else u"Selected parts: %s" % sc[u"label"])]
+    if sc[u"kind"] == u"selected_parts":
+        rows.append((u"Includes:", u"%d controls (articulation only)" % len(sc[u"posed"])))
+    for e in sc[u"exclusions"]:
+        rows.append((u"Left unchanged:", u"%s (%d controls, %s)" % (
+            e[u"label"], len(e[u"bones"]), u"chosen when saving" if e[u"provenance"] == u"user_confirmed" else
+            u"from supported metadata")))
+    return {u"rows": rows, u"bones": list(sc[u"posed"]), u"engine": u"%s revision %d" % (
+        pose[u"engine"][u"rule"], pose[u"engine"][u"revision"])}
+
+# === end of F-01 scoped pose block ===
