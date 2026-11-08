@@ -384,3 +384,7 @@ real_sfm_qualification/f01_full_body_s0/** text eol=lf
 # (PROD_BODY_REGISTRY_SHA256); the S0-derived test fixtures are SHA-256 pinned in test_cpm_app_f01_body.py.
 cpm/pose_profiles/cpm_body_profiles_v1.json text eol=lf
 cpm/convergence/tests/fixtures/f01_body/*.json -text
+
+# F-01 SFP-1 (2026-11-08): the Owner-approved R3 scoped-pose Blueprint, incorporated byte-exact (SHA-256 e4cfa882...);
+# the scoped test fixtures are SHA-256 pinned in test_cpm_app_f01_scoped.py.
+cpm/qualification/F01_SCOPED_POSE_BLUEPRINT_R3_20261108.md text eol=lf
