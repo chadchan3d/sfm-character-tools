@@ -1,8 +1,9 @@
 # F-01 SFP-1 — NQ-S6: Procedural State of Control-less Bones (Focused Investigation)
 
-**Date:** 2026-11-08. **Status:** offline investigation complete; one bounded read-only native observation
-**prepared, not run** (`real_sfm_qualification/f01_nq_s6/`). No production code changed, nothing enabled, installed,
-pushed, merged or released. `constant_channel_carried_v1` stays disabled and its refusal stands.
+**Date:** 2026-11-08. **Status:** CLOSED. Offline investigation complete; the bounded read-only native observation
+**ran on 2026-11-08 with a clean postflight** (section 7). Outcome: the Heavy's helpers are **declared procedural**.
+No production code changed, nothing enabled, installed, pushed, merged or released. `constant_channel_carried_v1`
+stays disabled and its refusal stands. Sections 1–6 are the pre-observation record, unchanged.
 
 ## 1. Question
 
@@ -99,3 +100,47 @@ the same run, if the Owner names one.
    Owner-chosen candidate model that has no rig.
 5. **Implementation review readiness:** unchanged. SFP-1 stages A/B (`abe58bb`, CPM `54e2028d…`) remain ready for
    review; this investigation changes no production code.
+
+## 7. Native observation results (2026-11-08)
+
+**Run.** Owner-operated, per `real_sfm_qualification/f01_nq_s6/PROCEDURE.md`, on a verified copy of the preserved
+survey session. Preflight `PRE PASS`; `COPY PASS` (copy `47f6b9a0…`, 547,388 bytes). Both observations `OK`,
+`readonly=True`, `problems=0`, `findings=0`; the copy was never saved. Postflight `POST PASS` (the four protected
+inventories — scripts, `usermod/cfg`, the CPM library, sessions — equal their baselines; SFM's two housekeeping files
+`demoheader.tmp` and `tf2_playerstats.dmx` were put back under the existing procedure; no session written) and
+`SESSION CHECK PASS` (the preserved original `mc_survey.dmx` still `47f6b9a047b02462…`). No stop condition occurred.
+
+| Evidence (run folder, not committed) | SHA-256 |
+|---|---|
+| `observations/NQ-01.json` (`heavy1`) | `9f5851269d8f0f7daba59d43080a6bdca248a9f3d2f26fdc020ade256cc44d18` |
+| `observations/NQ-02.json` (`ayane_dazv51`) | `7da8dc4649ccde76cd3fd2fd61d1de0da3910ace5c8ce0f60c5fea60f4d93f6f` |
+| `evidence/NQ_S6_ANALYSIS.json` | `c1656974a5a35db654c0b85aaae1aab3a895abaf9c641bf071c1c0b511f4c0cb` |
+| `evidence/NQ_S6_ANALYSIS.md` | `0f45704c01abd3d80ecf8afcfa3838b37481959b156a3d04ef3c2205e7dc8fe8` |
+| `evidence/post.json` | `82a68ff344129d8483e228710749a78238deff256df26ecd3482fa55620b8eac` |
+| `evidence/session_check.json` | `f24fb85e03d8bb9d6ec5f817d63366a4698351c8e538b80235dcd9ce67437ecc` |
+
+**Declared by the engine-loaded model** (`GetStudioHdr().pBone(i)`; header and scene bones join by index and name
+with no problems on both models; `ShouldEvaluateProceduralBones()` and the attribute both `True`):
+
+| Model | Header = scene bones | Declared procedural (all) | `proctype` | `flags` |
+|---|---|---|---|---|
+| Heavy `models/player/heavy.mdl` | 79 = 79 | `hlp_forearm_L` (77, parent 11 `bip_lowerArm_L`, `procindex` 432), `hlp_forearm_R` (78, parent 12 `bip_lowerArm_R`, `procindex` 228) | 2 `STUDIO_PROC_QUATINTERP` | 7172 = 0x1C04: `BONE_ALWAYS_PROCEDURAL` (0x04) plus bits inside `BONE_USED_MASK` |
+| Ayane `ayane_dazv5.mdl` | 165 = 165 | the eight `ValveBiped.Bip01_{L,R}_{Breast,Butt}{0,1}_jiggle` | 5 `STUDIO_PROC_JIGGLE` | 1284 = 0x504: `BONE_ALWAYS_PROCEDURAL` plus used bits |
+
+On both models the control-less (source-less channel) bones are **exactly** the declared-procedural bones (Heavy 2/2,
+Ayane 8/8); every one classifies `declared-procedural`. Both Heavy helpers are leaves (no child bones).
+
+**Observed in the DME channels** (corroboration, not a contract): each of the 20 helper/jiggle channels holds 20
+identical keys over ticks 0–9500 and evaluated to that constant at every sample (−1,000,000; 0; 9500; 9501; 50091;
+500910; 100,000,000). `usedefaultvalue = False` and `CDmeLog.HasDefaultValue() = False` on every one, which closes the
+section 3 `HasDefaultValue` question for these logs. Ayane's jiggle bones visibly move when rendered, yet their channels
+are equally constant: constant channels do not show a fixed rendered bone. The rendered result remains unreadable.
+
+**Consequence (section 5, first row).** The helpers are engine-derived outputs. Under R3 3.1
+`constant_channel_carried_v1` must refuse them permanently; **no v3 Full body of the unrigged Heavy is possible under R3
+as written.** A nonprocedural declaration was not found, so nothing here bears on admitting a nonprocedural bone. No
+workaround is implemented or proposed; Heavy admission would need a separately approved category and R3 amendment.
+
+**Next (Owner direction, 2026-11-08):** the Owner accepted Astra's bounded assessment as the architectural direction
+and authorized a read-only feasibility assessment of a separate `engine_derived_quatinterp_v1` category (no Heavy
+admission, code change or R3 amendment): `cpm/qualification/F01_SFP1_QUATINTERP_FEASIBILITY.md`.
