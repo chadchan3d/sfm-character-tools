@@ -9,7 +9,18 @@
 - **F-01 full-body architecture (Owner-accepted 2026-11-05):** `cpm/qualification/F01_FULL_BODY_CONSOLIDATED_DESIGN.md` Rev 1 — Astra's hybrid architecture with Argon's adversarial corrections, as stated in the Owner's authorization; the review texts are external records (not in this repository). It supersedes `F01_FULL_BODY_DESIGN_PROPOSAL.md`, which is kept unchanged. It does not modify the R15 Blueprint or the Stage D design.
 
 ## Current milestone and done criteria
-**F-01 — Krystal full body CLOSED (qualified, local development status); model compatibility assessed (2026-11-07).** Krystal identities and the generalization analysis: `F01_MODEL_COMPATIBILITY_ASSESSMENT.md`. The engine (discovery, transaction, record, UI) is model-independent; profiles pin per-model rig data; the engine refuses models without a rig and unknown rig operators (reverse foot). Proposed: a read-only survey of TF2 `heavy.mdl` (no rig and `rig_biped_simple`) and `ayane_dazv5` (`rig_biped_daz_v5`), plus an offline refusal probe; decisions on compatibility authority, facial preservation, the FK-only frame and rig features.
+**F-01 — Native model compatibility survey COMPLETE; assessed (2026-11-07).**
+- **Kit and run:** kit `real_sfm_qualification/f01_model_survey/` (`b04729b`). MC-01 (TF2 Heavy, no rig), MC-02 (Heavy, `rig_biped_simple`) and MC-03 (`ayane_dazv5`, `rig_biped_daz_v5`): one SFM process, all read-only, problems 0. `post`: inventories equal; deviations MC-D1–D3 (session created in the default folder, saved by the operator, moved to the run folder with verification) recorded.
+- **Results:**
+  - a profile drafted from structure alone equals Krystal's hand-written profile except the facial list;
+  - the CPM classifier accepts the drafted profile for the rigged Heavy (144 written channels);
+  - it refuses the unrigged Heavy (no rig) and Ayane (20 rig handles parented to bones; with that relaxed, hypothetically, it classifies and would write 43 facial FK bones);
+  - rig names embed the animation-set name;
+  - every Ayane facial bone is in a Face control group;
+  - reverse foot is untested (neither model has heel attachments; SFM warned `pvt_heel_L/R` missing for the Heavy).
+- **Record:** `F01_MODEL_COMPATIBILITY_SURVEY.md`. No CPM change.
+
+**Previous (same day): F-01 — Krystal full body CLOSED (qualified, local development status); model compatibility assessed (2026-11-07).** Krystal identities and the generalization analysis: `F01_MODEL_COMPATIBILITY_ASSESSMENT.md`. The engine (discovery, transaction, record, UI) is model-independent; profiles pin per-model rig data; the engine refuses models without a rig and unknown rig operators (reverse foot). Proposed: a read-only survey of TF2 `heavy.mdl` (no rig and `rig_biped_simple`) and `ayane_dazv5` (`rig_biped_daz_v5`), plus an offline refusal probe; decisions on compatibility authority, facial preservation, the FK-only frame and rig features.
 
 **F-01 Full-Body — S3 native qualification COMPLETE across runs 1–5 (2026-11-07); release preparation not started.** Run 4 (`e98b90b`, qualification `12b59b29…`): B9–B12 PASS (scoped; Clip Editor message "Switch to the Motion Editor to apply a pose.", proportions refusal, no writes). Run 5: legacy left arm B11, B13–B17 comparator PASS (visible transfer, no-op, Undo/Redo, P7 verified; 3.1 s). Run 3's verdict stays FAIL (procedural); its B1–B11 full-body results stand. Consolidated record: `F01_FULL_BODY_S3_ASSESSMENT.md`.
 
@@ -78,4 +89,4 @@
 - **Public reception:** owner-reported downloads/subscriptions versus anti-AI comments are sentiment observations, not evidence of software success or failure.
 
 ## One next bounded action
-**The Owner's decisions:** (1) on the model compatibility investigation (`F01_MODEL_COMPATIBILITY_ASSESSMENT.md` sections 5 and 7); (2) on CPM v1.1.0 release preparation for Krystal (registry promotion, packaging, production smoke test). No release, signing or merge before separate authorization. No installation, native run, release packaging, deployment or merge to `master` before separate authorization.
+**The Owner's and Astra's decisions:** (1) on the generalization milestone and the choices in `F01_MODEL_COMPATIBILITY_SURVEY.md` sections 4–5 (discovered description as compatibility authority, group-based facial preservation, rig-name identity, props, the FK-only frame, bone-parented handles, reverse foot); (2) on CPM v1.1.0 release preparation for Krystal (registry promotion, packaging, production smoke test). No release, signing or merge before separate authorization. No installation, native run, release packaging, deployment or merge to `master` before separate authorization.
