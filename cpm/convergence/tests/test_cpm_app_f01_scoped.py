@@ -1923,6 +1923,277 @@ def section_corrections(ns, app, root, lib, grip):
           verdict == {u"phase": u"committed-verified"}, (result.get(u"phase"), verdict))
 
 
+# ---------------------------------------------------------------------------
+# AY. Final dependency corrections (Owner authorization after the 1bf1ab3 re-review): document-wide constraint and
+# channel-reader dependencies, and confined external prop followers
+# ---------------------------------------------------------------------------
+
+def prop_dag(w, name=u"prop", parent=None):
+    t = FB.Element(w, w.new_handle(), "DmeTransform", name + u"_t", position=FB.Vector(), orientation=FB.Quaternion())
+    d = FB.Dag(w, w.new_handle(), "DmeDag", name, t)
+    (parent if parent is not None else w.scene).add(d)
+    return d
+
+
+def place_operator(w, el, where):
+    if where == u"character":
+        w.animset.attrs["operators"].items.append(el)
+    elif where == u"shot":
+        w.shot.attrs["operators"].items.append(el)
+    else:
+        w.shot.attrs["animationSets"].items.append(FB.Element(w, w.new_handle(), "DmeAnimationSet", u"prop_set",
+                                                              operators=FB.ElementArray(w, [el])))
+
+
+def constrain_to(w, slave_dag, target_dag, where, kind="DmeRigPointConstraintOperator", vec=(100.0, 0.0, 0.0),
+                 targets=None):
+    """A supported constraint (stored in the character's set, the shot, or another animation set) slaving slave_dag
+    to target_dag. When the slave is a bone of the character, the fake evaluator solves it."""
+    tgt = FB.Element(w, w.new_handle(), "DmeConstraintTarget", "t", target=target_dag, targetWeight=1.0,
+                     vecOffset=FB.Vector(*vec))
+    el = FB.Element(w, w.new_handle(), kind, u"c_%s" % slave_dag.name,
+                    slave=FB.Element(w, w.new_handle(), "DmeConstraintSlave", "s", target=slave_dag),
+                    targets=targets if targets is not None else FB.ElementArray(w, [tgt]))
+    place_operator(w, el, where)
+    if targets is None and slave_dag in w.bone_dag.values():
+        w.ops.append(({u"type": kind, u"slaves": {u"slave": {u"slave": el.attrs["slave"].h, u"target": slave_dag.h}}},
+                      el))
+    return el
+
+
+def model_pass(w):
+    """Explicit model of SFM's Pass channel mode (CM_PASS, mode 1) for this World: after the normal evaluation, each
+    registered Pass channel copies its source attribute to its destination and the skeleton is re-solved. The fake's
+    default evaluation ignores non-Play channels, so no Pass test relies on it."""
+    if getattr(w, "pass_channels", None) is None:
+        w.pass_channels = []
+        real = w.evaluate
+
+        def evaluate():
+            real()
+            for ch in w.pass_channels:
+                if ch.attrs.get("mode") == 1:
+                    ch.attrs["toElement"].set(ch.attrs["toAttribute"], ch.attrs["fromElement"].attrs[
+                        ch.attrs["fromAttribute"]])
+            w.solve()
+        w.evaluate = evaluate
+    return w.pass_channels
+
+
+def reader_channel(w, src, src_attr, dst, dst_attr, mode=1, clip=u"other"):
+    """A channel reading src.src_attr into dst.dst_attr (in the character's channels clip or another clip). Pass mode
+    is modelled explicitly (model_pass)."""
+    layer = FB.Layer(w, w.new_handle(), "DmeQuaternionLogLayer", [[0, [0.0, 0.0, 0.0, 1.0]]], "quat")
+    ch = FB.Channel(w, w.new_handle(), "DmeChannel", u"reader_%d" % w.new_handle(), fromElement=src,
+                    fromAttribute=src_attr, toElement=dst, toAttribute=dst_attr, mode=mode, fromIndex=0, toIndex=0,
+                    log=FB.Log(w, w.new_handle(), "DmeQuaternionLog", layer))
+    if clip == u"character":
+        w.chan_clip.attrs["channels"].items.append(ch)
+    else:
+        other = FB.Clip(w, w.new_handle(), "DmeChannelsClip", "Other", offset=0, start=0, end=10 ** 7,
+                        channels=FB.ElementArray(w, [ch]))
+        w.shot.attrs["trackGroups"].items[0].attrs["tracks"].items[0].attrs["children"].items.append(other)
+    if mode == 1 and not isinstance(src, Opaque):
+        model_pass(w).append(ch)
+    return ch
+
+
+def section_dependencies(ns, app, root, lib, grip):
+    arm = arm_fixture()
+
+    def world(prepare=None):
+        w = FS.World(placed_destination(arm))
+        if prepare is not None:
+            prepare(w)
+            w.evaluate()
+        use(ns, w, arm)
+        return w
+
+    def tr(w, bone):
+        return w.bone_dag[bone].attrs["transform"]
+
+    def run():
+        return outcome(lambda: apply(ns, reload(ns, lib, grip)))
+
+    def refused_clean(label, w, got, code):
+        check("AY.%s_refuses_before_writing" % label, got[0] != "ok" and got[1] == code, got)
+        check("AY.%s_writes_nothing_and_opens_no_undo" % label, not writes(w) and not w.dm.calls, w.dm.calls)
+
+    def verified(label, w, got):
+        check("AY.%s_applies_and_verifies" % label, got[0] == "ok" and got[1][1] == {u"phase": u"committed-verified"},
+              got if got[0] != "ok" else (got[1][0].get(u"phase"), got[1][1]))
+
+    def at_p2(w, change):
+        real = ns["prod_scope_preflight"]
+
+        def preflight_then(*args):
+            pre = real(*args)
+            change()
+            return pre
+        ns["prod_scope_preflight"] = preflight_then
+        try:
+            return run()
+        finally:
+            ns["prod_scope_preflight"] = real
+
+    def before_p7(change):
+        item = reload(ns, lib, grip)
+        auth = authorize(ns, u"Apply Pose", item)
+        result = ns["prod_scope_apply"](Pin.identity, auth, item, {})
+        if result.get(u"phase") != u"verification-pending":
+            return result, None
+        change()
+        return result, ns["prod_pose_deferred_verify"](dict(result[u"pending"], authorization=auth))
+
+    # 1. A constraint in another animation set moving an unselected bone of the character.
+    w = world(lambda w: constrain_to(w, w.bone_dag[u"tail"], w.bone_dag[u"finger3"], u"other"))
+    refused_clean(u"other_set_constraint_moving_an_unselected_bone", w, run(), u"shared-input")
+    w = world(lambda w: constrain_to(w, w.bone_dag[u"leg"], w.bone_dag[u"finger3"], u"other",
+                                     kind="DmeRigOrientConstraintOperator"))
+    got = run()
+    refused_clean(u"other_set_orientation_constraint", w, got, u"shared-input")
+    check("AY.refusal_names_the_affected_bone", got[0] != "ok" and u"leg" in got[2], got)
+    # 2. Harmless external prop following, wherever the constraint is stored.
+    for where in (u"other", u"character", u"shot"):
+        w = world(lambda w: constrain_to(w, prop_dag(w), w.bone_dag[u"finger3"], where))
+        verified(u"prop_following_a_posed_finger_stored_in_%s" % where, w, run())
+    w = world(lambda w: prop_dag(w, parent=w.bone_dag[u"hand"]))
+    verified(u"prop_parented_under_an_unposed_hand", w, run())
+    w = world(lambda w: prop_dag(w, parent=w.bone_dag[u"finger2"]))
+    verified(u"prop_parented_under_a_posed_finger", w, run())
+    # 3. A prop dependency returning into the character.
+    for where in (u"other", u"character"):
+        def back(w, where=where):
+            p = prop_dag(w)
+            constrain_to(w, p, w.bone_dag[u"finger3"], u"other")
+            constrain_to(w, w.bone_dag[u"tail"], p, where)
+        w = world(back)
+        refused_clean(u"prop_dependency_returning_into_the_character_via_%s" % where, w, run(), u"shared-input")
+
+    def into_control(w):
+        p = prop_dag(w)
+        constrain_to(w, p, w.bone_dag[u"finger3"], u"other")
+        reader_channel(w, p.attrs["transform"], u"orientation", w.controls[[c.name for c in w.controls].index(
+            u"leg")], u"valueOrientation")
+    w = world(into_control)
+    refused_clean(u"prop_dependency_returning_into_a_character_control", w, run(), u"shared-input")
+
+    def under_prop(w):
+        p = prop_dag(w)
+        constrain_to(w, p, w.bone_dag[u"finger3"], u"other")
+        w.scene.attrs["children"].items.remove(w.gm)
+        p.add(w.gm)
+    w = world(under_prop)
+    refused_clean(u"character_parented_under_a_following_prop", w, run(), u"shared-input")
+    # 4. Multi-step chains.
+
+    def chain(w, end_in_character):
+        a, b = prop_dag(w, u"prop_a"), prop_dag(w, u"prop_b")
+        constrain_to(w, a, w.bone_dag[u"finger3"], u"other")
+        constrain_to(w, b, a, u"shot")
+        if end_in_character:
+            constrain_to(w, w.bone_dag[u"leg"], b, u"other")
+    w = world(lambda w: chain(w, False))
+    verified(u"external_multi_step_chain", w, run())
+    w = world(lambda w: chain(w, True))
+    refused_clean(u"multi_step_chain_reentering_the_character", w, run(), u"shared-input")
+    # 5. Pass-mode readers driving protected state (Pass modelled explicitly).
+    w = world(lambda w: reader_channel(w, tr(w, u"finger3"), u"orientation", tr(w, u"tail"), u"orientation",
+                                       clip=u"character"))
+    refused_clean(u"pass_reader_of_a_posed_bone_driving_an_unselected_bone", w, run(), u"shared-input")
+    w = world(lambda w: reader_channel(w, tr(w, u"finger3"), u"orientation", tr(w, u"tail"), u"orientation"))
+    refused_clean(u"pass_reader_in_another_clip", w, run(), u"shared-input")
+    w = world(lambda w: reader_channel(w, w.controls[[c.name for c in w.controls].index(u"finger1")],
+                                       u"valueOrientation", tr(w, u"leg"), u"orientation"))
+    refused_clean(u"pass_reader_of_a_written_source_control", w, run(), u"shared-input")
+
+    def via_expression(w):
+        expr = FB.Element(w, w.new_handle(), "DmeExpressionOperator", "expr", expr=u"value", value=0.0, result=0.0)
+        place_operator(w, expr, u"other")
+        reader_channel(w, tr(w, u"finger3"), u"orientation", expr, u"value")
+        reader_channel(w, expr, u"result", tr(w, u"tail"), u"scale")
+    w = world(via_expression)
+    refused_clean(u"pass_reader_through_an_expression_operator", w, run(), u"shared-input")
+    w = world(lambda w: reader_channel(w, tr(w, u"finger3"), u"orientation", prop_dag(w).attrs["transform"],
+                                       u"orientation", mode=2))
+    refused_clean(u"record_mode_reader_of_a_posed_bone", w, run(), u"structure-unsupported")
+    # 6. Genuinely unrelated readers stay permitted.
+
+    def unrelated(w):
+        a, b = prop_dag(w, u"prop_a"), prop_dag(w, u"prop_b")
+        reader_channel(w, a.attrs["transform"], u"orientation", b.attrs["transform"], u"orientation")
+    w = world(unrelated)
+    verified(u"unrelated_pass_channel", w, run())
+    w = world(lambda w: reader_channel(w, tr(w, u"leg"), u"orientation", prop_dag(w).attrs["transform"],
+                                       u"orientation"))
+    verified(u"pass_reader_of_an_unposed_bone_into_a_prop", w, run())
+    w = world(lambda w: reader_channel(w, tr(w, u"finger3"), u"orientation", prop_dag(w).attrs["transform"],
+                                       u"orientation"))
+    verified(u"pass_reader_of_a_posed_bone_into_a_prop", w, run())
+    w = world(lambda w: reader_channel(w, tr(w, u"finger3"), u"orientation", tr(w, u"tail"), u"orientation", mode=0))
+    verified(u"off_mode_channel_reading_a_posed_bone", w, run())
+    # 7. Dependencies appearing between P1, P2 and P7.
+    w = world()
+    refused(u"AY.harmless_follower_appearing_between_P1_and_P2_is_stale", at_p2(
+        w, lambda: constrain_to(w, prop_dag(w), w.bone_dag[u"finger3"], u"other")), u"stale")
+    check("AY.P2_follower_change_writes_nothing", not writes(w) and not w.dm.calls)
+    w = world()
+    refused(u"AY.return_path_appearing_between_P1_and_P2_is_stale", at_p2(
+        w, lambda: constrain_to(w, w.bone_dag[u"tail"], w.bone_dag[u"finger3"], u"other")), u"stale")
+    check("AY.P2_return_path_writes_nothing", not writes(w) and not w.dm.calls)
+    w = world()
+
+    def late_constraint():
+        constrain_to(w, w.bone_dag[u"tail"], w.bone_dag[u"finger3"], u"other")
+        w.evaluate()
+    result, verdict = before_p7(late_constraint)
+    check("AY.return_path_appearing_before_P7_is_committed_unverified", verdict is not None and
+          verdict[u"phase"] == u"committed-unverified" and u"Undo" not in [c[0] for c in w.dm.calls], verdict)
+    w = world()
+
+    def late_pass():
+        reader_channel(w, tr(w, u"finger3"), u"orientation", tr(w, u"tail"), u"orientation")
+        w.evaluate()
+    result, verdict = before_p7(late_pass)
+    check("AY.pass_reader_appearing_before_P7_is_committed_unverified", verdict is not None and
+          verdict[u"phase"] == u"committed-unverified", verdict)
+    w = world()
+
+    def late_prop():
+        constrain_to(w, prop_dag(w), w.bone_dag[u"finger3"], u"other")
+        w.evaluate()
+    result, verdict = before_p7(late_prop)
+    check("AY.follower_relationship_changing_before_P7_is_committed_unverified", verdict is not None and
+          verdict[u"phase"] == u"committed-unverified", verdict)
+    # 8. Unknown or unreadable relevant effects.
+    w = world(lambda w: constrain_to(w, w.bone_dag[u"tail"], w.bone_dag[u"finger3"], u"other", targets=Opaque()))
+    refused_clean(u"constraint_with_unreadable_reads_driving_a_character_bone", w, run(), u"evidence-unreadable")
+    w = world(lambda w: constrain_to(w, prop_dag(w), w.bone_dag[u"finger3"], u"other", targets=Opaque()))
+    verified(u"constraint_with_unreadable_reads_driving_only_a_prop", w, run())
+
+    def unreadable_mode(w):
+        ch = reader_channel(w, tr(w, u"finger3"), u"orientation", prop_dag(w).attrs["transform"], u"orientation",
+                            mode=0)
+        ch.set("mode", Opaque())
+    w = world(unreadable_mode)
+    refused_clean(u"channel_with_an_unreadable_mode_reading_a_posed_bone", w, run(), u"evidence-unreadable")
+    w = world(lambda w: reader_channel(w, Opaque(), u"orientation", tr(w, u"tail"), u"orientation"))
+    refused_clean(u"channel_with_an_unreadable_source_driving_a_character_bone", w, run(), u"evidence-unreadable")
+
+    def unknown_operator(w):
+        place_operator(w, FB.Element(w, w.new_handle(), "DmeUnknownSolverOperator", "mystery"), u"other")
+    w = world(unknown_operator)
+    refused_clean(u"unknown_operator_in_another_animation_set", w, run(), u"structure-unsupported")
+    # 9. The previously corrected counterexamples remain closed (AX1-AX3 rows run in this suite); one each here.
+    w = world(lambda w: set_index(w, u"finger1_o", "toIndex", 1))
+    refused_clean(u"previous_index_counterexample", w, run(), u"unsupported-selection")
+    far = follower_fixture(placed_destination(arm), u"tail", u"finger3", u"DmeRigPointConstraintOperator",
+                           vec=[100.0, 0.0, 0.0])
+    w = FS.World(far)
+    use(ns, w, arm)
+    refused_clean(u"previous_follower_counterexample", w, run(), u"shared-input")
+
+
 def section_static(app):
     text = route._read_source(route.APP_PATH)[0].decode("utf-8")
     start = text.index(u"# F-01 Pose Library scoped poses, SFP-1")
@@ -1964,6 +2235,7 @@ def main():
             run("authority", lambda: section_authority(ns, root, frames[0], frames[1]))
             run("transactions", lambda: section_transactions(ns, app, root, frames[0], frames[1]))
             run("corrections", lambda: section_corrections(ns, app, root, frames[0], frames[1]))
+            run("dependencies", lambda: section_dependencies(ns, app, root, frames[0], frames[1]))
             if full and full is not True:
                 run("sequential", lambda: section_sequential(ns, root, full[0], full[1], frames[0], frames[1]))
             run("semantics", lambda: section_semantics(ns, app, fx, root, frames[0], frames[1]))

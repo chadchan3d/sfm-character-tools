@@ -438,7 +438,9 @@ F01_SFP1_NEW_TOP = set([
     "prod_scope_typed_scale", "prod_scope_validate", "prod_scope_verify", "prod_scope_verify_applied",
     "prod_scope_world", "prod_scope_wrap",
     # SFP-1 A/B corrections (Astra implementation review of abe58bb, Owner-approved): the endpoint-index contract.
-    "prod_scope_index_supported", "prod_scope_indices_supported"
+    "prod_scope_index_supported", "prod_scope_indices_supported",
+    # SFP-1 final dependency corrections (Owner authorization after the 1bf1ab3 re-review).
+    "prod_scope_dependency_index", "prod_scope_dependencies"
 ])
 F01_SFP1_NEW_METHODS = set(["prompt_pose_scope"])
 EXPECTED_CHANGED_TOP = (STEP2B_CHANGED_TOP | STEP3_CHANGED_TOP | STEP4_CHANGED_TOP | R14_CHANGED_TOP

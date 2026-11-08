@@ -45962,7 +45962,126 @@ def prod_scope_discover(L, t_chan, index):
     D[u"model"][u"parent_count"] = len([p for p in L[u"parents"].get(prod_pose_h(L[u"gm"]), []) if p is not None])
     for name, ch in L[u"channels"].items():
         D[u"channels"][name][u"indices"] = [prod_pose_field(ch, u"fromIndex"), prod_pose_field(ch, u"toIndex")]
+    D[u"dependencies"] = prod_scope_dependency_index()
     return prod_pose_roundtrip(D)
+
+
+def prod_scope_dependency_index():
+    """Document-wide read relationships of the supported dependency kinds (the same traversal as the writer index:
+    every film clip, its operators and its animation sets' operators, and every channels clip), for
+    prod_scope_dependencies. Records, with runtime handles of this process only:
+    - each supported constraint's inputs (the operator, its target and slave elements), the DAGs it reads (targets
+      and pole) and the DAGs it drives (slave targets); an unreadable read set is None (unknown), an unreadable write
+      set is None;
+    - each channel with a source: source, destination and mode (an unreadable or non-integer value is "unreadable");
+    - every scene's DAG hierarchy (children by parent) and each transform's DAG.
+    Expression and pack-color operators are reached through their channels; unknown operator types are refused by
+    the writer index. Nothing is evaluated or written."""
+    movie = sfmApp.GetMovie()
+    if movie is None:
+        raise prod_scope_error(u"evidence-unreadable", u"the movie is unavailable")
+    seen, stack, channels, operators, scenes = set(), [movie], {}, {}, {}
+    while stack:
+        el = stack.pop()
+        h = prod_pose_h(el)
+        if h in seen:
+            continue
+        seen.add(h)
+        if len(seen) > 200000:
+            raise ProdPoseUnreadable(u"dependency discovery exceeds its bound")
+        kind = prod_pose_type(el)
+        if kind == u"DmeChannel":
+            channels[h] = el
+        elif kind == u"DmeFilmClip":
+            for attr in (u"subClipTrackGroup", u"scene"):
+                if prod_pose_has(el, attr):
+                    sub = prod_pose_attr(el, attr)
+                    if sub is not None:
+                        if attr == u"scene":
+                            scenes[prod_pose_h(sub)] = sub
+                        else:
+                            stack.append(sub)
+            if prod_pose_has(el, u"trackGroups"):
+                stack.extend(prod_pose_seq(prod_pose_attr(el, u"trackGroups")))
+            if prod_pose_has(el, u"operators"):
+                for op in prod_pose_seq(prod_pose_attr(el, u"operators")):
+                    operators[prod_pose_h(op)] = op
+            if prod_pose_has(el, u"animationSets"):
+                for a in prod_pose_seq(prod_pose_attr(el, u"animationSets")):
+                    for op in prod_pose_seq(prod_pose_attr(a, u"operators")):
+                        operators[prod_pose_h(op)] = op
+        elif kind == u"DmeTrackGroup":
+            stack.extend(prod_pose_seq(prod_pose_attr(el, u"tracks")))
+        elif kind == u"DmeTrack":
+            stack.extend(prod_pose_seq(prod_pose_attr(el, u"children")))
+        elif kind == u"DmeChannelsClip":
+            stack.extend(prod_pose_seq(prod_pose_attr(el, u"channels"), 65536))
+    children, transforms = {}, {}
+    for scene in scenes.values():
+        nodes, parents = prod_pose_walk(scene)
+        for child, ps in parents.items():
+            for p in ps:
+                if p is not None:
+                    children.setdefault(u"%d" % p, set()).add(child)
+        for h, node in nodes.items():
+            if prod_pose_has(node, u"transform"):
+                t = prod_pose_attr(node, u"transform")
+                if t is not None:
+                    transforms[u"%d" % prod_pose_h(t)] = h
+    constraints = []
+    for h, op in sorted(operators.items()):
+        kind = prod_pose_type(op)
+        if kind == u"DmeChannel":
+            channels[h] = op
+            continue
+        if kind not in PROD_SCOPE_CONSTRAINTS:
+            continue
+        row = {u"handle": h, u"inputs": [h], u"reads": [], u"slaves": []}
+        try:
+            for slot in PROD_SCOPE_SLAVE_SLOTS:
+                present, slave = prod_pose_opt_attr(op, slot)
+                if present and slave is not None:
+                    row[u"inputs"].append(prod_pose_h(slave))
+                    target = prod_pose_attr(slave, u"target")
+                    if target is not None:
+                        row[u"slaves"].append(prod_pose_h(target))
+        except Exception:
+            row[u"slaves"] = None
+        try:
+            if prod_pose_has(op, u"targets"):
+                for t in prod_pose_seq(prod_pose_attr(op, u"targets")):
+                    if t is None:
+                        continue
+                    row[u"inputs"].append(prod_pose_h(t))
+                    target = prod_pose_attr(t, u"target")
+                    if target is not None:
+                        row[u"reads"].append(prod_pose_h(target))
+            if prod_pose_has(op, u"pvTarget"):
+                pole = prod_pose_attr(op, u"pvTarget")
+                if pole is not None:
+                    row[u"reads"].append(prod_pose_h(pole))
+        except Exception:
+            row[u"reads"] = None
+        constraints.append(row)
+    readers = []
+    for h, ch in sorted(channels.items()):
+        row = {u"handle": h}
+        for key, attr in ((u"from", u"fromElement"), (u"to", u"toElement")):
+            try:
+                v = prod_pose_attr(ch, attr)
+                row[key] = prod_pose_h(v) if v is not None else None
+            except Exception:
+                row[key] = u"unreadable"
+        try:
+            m = prod_pose_attr(ch, u"mode")
+            row[u"mode"] = int(m) if isinstance(m, prod_pose_int_types()) and not isinstance(m, bool) else \
+                u"unreadable"
+        except Exception:
+            row[u"mode"] = u"unreadable"
+        if row[u"from"] is not None:
+            readers.append(row)
+    return {u"constraints": constraints, u"readers": readers,
+            u"children": dict((k, sorted(v)) for k, v in children.items()), u"transforms": transforms}
 
 
 # --- classification: direct_fk_v1 and the coverage roles --------------------------------------------------------------
@@ -46409,7 +46528,7 @@ def prod_scope_check_authority(D, C, S):
                 op[u"name"], sorted(x for x in writes & (affected | chain) if x)[:4]),
                 parts=sorted(x for x in writes & (affected | chain) if x))
     prod_scope_exclusion_boundary(D, C, S)
-    prod_scope_followers(D, S)                  # an unverifiable follower refuses here, in every phase
+    prod_scope_dependencies(D, S)               # an unsupported dependency refuses here, in every phase
     return A
 
 
@@ -46836,55 +46955,157 @@ def prod_scope_verify(D_now, D_base, expected, pose, S, values, followers=()):
 
 
 def prod_scope_followers(D, S):
-    """Elements outside the scope that a known constraint moves because it reads a moving bone (an affected bone,
-    or a follower already admitted), classified by bounded dependency relationship (R3 4):
+    """The admitted confined followers of the scope (prod_scope_dependencies): excluded, confined bones that may
+    move with the pose. Refuses whenever prod_scope_dependencies refuses."""
+    return prod_scope_dependencies(D, S)[u"confined"]
 
-    - parent following: ordinary descendants of posed bones are carried bones inside A, with an expected result and
-      their own local transforms verified (not handled here);
-    - one-way dependence of an explicitly excluded, confined subsystem (an excluded bone that is not a preserved
-      direct-FK branch, with its descendants, all excluded; its boundary is established by
-      prod_scope_exclusion_boundary): admitted and returned; R3 4 does not require its world transform to stay fixed;
-    - anything else (a body bone outside the scope, a dependency bone, a rig handle, the model or another element): no
-      qualified relationship contract gives its expected result, so the scope refuses before any write.
 
-    No constraint is solved and no follower is exempted from verification by membership alone. Returns the admitted
-    confined followers."""
-    bone_of_handle = dict((b[u"handle"], n) for n, b in D[u"bones"].items())
+def prod_scope_dependencies(D, S):
+    """Precommit dependency tracing from the authorized pose inputs through the known, bounded relationships of the
+    whole document (R3 4: document-wide writer and external operator relationships; unknown side effects refuse),
+    from D["dependencies"] (prod_scope_dependency_index). No constraint is solved and no operator is interpreted.
+
+    Moving inputs: the affected bones (their DAGs and transforms) and the written channels' source controls.
+    Relationships followed, transitively, including chains that leave the character and re-enter it:
+    - DAG hierarchy: a moving DAG moves its children; a transform and its DAG move together;
+    - supported constraints (point, orient, IK): one whose inputs or read DAGs (targets, pole) move moves its slave
+      DAGs; an unknown (unreadable) read set is treated as reading a moving input, an unreadable write set refuses;
+    - channels: any channel other than the planned written ones whose source moves moves its destination (Pass, and
+      Play conservatively); Off (0) has no effect; Record (2) would author data from a posed input and refuses; an
+      unreadable or unknown mode, source or destination is treated as relevant and refuses when it can matter.
+      Expression and pack-color operators are reached through their channels.
+
+    Classification of each element reached: an affected bone through the hierarchy, or an excluded confined bone
+    through the hierarchy or a supported constraint (R3 4 one-way head-follow), moves legitimately; any other bone
+    of the character, the model, a rig handle, a control, a channel or an operator element of the instance is
+    protected, so the scope refuses before any write (shared-input; evidence-unreadable when only an unknown effect
+    reaches it; structure-unsupported for a Record reader). Elements outside the character are admitted as external
+    followers: they stay under their own SFM relationships, CPM does not verify their rendered pose, and tracing
+    continues from them. Returns {confined, external, edges}, compared exactly at P2 and P7."""
+    dep = D.get(u"dependencies")
+    if not isinstance(dep, dict):
+        raise prod_scope_error(u"evidence-unreadable", u"no dependency evidence")
     affected = set(S[u"affected"])
     opaque = [n for n in S[u"excluded"] if n not in S[u"preserved"]]
     confined = set(opaque) | prod_scope_descendants(D, opaque)
-    follow, moving, unsupported = set(), set(affected), []
-    changed = True
-    while changed:
-        changed = False
-        for op in D[u"operators"]:
-            if op[u"type"] not in PROD_SCOPE_CONSTRAINTS:
-                continue
-            reads = set(bone_of_handle.get(t.get(u"target")) for t in op[u"targets"])
-            reads.add(bone_of_handle.get(op[u"pole"]))
-            if not reads & moving:
-                continue
-            for s in op[u"slaves"].values():
-                if s is None or s.get(u"target") is None:
-                    continue
-                n = bone_of_handle.get(s[u"target"])
-                if n is None:
-                    label = u"element:%d" % s[u"target"]
-                    if label not in unsupported:
-                        unsupported.append(label)
-                elif n in moving:
-                    continue        # an affected bone: refused by the authority check; a follower already admitted
-                elif n in confined:
-                    group = set([n]) | (prod_scope_descendants(D, [n]) & confined)
-                    follow |= group
-                    moving |= group
-                    changed = True
-                elif n not in unsupported:
-                    unsupported.append(n)
-    if unsupported:
-        raise prod_scope_error(u"shared-input", u"constraints move %s with the pose; their result cannot be verified"
-                               % sorted(unsupported)[:8], parts=sorted(unsupported))
-    return sorted(follow - affected)
+    bone_of = {}
+    for n, b in D[u"bones"].items():
+        bone_of[b[u"handle"]] = n
+        bone_of[b[u"transform"]] = n
+    inst = {D[u"model"][u"handle"]: u"model", D[u"model"][u"transform"]: u"model"}
+    for n, h in D[u"rig"][u"handles"].items():
+        inst[h[u"handle"]] = inst[h[u"transform"]] = u"rig handle %s" % n
+    for n, c in D[u"controls"].items():
+        inst[c[u"handle"]] = u"control %s" % n
+    for n, ch in D[u"channels"].items():
+        inst[ch[u"handle"]] = u"channel %s" % n
+    for op in D[u"operators"]:
+        inst[op[u"handle"]] = u"operator %s" % op[u"name"]
+        for s in op[u"slaves"].values():
+            if s is not None:
+                inst[s[u"slave"]] = u"operator %s" % op[u"name"]
+        for t in op[u"targets"]:
+            inst[t[u"handle"]] = u"operator %s" % op[u"name"]
+    written = set(D[u"channels"][w[u"channel"]][u"handle"] for w in S[u"written"])
+    children = dict((int(k), v) for k, v in dep[u"children"].items())
+    dag_of = dict((int(k), v) for k, v in dep[u"transforms"].items())
+    transform_of = dict((v, k) for k, v in dag_of.items())
+    by_input, by_source = {}, {}
+    for i, row in enumerate(dep[u"constraints"]):
+        for h in row[u"inputs"] + (row[u"reads"] or []):
+            by_input.setdefault(h, []).append(i)
+    for row in dep[u"readers"]:
+        if row[u"from"] != u"unreadable":
+            by_source.setdefault(row[u"from"], []).append(row)
+    moving, queue, failures, external, edges = {}, [], [], set(), set()
+
+    def move(h, uncertain):
+        if h not in moving or (moving[h] and not uncertain):
+            moving[h] = uncertain
+            queue.append(h)
+
+    def fail(label, uncertain, record=False):
+        failures.append((label, uncertain, record))
+
+    def reach(dest, kind, via, uncertain):
+        name = bone_of.get(dest)
+        if name is not None:
+            if (name in affected and kind == u"hierarchy") or (name in confined and kind in (u"hierarchy",
+                                                                                              u"constraint")):
+                if name not in affected:
+                    edges.add((kind, via, dest))
+                move(dest, uncertain)
+            else:
+                fail(name, uncertain)
+        elif dest in inst:
+            fail(inst[dest], uncertain)
+        else:
+            external.add(dest)
+            edges.add((kind, via, dest))
+            move(dest, uncertain)
+
+    def trigger(i, uncertain):
+        row = dep[u"constraints"][i]
+        if row[u"slaves"] is None:
+            fail(u"operator %d" % row[u"handle"], True)
+            return
+        for s in row[u"slaves"]:
+            reach(s, u"constraint", row[u"handle"], uncertain)
+
+    def read(row, uncertain):
+        if row[u"handle"] in written:
+            return
+        mode = row[u"mode"]
+        if mode == 0:
+            return
+        if mode == 2:
+            fail(u"channel %d" % row[u"handle"], uncertain, record=True)
+        elif mode not in (1, 3) or row[u"to"] == u"unreadable":
+            fail(u"channel %d" % row[u"handle"], True)
+        elif row[u"to"] is not None:
+            reach(row[u"to"], u"channel", row[u"handle"], uncertain)
+    for n in affected:
+        move(D[u"bones"][n][u"handle"], False)
+        move(D[u"bones"][n][u"transform"], False)
+    for h in written:
+        source = [ch[u"from"] for ch in D[u"channels"].values() if ch[u"handle"] == h][0]
+        if source is not None:
+            move(source[u"handle"], False)
+    for i, row in enumerate(dep[u"constraints"]):
+        if row[u"reads"] is None:
+            trigger(i, True)
+    for row in dep[u"readers"]:
+        if row[u"from"] == u"unreadable":
+            read(row, True)
+    done = {}
+    while queue:
+        h = queue.pop(0)
+        uncertain = moving[h]
+        if done.get(h) is False or (h in done and uncertain):
+            continue
+        done[h] = uncertain
+        for alias in (dag_of.get(h), transform_of.get(h)):
+            if alias is not None:
+                move(alias, uncertain)
+        for c in children.get(h, []):
+            reach(c, u"hierarchy", h, uncertain)
+        for i in by_input.get(h, []):
+            trigger(i, uncertain)
+        for row in by_source.get(h, []):
+            read(row, uncertain)
+    if failures:
+        labels = sorted(set(f[0] for f in failures))
+        if any(f[2] for f in failures):
+            code = u"structure-unsupported"
+        elif all(f[1] for f in failures):
+            code = u"evidence-unreadable"
+        else:
+            code = u"shared-input"
+        raise prod_scope_error(code, u"the pose would move protected parts of the character through %s" %
+                               labels[:8], parts=[x for x in labels if not x.startswith((u"channel ", u"operator "))]
+                               or labels)
+    return {u"confined": sorted(n for n in confined - affected if D[u"bones"][n][u"handle"] in moving),
+            u"external": sorted(external), u"edges": sorted([list(e) for e in edges])}
 
 
 # --- planning ---------------------------------------------------------------------------------------------------------
@@ -47189,14 +47410,18 @@ def prod_scope_preflight(identity, authorization, item):
     if against:
         raise prod_scope_error(u"proportions", u"the expected result disagrees with the saved observations: %s" %
                                against[:8])
-    followers = prod_scope_followers(D, S)
+    dependencies = prod_scope_dependencies(D, S)
+    if dependencies[u"external"]:
+        prod_pose_log(u"SCOPE-external-followers", {u"count": len(dependencies[u"external"]),
+                                                    u"note": u"left under their SFM relationships; not verified"})
     opaque = [n for n in S[u"excluded"] if n not in S[u"preserved"]]
-    followers = sorted(set(followers) | set(opaque) | prod_scope_descendants(D, opaque))
+    followers = sorted(set(dependencies[u"confined"]) | set(opaque) | prod_scope_descendants(D, opaque))
     noop = prod_scope_noop(plans, D, expected, pose, S, values, followers)
     handles = dict((n, prod_pose_h(b[u"channel"])) for n, b in bindings.items())
     return {u"state": st, u"undo": undo, u"time": st[u"time"], u"gate": gate, u"pose": pose, u"request": request,
             u"carried": carried, u"pinned": pinned, u"bindings": bindings, u"snaps": snaps, u"plans": plans,
             u"values": values, u"expected": expected, u"followers": followers, u"noop": noop,
+            u"dependencies": dependencies,
             u"expected_authored": prod_body_expected_authored(st[u"authored"], plans, handles), u"row": row}
 
 
@@ -47215,6 +47440,11 @@ def prod_scope_same_state(identity, authorization, pre):
             problems.append(u"%s changed %s" % (key, prod_pose_differences(st[key], pre[u"state"][key])[:4]))
     if st[u"D"][u"authority"] != pre[u"state"][u"D"][u"authority"]:
         problems.append(u"authority changed")
+    try:
+        if prod_scope_dependencies(st[u"D"], st[u"S"]) != pre[u"dependencies"]:
+            problems.append(u"dependency relationships changed")
+    except ProdPoseError as exc:
+        problems.append(u"dependencies refused: %s" % exc.code)
     S = pre[u"state"][u"S"]
     for name in set(S[u"affected"]) | set(S[u"chain"]):
         if st[u"D"][u"bones"][name] != pre[u"state"][u"D"][u"bones"][name]:
@@ -47359,6 +47589,7 @@ def prod_scope_pending(pre, label, finish_exception=False, owned_top=True):
             u"request": pre[u"request"], u"carried": pre[u"carried"], u"pose": pre[u"pose"],
             u"expected": dict((k, [list(v[0]), list(v[1])]) for k, v in pre[u"expected"].items()),
             u"values": pre[u"values"], u"pinned": pre[u"pinned"], u"followers": pre[u"followers"],
+            u"dependencies": pre[u"dependencies"],
             u"finish_exception": finish_exception, u"owned_top": owned_top,
             u"regions": [PROD_SCOPE_PART_KEYS[st[u"S"][u"kind"]]]}
 
@@ -47414,6 +47645,11 @@ def prod_scope_verify_applied(pending):
             prod_scope_bindings(L, pending[u"scope"][u"written_names"])
         except ProdPoseError as exc:
             problems.append(u"written bindings refused: %s" % exc.code)
+        try:
+            if prod_scope_dependencies(D, pending[u"scope"]) != pending[u"dependencies"]:
+                problems.append(u"dependency relationships changed")
+        except ProdPoseError as exc:
+            problems.append(u"dependencies refused: %s" % exc.code)
         for w in pending[u"scope"][u"written"]:
             planned = list(pending[u"values"][w[u"channel"]])
             try:
