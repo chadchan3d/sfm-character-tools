@@ -45569,6 +45569,24 @@ def prod_scope_field_value(f):
     return f.get(u"value") if isinstance(f, dict) and f.get(u"status") == u"READ" else None
 
 
+def prod_scope_index_supported(f):
+    """One channel endpoint index ({status, value} from prod_pose_field) against the supported native endpoint
+    contract (R3 3 and 3.1, "supported scalar endpoint indices"): the scalar transform attributes CPM writes are
+    addressed at index 0, as the qualified rig-input binding (prod_pose_channel_binding) and the carried admission
+    require. Supported: a readable native integer (any integer type the bindings return) equal to 0. Unsupported:
+    absent, unreadable, nonzero, negative, or a bool, float or text value."""
+    if not isinstance(f, dict) or f.get(u"status") != u"READ":
+        return False
+    v = f.get(u"value")
+    return isinstance(v, prod_pose_int_types()) and not isinstance(v, bool) and v == 0
+
+
+def prod_scope_indices_supported(row):
+    """Both endpoint indices of one discovered channel row are supported."""
+    indices = row.get(u"indices") if isinstance(row, dict) else None
+    return isinstance(indices, list) and len(indices) == 2 and all(prod_scope_index_supported(f) for f in indices)
+
+
 # --- engine rule table and capability gate --------------------------------------------------------------------------
 
 def prod_scope_rule_usable(mode, rule=PROD_SCOPE_RULE, revision=None):
@@ -45888,6 +45906,14 @@ def prod_scope_live(row):
         L[u"bones"][name] = {u"dag": obj, u"transform": t, u"index": int(m.group(1))}
     if len(L[u"bones"]) != len(bones) or not L[u"bones"] or len(L[u"bones"]) > PROD_SCOPE_MAX_BONES:
         raise prod_scope_error(u"structure-unsupported", u"not every model bone has exactly one scene element")
+    # Skeletal parent membership is protected structure: every bone DAG has exactly one parent, which is the model or
+    # another bone DAG of this instance. A missing, duplicated or foreign parent refuses (never guessed).
+    members = set(prod_pose_h(b[u"dag"]) for b in L[u"bones"].values()) | set([prod_pose_h(gm)])
+    for name, b in L[u"bones"].items():
+        ps = [p for p in parents.get(prod_pose_h(b[u"dag"]), []) if p is not None]
+        if len(ps) != 1 or ps[0] not in members or ps[0] == prod_pose_h(b[u"dag"]):
+            raise prod_scope_error(u"structure-unsupported", u"bone %s has no single skeletal parent (%d)" %
+                                   (name, len(ps)))
     operators = prod_pose_seq(prod_pose_attr(animset, u"operators"))
     seen = set(prod_pose_h(x) for x in operators)
     for op in prod_pose_seq(prod_pose_attr(shot, u"operators")):
@@ -45945,7 +45971,9 @@ def prod_scope_classify(D):
     """Every bone's role from binding evidence alone (no profile, no names): direct-fk (one control's own position
     and orientation channels, nothing else writes or constrains it), constrained (slaved by a rig constraint),
     carried-candidate (one source-less channel per attribute; constant_channel_carried_v1 may admit it) or
-    unresolved. Also the model placement channels, supported scale operators and the anatomical root."""
+    unresolved. Every writer channel's endpoint indices must satisfy the supported native endpoint contract
+    (prod_scope_index_supported); otherwise the bone is unresolved ("unsupported channel index"). Also the model
+    placement channels, supported scale operators and the anatomical root."""
     bones, channels = D[u"bones"], D[u"channels"]
     owner_of = {D[u"model"][u"transform"]: (u"model", u"model")}
     label = {D[u"model"][u"handle"]: u"model"}
@@ -46001,15 +46029,19 @@ def prod_scope_classify(D):
         for attr in others:
             for cname in by_owner[(u"bone", name, attr)]:
                 ch = channels[cname]
-                if attr == u"scale" and ch[u"from"] is not None and ch[u"from"][u"type"] in PROD_SCOPE_SCALE_OPERATORS:
+                if attr == u"scale" and ch[u"from"] is not None and ch[u"from"][u"type"] in PROD_SCOPE_SCALE_OPERATORS \
+                        and prod_scope_indices_supported(ch):
                     row[u"scale_channels"].append(cname)
                     roles[cname][u"role"] = u"scale-operator"
                 else:
                     bad_other.append(cname)
+        bad_index = sorted(c for ws in writers.values() for c in ws if not prod_scope_indices_supported(channels[c]))
         if lab in slaved:
             row[u"class"], row[u"reason"] = u"constrained", u"rig-driven"
         elif bad_other:
             row[u"reason"] = u"other writers %s" % bad_other[:4]
+        elif bad_index:
+            row[u"reason"] = u"unsupported channel index"
         elif any(len(ws) != 1 for ws in writers.values()):
             row[u"reason"] = u"not one channel per attribute"
         elif not all(unique_writer(ws[0]) for ws in writers.values()):
@@ -46336,6 +46368,9 @@ def prod_scope_check_authority(D, C, S):
     mine = set(A[u"channels"])
     for w in S[u"written"]:
         ch = D[u"channels"][w[u"channel"]]
+        if not prod_scope_indices_supported(ch):
+            raise prod_scope_error(u"structure-unsupported", u"written channel %s endpoint indices are not supported"
+                                   % w[u"channel"])
         key = u"%d:%s" % (ch[u"to"][u"handle"], ch[u"to_attribute"])
         if A[u"destinations"].get(key) != [ch[u"handle"]] or D[u"writers"].get(key) != 1:
             raise prod_scope_error(u"shared-authority", u"%s is not the only writer of its bone" % w[u"channel"])
@@ -46374,6 +46409,7 @@ def prod_scope_check_authority(D, C, S):
                 op[u"name"], sorted(x for x in writes & (affected | chain) if x)[:4]),
                 parts=sorted(x for x in writes & (affected | chain) if x))
     prod_scope_exclusion_boundary(D, C, S)
+    prod_scope_followers(D, S)                  # an unverifiable follower refuses here, in every phase
     return A
 
 
@@ -46754,6 +46790,13 @@ def prod_scope_verify(D_now, D_base, expected, pose, S, values, followers=()):
     tol = PROD_SCOPE_TOLERANCES
     problems = []
     orc = pose[u"oracle"][u"bones"]
+    if sorted(D_now[u"bones"]) != sorted(D_base[u"bones"]):
+        return [u"the bone set changed"]
+    for name in sorted(D_now[u"bones"]):           # skeletal parent membership: by bone and by parent DAG identity
+        now, was = D_now[u"bones"][name], D_base[u"bones"][name]
+        if now.get(u"parent") != was.get(u"parent") or now.get(u"parent_count") != was.get(u"parent_count") or \
+                now.get(u"parent_dags") != was.get(u"parent_dags"):
+            problems.append(u"bone %s parent changed" % name)
     for name, (p, q) in expected.items():
         now, was = D_now[u"bones"][name], D_base[u"bones"][name]
         if prod_pose_distance(now[u"world_position"], p) > tol[u"position"] or \
@@ -46793,10 +46836,24 @@ def prod_scope_verify(D_now, D_base, expected, pose, S, values, followers=()):
 
 
 def prod_scope_followers(D, S):
-    """Bones outside the scope whose world transform legitimately follows it through a known constraint reading an
-    affected bone (a prop held in a posed hand), with their descendants. Their inputs are still verified exactly."""
+    """Elements outside the scope that a known constraint moves because it reads a moving bone (an affected bone,
+    or a follower already admitted), classified by bounded dependency relationship (R3 4):
+
+    - parent following: ordinary descendants of posed bones are carried bones inside A, with an expected result and
+      their own local transforms verified (not handled here);
+    - one-way dependence of an explicitly excluded, confined subsystem (an excluded bone that is not a preserved
+      direct-FK branch, with its descendants, all excluded; its boundary is established by
+      prod_scope_exclusion_boundary): admitted and returned; R3 4 does not require its world transform to stay fixed;
+    - anything else (a body bone outside the scope, a dependency bone, a rig handle, the model or another element): no
+      qualified relationship contract gives its expected result, so the scope refuses before any write.
+
+    No constraint is solved and no follower is exempted from verification by membership alone. Returns the admitted
+    confined followers."""
     bone_of_handle = dict((b[u"handle"], n) for n, b in D[u"bones"].items())
-    follow, moving = set(), set(S[u"affected"])
+    affected = set(S[u"affected"])
+    opaque = [n for n in S[u"excluded"] if n not in S[u"preserved"]]
+    confined = set(opaque) | prod_scope_descendants(D, opaque)
+    follow, moving, unsupported = set(), set(affected), []
     changed = True
     while changed:
         changed = False
@@ -46804,18 +46861,30 @@ def prod_scope_followers(D, S):
             if op[u"type"] not in PROD_SCOPE_CONSTRAINTS:
                 continue
             reads = set(bone_of_handle.get(t.get(u"target")) for t in op[u"targets"])
+            reads.add(bone_of_handle.get(op[u"pole"]))
             if not reads & moving:
                 continue
             for s in op[u"slaves"].values():
-                n = bone_of_handle.get(s[u"target"]) if s is not None and s.get(u"target") is not None else None
-                if n is not None and n not in moving:
-                    group = set([n]) | prod_scope_descendants(D, [n])
+                if s is None or s.get(u"target") is None:
+                    continue
+                n = bone_of_handle.get(s[u"target"])
+                if n is None:
+                    label = u"element:%d" % s[u"target"]
+                    if label not in unsupported:
+                        unsupported.append(label)
+                elif n in moving:
+                    continue        # an affected bone: refused by the authority check; a follower already admitted
+                elif n in confined:
+                    group = set([n]) | (prod_scope_descendants(D, [n]) & confined)
                     follow |= group
                     moving |= group
                     changed = True
-    for n in list(follow):
-        follow |= prod_scope_descendants(D, [n])
-    return sorted(follow - set(S[u"affected"]))
+                elif n not in unsupported:
+                    unsupported.append(n)
+    if unsupported:
+        raise prod_scope_error(u"shared-input", u"constraints move %s with the pose; their result cannot be verified"
+                               % sorted(unsupported)[:8], parts=sorted(unsupported))
+    return sorted(follow - affected)
 
 
 # --- planning ---------------------------------------------------------------------------------------------------------
@@ -46876,12 +46945,19 @@ def prod_scope_time_names(L, D=None):
 
 
 def prod_scope_identity(L):
-    """Every native identity a scoped operation depends on; compared exactly between its phases."""
+    """Every native identity a scoped operation depends on; compared exactly between the phases of one operation
+    (P1, P2, verified Abort recovery, P7), never across independent operations (records hold no runtime handle).
+    Includes the complete skeletal parent membership of the selected instance: each bone's parent DAG identity, and
+    the model DAG's own parents, so a re-parented bone is detected even when its transforms are numerically unchanged."""
+    parents = L[u"parents"]
     out = {u"shot": prod_pose_h(L[u"shot"]), u"animset": prod_pose_h(L[u"animset"]), u"gm": prod_pose_h(L[u"gm"]),
            u"rigs": [[prod_pose_h(r), prod_pose_h(g)] for r, g in L[u"rigs"]], u"clip": prod_pose_h(L[u"clip"]),
            u"handles": dict((n, prod_pose_h(v)) for n, v in L[u"rig_handles"].items()),
            u"bones": dict((n, [prod_pose_h(b[u"dag"]), prod_pose_h(b[u"transform"]), b[u"index"]])
                           for n, b in L[u"bones"].items()),
+           u"parents": dict((n, sorted(p for p in parents.get(prod_pose_h(b[u"dag"]), []) if p is not None))
+                            for n, b in L[u"bones"].items()),
+           u"model_parents": sorted(p for p in parents.get(prod_pose_h(L[u"gm"]), []) if p is not None),
            u"operators": sorted(prod_pose_h(op) for op in L[u"operators"]), u"channels": {}}
     for name, ch in L[u"channels"].items():
         log = ch.GetLog()
@@ -46908,10 +46984,20 @@ def prod_scope_state(row, request=None, carried=None):
 
 
 def prod_scope_bindings(L, names):
+    """The native write bindings of the planned (or candidate) channels, revalidated from the live channel each time
+    they are resolved (capture, P1, P2, P7): both endpoint indices supported (prod_scope_index_supported), one log of
+    a supported transform type with exactly one layer. Anything else refuses."""
     out = {}
     for name in names:
         ch = L[u"channels"][name]
+        for field in (u"fromIndex", u"toIndex"):
+            if not prod_scope_index_supported(prod_pose_field(ch, field)):
+                raise prod_scope_error(u"structure-unsupported", u"channel %s %s is not a supported endpoint index"
+                                       % (name, field))
         log = ch.GetLog()
+        if log is None or prod_pose_type(log) not in (u"DmeQuaternionLog", u"DmeVector3Log") or \
+                int(log.GetNumLayers()) != 1:
+            raise prod_scope_error(u"structure-unsupported", u"channel %s is not one supported transform layer" % name)
         quat = prod_pose_type(log) == u"DmeQuaternionLog"
         out[name] = {u"name": name, u"channel": ch, u"log": log, u"layer": log.GetLayer(0),
                      u"kind": u"quaternion" if quat else u"vector"}
@@ -47324,6 +47410,10 @@ def prod_scope_verify_applied(pending):
             prod_scope_check_authority(D, C, pending[u"scope"])
         except ProdPoseError as exc:
             problems.append(u"scope or authority refused: %s" % exc.code)
+        try:
+            prod_scope_bindings(L, pending[u"scope"][u"written_names"])
+        except ProdPoseError as exc:
+            problems.append(u"written bindings refused: %s" % exc.code)
         for w in pending[u"scope"][u"written"]:
             planned = list(pending[u"values"][w[u"channel"]])
             try:

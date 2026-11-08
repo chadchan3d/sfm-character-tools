@@ -1610,6 +1610,319 @@ def section_rigged_heavy(ns, fx, root):
                                                      if n.startswith(u"rig_")))
 
 
+# ---------------------------------------------------------------------------
+# AX. Astra implementation review (abe58bb), ACCEPT WITH CORRECTIONS: the three P1 counterexamples and their closure
+# ---------------------------------------------------------------------------
+
+MISSING, UNREADABLE = object(), object()
+
+
+class Opaque(object):
+    """A native value with no lossless form (an unreadable index read)."""
+
+
+def set_index(world, channel, field, value):
+    ch = world.channels[channel]
+    if value is MISSING:
+        del ch.attrs[field]
+        ch.order.remove(field)
+    else:
+        ch.set(field, Opaque() if value is UNREADABLE else value)
+
+
+def native_zero():
+    try:
+        return long(0)  # noqa: F821  (Python 2: the native integer type SFM's bindings may return)
+    except NameError:
+        return 0
+
+
+def follower_fixture(fx, slave_bone, target_bone, op_type, vec=None, handle=910000):
+    """A constraint inside the animation set reading target_bone and slaving slave_bone (its control channels drive
+    the constraint slave, as a rig's do). A point constraint with a vector offset swings the slave far away when the
+    target turns."""
+    fx = FS.clone(fx)
+    slave = handle + 1
+    fx[u"operators"].append({
+        u"handle": handle, u"type": op_type, u"name": u"follow_%s" % target_bone, u"owners": [u"animation_set"],
+        u"slaves": {u"slave": {u"slave": slave, u"target": fx[u"bones"][slave_bone][u"handle"]}},
+        u"targets": [{u"handle": handle + 2, u"target": fx[u"bones"][target_bone][u"handle"],
+                      u"weight": {u"status": u"READ", u"value": 1.0}, u"oOffset": {u"status": u"ABSENT"},
+                      u"vecOffset": {u"status": u"READ", u"value": list(vec)} if vec else {u"status": u"ABSENT"}}],
+        u"pole": None, u"solver": {}})
+    for suffix in (u"_p", u"_o"):
+        fx[u"channels"][slave_bone + suffix]["to"] = {u"handle": slave, u"type": u"DmeConstraintSlave", u"name": u"s"}
+    return fx
+
+
+def add_live_follower(w, slave_bone, target_bone, vec=(100.0, 0.0, 0.0)):
+    """The same relationship introduced into a built World (between phases); the fake evaluator solves it."""
+    el = FB.Element(w, w.new_handle(), "DmeRigPointConstraintOperator", "late_follow",
+                    slave=FB.Element(w, w.new_handle(), "DmeConstraintSlave", "s", target=w.bone_dag[slave_bone]),
+                    targets=FB.ElementArray(w, [FB.Element(w, w.new_handle(), "DmeConstraintTarget", "t",
+                                                           target=w.bone_dag[target_bone], targetWeight=1.0,
+                                                           vecOffset=FB.Vector(*vec))]))
+    w.animset.attrs["operators"].items.append(el)
+    w.ops.append(({u"type": u"DmeRigPointConstraintOperator",
+                   u"slaves": {u"slave": {u"slave": el.attrs["slave"].h, u"target": w.bone_dag[slave_bone].h}}}, el))
+    w.evaluate()
+
+
+def flat_head_spec():
+    """The analytic arm with the head at the spine's own frame: a jaw re-parented from the head to the spine keeps
+    both its local and its world transform (Astra's reparenting counterexample)."""
+    return [(n, p, [0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0], s) if n == u"head" else (n, p, lp, lq, s)
+            for (n, p, lp, lq, s) in arm_spec()]
+
+
+def dag_parent(w, dag):
+    for d in [w.gm] + list(w.bone_dag.values()):
+        if dag in d.attrs["children"].items:
+            return d
+    return None
+
+
+def reparent(w, bone, new_parent, keep_old=False):
+    dag = w.bone_dag[bone]
+    old = dag_parent(w, dag)
+    if old is not None and not keep_old:
+        old.attrs["children"].items.remove(dag)
+    if new_parent is not None:
+        w.bone_dag[new_parent].add(dag)
+    w.evaluate()
+
+
+def section_corrections(ns, app, root, lib, grip):
+    arm = arm_fixture()
+
+    def dst_world(prepare=None, fx=None):
+        w = FS.World(fx or placed_destination(arm))
+        if prepare is not None:
+            prepare(w)
+            w.evaluate()
+        use(ns, w, arm)
+        return w
+
+    def p7(w, between_commit_and_p7, item=None):
+        item = item or reload(ns, lib, grip)
+        auth = authorize(ns, u"Apply Pose", item)
+        result = ns["prod_scope_apply"](Pin.identity, auth, item, {})
+        if result.get(u"phase") != u"verification-pending":
+            return result, None
+        between_commit_and_p7()
+        return result, ns["prod_pose_deferred_verify"](dict(result[u"pending"], authorization=auth))
+
+    def at_p2(w, change, item_lib=None, item_rec=None):
+        real = ns["prod_scope_preflight"]
+
+        def preflight_then(*args):
+            pre = real(*args)
+            change()
+            return pre
+        ns["prod_scope_preflight"] = preflight_then
+        try:
+            return outcome(lambda: apply(ns, reload(ns, item_lib or lib, item_rec or grip)))
+        finally:
+            ns["prod_scope_preflight"] = real
+
+    # --- AX1: unsupported channel endpoint indices (supported contract: a readable native integer 0) ---------------
+    cases = ((u"nonzero_from_index", u"finger1_o", "fromIndex", 1), (u"nonzero_to_index", u"finger1_o", "toIndex", 2),
+             (u"negative_index", u"finger2_p", "toIndex", -1), (u"missing_index", u"finger2_o", "toIndex", MISSING),
+             (u"unreadable_index", u"finger3_p", "fromIndex", UNREADABLE),
+             (u"float_typed_index", u"finger3_o", "toIndex", 0.0), (u"bool_typed_index", u"thumb1_o", "fromIndex", False),
+             (u"text_typed_index", u"finger1_p", "fromIndex", u"0"))
+    for label, channel, field, value in cases:
+        w = dst_world(lambda w: set_index(w, channel, field, value))
+        got = outcome(lambda: apply(ns, reload(ns, lib, grip)))
+        check("AX1.%s_on_a_written_channel_refuses_at_P1" % label, got[0] != "ok" and
+              got[1] == u"unsupported-selection" and channel.rsplit(u"_", 1)[0] in got[2], got)
+        check("AX1.%s_refusal_writes_nothing_and_opens_no_undo" % label, not writes(w) and not w.dm.calls,
+              w.dm.calls)
+    w = dst_world(lambda w: set_index(w, u"finger2_o", "toIndex", native_zero()))
+    result, verdict = apply(ns, reload(ns, lib, grip))
+    check("AX1.a_native_integer_zero_of_any_supported_type_is_accepted", verdict == {u"phase": u"committed-verified"},
+          (result.get(u"phase"), verdict))
+    src = FS.World(posed_source(arm))
+    set_index(src, u"finger1_o", "toIndex", 3)
+    use(ns, src, arm)
+    refused("AX1.save_refuses_an_unsupported_index_before_publication", outcome(
+        lambda: capture(ns, ns["prod_scope_request"](u"selected_parts", FINGERS))), u"unsupported-selection")
+    src = FS.World(arm)
+    set_index(src, u"tail_o", "fromIndex", 1)
+    use(ns, src, arm)
+    inv = inventory(ns)
+    check("AX1.full_body_refuses_an_unsupported_index_anywhere_in_the_body", inv[u"full_body"][u"status"] ==
+          u"refused" and inv[u"full_body"][u"code"] == u"unsupported-body" and u"tail" in inv[u"full_body"][u"message"],
+          inv[u"full_body"])
+    check("AX1.classification_names_the_index_reason",
+          ns["prod_scope_classify"](ns["prod_scope_state"](ns["prod_resolve_instance"](context(ns)["instance"]))[
+              u"D"])[u"bones"][u"tail"][u"reason"] == u"unsupported channel index")
+    w = dst_world()
+    got = at_p2(w, lambda: set_index(w, u"finger1_o", "toIndex", 1))
+    refused("AX1.index_changed_between_P1_and_P2_refuses", got, u"stale")
+    check("AX1.P2_index_refusal_writes_nothing", not writes(w) and not w.dm.calls)
+    w = dst_world()
+    result, verdict = p7(w, lambda: set_index(w, u"finger1_o", "toIndex", 1))
+    check("AX1.index_changed_before_P7_is_committed_unverified", verdict is not None and
+          verdict[u"phase"] == u"committed-unverified", (result.get(u"phase"), verdict))
+    bindings = outcome(lambda: ns["prod_scope_bindings"](ns["prod_scope_live"](
+        ns["prod_resolve_instance"](context(ns)["instance"])), [u"finger1_o"]))
+    refused("AX1.binding_revalidation_refuses_the_native_index", bindings, u"structure-unsupported")
+    # The real ProdWindow Apply (qualification build): refused with its reason, nothing written.
+    reg = body.registries(ns)[0]
+    mode = ns["PROD_POSE_REGISTRY_MODE"]
+    ns["PROD_POSE_REGISTRY_MODE"] = u"qualification"
+    try:
+        w = dst_world(lambda w: set_index(w, u"finger2_o", "toIndex", 1))
+        win = window(app, ns, reg, lib)
+        win.operation["context"] = context(ns)
+        win.apply_pose(ns["prod_pose_reread"](lib, grip, reg))
+        check("AX1.window_apply_refuses_through_the_real_lifecycle", not win.pending and not writes(w) and
+              not w.dm.calls and win.statuses and win.statuses[-1][2] == u"unsupported-selection", win.statuses[-1:])
+    finally:
+        ns["PROD_POSE_REGISTRY_MODE"] = mode
+
+    # --- AX2: constraint followers outside the scope ---------------------------------------------------------------
+    far = follower_fixture(placed_destination(arm), u"tail", u"finger3", u"DmeRigPointConstraintOperator",
+                           vec=[100.0, 0.0, 0.0])
+    w = dst_world(fx=far)
+    tail_before = list(w.bone_dag[u"tail"].wp)
+    got = outcome(lambda: apply(ns, reload(ns, lib, grip)))
+    moved = math.sqrt(sum((w.bone_dag[u"tail"].wp[i] - tail_before[i]) ** 2 for i in range(3)))
+    check("AX2.astra_counterexample_a_follower_outside_the_selection_refuses_before_writing",
+          got[0] != "ok" and got[1] == u"shared-input" and u"tail" in got[2], (got, moved))
+    check("AX2.follower_refusal_writes_nothing_and_opens_no_undo", not writes(w) and not w.dm.calls and moved == 0.0,
+          (w.dm.calls, moved))
+    turned = follower_fixture(placed_destination(arm), u"leg", u"finger1", u"DmeRigOrientConstraintOperator")
+    w = dst_world(fx=turned)
+    refused("AX2.orientation_follower_refuses", outcome(lambda: apply(ns, reload(ns, lib, grip))), u"shared-input")
+    check("AX2.orientation_follower_refusal_writes_nothing", not writes(w) and not w.dm.calls)
+    src_fx = follower_fixture(posed_source(arm), u"tail", u"finger3", u"DmeRigPointConstraintOperator",
+                              vec=[100.0, 0.0, 0.0])
+    use(ns, FS.World(src_fx), arm)
+    refused("AX2.save_refuses_a_scope_with_an_unverifiable_follower", outcome(
+        lambda: capture(ns, ns["prod_scope_request"](u"selected_parts", FINGERS))), u"shared-input")
+    w = dst_world()
+    got = at_p2(w, lambda: add_live_follower(w, u"tail", u"finger3"))
+    refused("AX2.follower_introduced_between_P1_and_P2_refuses", got, u"stale")
+    check("AX2.P2_follower_refusal_writes_nothing", not writes(w) and not w.dm.calls)
+    w = dst_world()
+    result, verdict = p7(w, lambda: add_live_follower(w, u"tail", u"finger3"))
+    check("AX2.follower_introduced_before_P7_is_committed_unverified", verdict is not None and
+          verdict[u"phase"] == u"committed-unverified", (result.get(u"phase"), verdict))
+    # Valid following still succeeds and is verified independently.
+    calm = follower_fixture(placed_destination(arm), u"tail", u"leg", u"DmeRigOrientConstraintOperator")
+    w = dst_world(fx=calm)
+    tail_before = (list(w.bone_dag[u"tail"].wp), list(w.bone_dag[u"tail"].wq))
+    result, verdict = apply(ns, reload(ns, lib, grip))
+    check("AX2.a_constraint_between_unaffected_bones_is_not_a_follower", verdict == {u"phase": u"committed-verified"}
+          and (list(w.bone_dag[u"tail"].wp), list(w.bone_dag[u"tail"].wq)) == tail_before, (result.get(u"phase"),
+                                                                                             verdict))
+    flib = library(root, u"synthetic_follow")
+    src = FS.World(posed_source(arm))
+    use(ns, src, arm)
+    source_local = live_bones(src)
+    forearm = save(ns, flib, ns["prod_scope_request"](u"selected_parts", [u"forearm"]), u"Forearm")
+    w = dst_world()
+    base = live_bones(w)
+    model = (list(w.gm.wp), list(w.gm.wq))
+    result, verdict = apply(ns, reload(ns, flib, forearm))
+    expected = analytic(model, base, {u"forearm": (base[u"forearm"][1], source_local[u"forearm"][2])})
+    dp, dq = max_errors(w, expected, list(w.bone_dag))
+    carried = sorted(forearm[u"record"][u"pose"][u"scope"][u"carried"])
+    check("AX2.carried_descendants_follow_their_posed_parent_and_verify", verdict == {u"phase": u"committed-verified"}
+          and dp < 1e-3 and dq < 0.01 and carried == sorted([u"hand", u"finger1", u"finger2", u"finger3", u"thumb1"]),
+          (verdict, dp, dq, carried))
+    face_src = face_solver(posed_source(arm))
+    use(ns, FS.World(face_src), face_src)
+    excl = [{u"id": u"face", u"bones": [u"jaw"], u"reason": u"r", u"provenance": u"user_confirmed",
+             u"policy_revision": None, u"label": u"Face"}]
+    elib = library(root, u"synthetic_follow_face")
+    body_only = ns["prod_pose_save_new"](elib, u"Body only", capture(ns, ns["prod_scope_request"](
+        u"full_body", [], excl)), u"20261108-190000-000000", {})
+    face_dst = face_solver(placed_destination(arm))
+    w = FS.World(face_dst)
+    use(ns, w, face_dst)
+    result, verdict = apply(ns, reload(ns, elib, body_only))
+    check("AX2.excluded_confined_facial_follow_is_retained", verdict == {u"phase": u"committed-verified"},
+          (result.get(u"phase"), verdict))
+
+    # --- AX3: skeletal parent relationships ----------------------------------------------------------------------
+    flat = FS.synthetic(flat_head_spec(), groups=ARM_GROUPS)
+    hlib = library(root, u"synthetic_parents")
+    use(ns, FS.World(posed_source(flat)), flat)
+    hgrip = save(ns, hlib, ns["prod_scope_request"](u"selected_parts", FINGERS), u"Grip")
+
+    def flat_world(fx=None):
+        w = FS.World(fx or placed_destination(flat))
+        use(ns, w, flat)
+        return w
+    w = flat_world()
+    jaw = (list(w.bone_dag[u"jaw"].wp), list(w.bone_dag[u"jaw"].wq), w.local(w.bone_dag[u"jaw"]))
+    result, verdict = p7(w, lambda: reparent(w, u"jaw", u"spine"), reload(ns, hlib, hgrip))
+    same = (list(w.bone_dag[u"jaw"].wp), list(w.bone_dag[u"jaw"].wq), w.local(w.bone_dag[u"jaw"])) == jaw
+    check("AX3.astra_counterexample_same_transform_reparenting_before_P7_is_committed_unverified",
+          verdict is not None and verdict[u"phase"] == u"committed-unverified" and same, (verdict, same))
+    w = flat_world()
+    got = at_p2(w, lambda: reparent(w, u"jaw", u"spine"), hlib, hgrip)
+    refused("AX3.same_transform_reparenting_between_P1_and_P2_refuses", got, u"stale")
+    check("AX3.P2_reparenting_refusal_writes_nothing", not writes(w) and not w.dm.calls)
+    w = flat_world()
+    w.fail_on_write = u"finger2_o"
+    real_write = ns["prod_pose_write"]
+
+    def write_then_reparent(binding, plan):
+        if dag_parent(w, w.bone_dag[u"jaw"]) is w.bone_dag[u"head"]:
+            reparent(w, u"jaw", u"spine")
+        return real_write(binding, plan)
+    ns["prod_pose_write"] = write_then_reparent
+    try:
+        got = outcome(lambda: apply(ns, reload(ns, hlib, hgrip)))
+    finally:
+        ns["prod_pose_write"] = real_write
+    check("AX3.reparenting_during_the_transaction_makes_abort_recovery_unverified",
+          got[0] == "ProdRecoveryUnverifiedError", got)
+    w = flat_world()
+    result, verdict = p7(w, lambda: reparent(w, u"jaw", u"hand"), reload(ns, hlib, hgrip))
+    check("AX3.changed_parent_identity_before_P7_is_committed_unverified", verdict is not None and
+          verdict[u"phase"] == u"committed-unverified", verdict)
+
+    def replace_head(w):
+        old = w.bone_dag[u"head"]
+        new = FB.Dag(w, w.new_handle(), "DmeDag", u"head", old.attrs["transform"])
+        new.attrs["children"].items = list(old.attrs["children"].items)
+        spine = w.bone_dag[u"spine"]
+        spine.attrs["children"].items[spine.attrs["children"].items.index(old)] = new
+        w.bone_dag[u"head"] = new
+        w.evaluate()
+    w = flat_world()
+    result, verdict = p7(w, lambda: replace_head(w), reload(ns, hlib, hgrip))
+    check("AX3.stale_replaced_parent_element_before_P7_is_committed_unverified", verdict is not None and
+          verdict[u"phase"] == u"committed-unverified", verdict)
+    w = flat_world()
+    reparent(w, u"jaw", u"spine", keep_old=True)
+    got = outcome(lambda: apply(ns, reload(ns, hlib, hgrip)))
+    refused("AX3.duplicated_parent_membership_refuses", got)
+    check("AX3.duplicated_parent_refusal_writes_nothing", not writes(w) and not w.dm.calls, got)
+    w = flat_world()
+    reparent(w, u"jaw", None)
+    got = outcome(lambda: apply(ns, reload(ns, hlib, hgrip)))
+    refused("AX3.missing_parent_refuses", got)
+    check("AX3.missing_parent_refusal_writes_nothing", not writes(w) and not w.dm.calls, got)
+    w = flat_world()
+    result, verdict = apply(ns, reload(ns, hlib, hgrip))
+    check("AX3.unchanged_hierarchy_verifies", verdict == {u"phase": u"committed-verified"}, (result.get(u"phase"),
+                                                                                           verdict))
+    again, _ = apply(ns, reload(ns, hlib, hgrip))
+    check("AX3.unchanged_hierarchy_repeat_is_a_true_noop", again == {u"phase": u"no-op"}, again)
+    other = FS.synthetic(flat_head_spec(), groups=ARM_GROUPS, handles=FS.Handles(700000))
+    w = flat_world(placed_destination(other))
+    use(ns, w, other)
+    result, verdict = apply(ns, reload(ns, hlib, hgrip))
+    check("AX3.independent_operation_with_different_runtime_handles_verifies",
+          verdict == {u"phase": u"committed-verified"}, (result.get(u"phase"), verdict))
+
+
 def section_static(app):
     text = route._read_source(route.APP_PATH)[0].decode("utf-8")
     start = text.index(u"# F-01 Pose Library scoped poses, SFP-1")
@@ -1650,6 +1963,7 @@ def main():
         if frames and frames is not True:
             run("authority", lambda: section_authority(ns, root, frames[0], frames[1]))
             run("transactions", lambda: section_transactions(ns, app, root, frames[0], frames[1]))
+            run("corrections", lambda: section_corrections(ns, app, root, frames[0], frames[1]))
             if full and full is not True:
                 run("sequential", lambda: section_sequential(ns, root, full[0], full[1], frames[0], frames[1]))
             run("semantics", lambda: section_semantics(ns, app, fx, root, frames[0], frames[1]))
