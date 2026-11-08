@@ -1,0 +1,36 @@
+{
+ "format": "F01-MC-config-v1",
+ "description": "F-01 model compatibility survey (read-only). Copy to <Q>/mc.json and replace the placeholders. Nothing is installed; the published CPM stays in place and is not opened.",
+ "paths": {
+  "Q": "<RUN_DIR>",
+  "REPO": "<REPO>",
+  "GAME": "<SFM game>",
+  "LIBRARY": "%USERPROFILE%/Documents/SFM Character Preset Manager",
+  "SESSIONS": "<SFM sessions folder>",
+  "SCRIPTS_ROOT": "{GAME}/usermod/scripts",
+  "CFG_ROOT": "{GAME}/usermod/cfg"
+ },
+ "pins": {
+  "published_cpm_sha256": "ccbed9d794984643fc6f7d7d9c65ef90e5812eb27f85dc4a86855a17c2d3d8df",
+  "wrapper_sha256": "f8d52035048a2e48d41d511968ce7f40caab09235d4a541970b6703bf389b5cd",
+  "s0_observer_sha256": "4a358cc05449592c7ea3cd6828cb40ca2faed08fc602156c2f15a9398e67c0c4"
+ },
+ "models": [
+  "tf/models/player/heavy.mdl",
+  "usermod/models/lordaardvark/sfm/deadoralive/fantasy/ayane_dazv5.mdl"
+ ],
+ "rig_scripts": [
+  "usermod/scripts/sfm/animset/rig_biped_simple.py",
+  "platform/scripts/sfm/animset/rig_biped_simple.py",
+  "usermod/scripts/sfm/animset/rig_biped_daz_v5.py"
+ ],
+ "housekeeping": [
+  "cfg\\config.cfg",
+  "cfg\\ifm.txt",
+  "cfg\\server_blacklist.txt",
+  "demoheader.tmp",
+  "stats.txt",
+  "tf2_playerstats.dmx",
+  "voice_ban.dt"
+ ]
+}
