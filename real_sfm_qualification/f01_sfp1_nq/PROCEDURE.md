@@ -143,7 +143,7 @@ froze.
 | A5 | **Save New** → Selected parts → the same 15 bones → name `SFP1 Point` → Save. Observe. | `Pose saved: SFP1 Point.` |
 | A6 | Change at least two fingers by 15° or more (the update content). Observe. | |
 | A7 | Select `SFP1 Point`, **Update Pose**, confirm. Observe. | `Pose updated: SFP1 Point.` |
-| A8 | Exit SFM **without saving**. Note whether SFM closed cleanly (no crash dialog). Confirm no `sfm.exe` remains. Then `sfp1_tool library A`. | `LIBRARY A: 3 files recorded`. |
+| A8 | Exit SFM **without saving**. Note whether SFM closed cleanly (no crash dialog). Confirm no `sfm.exe` remains. Then `sfp1_tool library A`. | `LIBRARY A: 4 files recorded` (`SFP1 Grip`, `SFP1 Point`, `NQ1 Pose A` and `SFP1 Point`'s `.bak`, the backup Update Pose writes by design). |
 
 ## Process B: restart, apply, undo, refusals, sequence (destination session)
 
@@ -186,7 +186,7 @@ Run only if step 0.5 prepared `SFP1_PROP.dmx`.
 
 | # | Action | Expected |
 |---|---|---|
-| R0 | `sfp1_tool library B` | `LIBRARY B: 3 files recorded` (the Apply processes changed no record) |
+| R0 | `sfp1_tool library B` | `LIBRARY B: 4 files recorded`, identical to library A (the Apply processes changed no record) |
 | R1 | `sfp1_tool collect-logs` | `LOGS COLLECTED: N files` (CPM logs since `pre`, verified copies) |
 | R2 | `sfp1_tool restore` | `RESTORED`: published CPM `ccbed9d7…` back, both registries removed, the run's Poses folder moved to `<Q>\evidence\library_poses`, housekeeping and `.pyc` restored, every inventory equal to its baseline. |
 | R3 | `sfp1_tool check` | `"installation": "published"` |
