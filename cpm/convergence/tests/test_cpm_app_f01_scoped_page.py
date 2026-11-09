@@ -33,12 +33,16 @@ def inventory(full=None, highlighted=(u"jaw",)):
     return {u"view": [{u"path": [u"Arms", u"LeftFingers"], u"bones": [u"finger1", u"finger2"],
                        u"unavailable": [{u"control": u"rig_hand_L", u"bone": None,
                                          u"reason": u"rig control (not supported in poses yet)"}]},
-                      {u"path": [u"Face"], u"bones": [u"jaw"], u"unavailable": []}],
+                      {u"path": [u"Face"], u"bones": [u"jaw"], u"unavailable": []},
+                      {u"path": [u"RigArms", u"LeftArm"], u"bones": [],
+                       u"unavailable": [{u"control": u"Hand_L", u"bone": u"hand", u"reason": u"driven by the rig"}]}],
             u"highlighted": list(highlighted),
             u"full_body": full or {u"status": u"available", u"code": None, u"message": None, u"review": []},
             u"signature": u"s", u"time": {}, u"root": u"pelvis", u"carried": [],
             u"classes": {u"finger1": u"direct-fk", u"finger2": u"direct-fk", u"jaw": u"direct-fk",
-                         u"pelvis": u"direct-fk"}}
+                         u"pelvis": u"direct-fk"},
+            u"parents": {u"pelvis": None, u"hand": u"pelvis", u"finger1": u"hand", u"finger2": u"finger1",
+                         u"head": u"pelvis", u"jaw": u"head"}}
 
 
 def drive(window, QtGui, QtCore, inv, body_route, steps):
@@ -92,20 +96,30 @@ def main():
         box = [g for g in dialog.findChildren(QtGui.QGroupBox) if g.title() == u"Review scope"][0]
         lists = [w for w in box.findChildren(QtGui.QListWidget)]
         seen[u"state"] = (radios[u"Full body"].isChecked(), not radios[u"Selected parts"].isChecked(),
-                          not tree.isEnabled(), box.isVisible(), [lists[0].item(i).text()
+                          tree.isHidden(), box.isVisible(), [lists[0].item(i).text()
                                                                     for i in range(lists[0].count())],
                           save.isEnabled(), summary_of(dialog, QtGui))
         seen[u"unavailable"] = [tree.topLevelItem(0).child(i).text(0) for i in range(tree.topLevelItem(0).childCount())
                                 if not tree.topLevelItem(0).child(i).flags() & QtCore.Qt.ItemIsUserCheckable]
+        groups = [tree.topLevelItem(i) for i in range(tree.topLevelItemCount())]
+        seen[u"groups"] = [(g.text(0), g.toolTip(0), bool(g.flags() & QtCore.Qt.ItemIsUserCheckable)) for g in groups]
+        seen[u"unavailable_only"] = [groups[2].child(i).text(0) for i in range(groups[2].childCount())]
         return True
     got, seen = drive(window, QtGui, QtCore, inventory(), False, default)
     check("D1 the Save dialog: title Save Pose, Save and Cancel, Save is the default",
           seen[u"title"] == u"Save Pose" and seen[u"buttons"] == [u"Cancel", u"Save"] and seen[u"default"] == [u"Save"],
           seen)
-    check("D1 Full body is the default; the picker is disabled; the review lists the highlighted controls",
+    check("D1 Full body is the default; the inactive picker is hidden; the review lists the highlighted controls",
           seen[u"state"][:6] == (True, True, True, True, [u"jaw"], True), seen[u"state"])
     check("D1 coverage line comes from the ledger state",
-          seen[u"state"][6] == u"Includes supported facial bones; flex expressions unchanged.", seen[u"state"][6])
+          seen[u"state"][6] == u"Saves the whole body, including the listed facial bones. Facial expressions (flex "
+                               u"controls) are not saved.", seen[u"state"][6])
+    check("D1 group labels drop a repeated prefix only where unambiguous; the full path is the tooltip",
+          seen[u"groups"][0][:2] == (u"LeftFingers", u"Arms > LeftFingers") and seen[u"groups"][1][0] == u"Face",
+          seen[u"groups"])
+    check("D1 an unavailable-only group has no checkbox, says so, and keeps its reasons",
+          seen[u"groups"][2] == (u"LeftArm (unavailable)", u"None of these controls can be saved in a pose.", False)
+          and seen[u"groups"][0][2] and seen[u"unavailable_only"] == [u"Hand_L: driven by the rig"], seen)
     check("D1 unavailable controls are shown with their reason, not selectable",
           seen[u"unavailable"] == [u"rig_hand_L: rig control (not supported in poses yet)"], seen[u"unavailable"])
     check("D1 Save returns the default full-body request with no exclusion",
@@ -119,7 +133,8 @@ def main():
         return True
     got, seen = drive(window, QtGui, QtCore, inventory(), False, leave)
     check("D2 leaving the reviewed controls unchanged is an explicit, recorded user decision",
-          seen[u"summary"] == u"Full body: body articulation captured; the listed facial controls are left unchanged."
+          seen[u"summary"] == u"Saves the whole body except the listed controls, which are left as they are on the "
+                              u"character."
           and got[u"request"][u"exclusions"] == [{u"id": u"face", u"bones": [u"jaw"], u"reason": u"expression controls "
                                                   u"left unchanged by the artist", u"provenance": u"user_confirmed",
                                                   u"policy_revision": None, u"label": u"Face"}], (seen, got))
@@ -127,7 +142,7 @@ def main():
     def parts(dialog, seen, save):
         tree = dialog.findChild(QtGui.QTreeWidget, "pose_scope_picker")
         [r for r in dialog.findChildren(QtGui.QRadioButton) if r.text() == u"Selected parts"][0].setChecked(True)
-        seen[u"empty"] = (tree.isEnabled(), save.isEnabled(), summary_of(dialog, QtGui))
+        seen[u"empty"] = (not tree.isHidden(), save.isEnabled(), summary_of(dialog, QtGui))
         tree.topLevelItem(0).setCheckState(0, QtCore.Qt.Checked)
         seen[u"after"] = (save.isEnabled(), summary_of(dialog, QtGui),
                           [tree.topLevelItem(0).child(i).checkState(0) == QtCore.Qt.Checked for i in range(2)])
@@ -135,10 +150,11 @@ def main():
         seen[u"review_hidden"] = not box.isVisible()
         return True
     got, seen = drive(window, QtGui, QtCore, inventory(), False, parts)
-    check("D3 Selected parts enables the picker; nothing selected cannot be saved",
+    check("D3 Selected parts shows the picker; nothing selected cannot be saved",
           seen[u"empty"] == (True, False, u"Select at least one body control."), seen[u"empty"])
     check("D3 checking a group selects its controls and names the group",
-          seen[u"after"] == (True, u"LeftFingers: articulation only. Unselected parts unchanged.", [True, True]) and
+          seen[u"after"] == (True, u"Saves the bends of Left fingers. Applying keeps the position and orientation "
+                                   u"of hand on the destination character.", [True, True]) and
           seen[u"review_hidden"], seen)
     check("D3 Save returns the explicit selected bones",
           got == {u"name": u"Pose", u"kind": u"selected_parts",
@@ -154,7 +170,8 @@ def main():
     got, seen = drive(window, QtGui, QtCore, inventory(highlighted=()), True, route)
     check("D5 a registry character's full body keeps its version 2 route",
           got == {u"name": u"Pose", u"kind": u"full_body", u"request": None} and seen[u"save"] and
-          seen[u"summary"] == u"Full body with the character's rig; facial controls unchanged.", (got, seen))
+          seen[u"summary"] == u"Saves the whole body using the character's rig. Facial expressions, gaze and the "
+                              u"character's placement in the scene are not saved.", (got, seen))
     refused = {u"status": u"refused", u"code": u"rig-driven", u"review": [],
                u"message": u"Full body can't be saved: parts of this character's body are driven by its rig. Choose "
                            u"Selected parts to save a smaller pose."}

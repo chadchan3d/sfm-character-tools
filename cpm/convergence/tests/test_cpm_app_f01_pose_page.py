@@ -109,7 +109,7 @@ def section_ui_pass(window, tabs, env, boxes, QtGui):
           fit_labels == [u"Match selected clothing to this model's body shape."], fit_labels)
     pose_labels = [w for w in window.pose_page.findChildren(QtGui.QLabel) if w.text() != u"Sort:"]
     check("U3 Poses shows exactly the Motion Editor sentence above the list (the search row's Sort label aside)",
-          [w.text() for w in pose_labels] == [u"You must be in the Motion Editor to apply poses."]
+          [w.text() for w in pose_labels] == [u"Apply poses in the Motion Editor."]
           and not pose_labels[0].isHidden(), [w.text() for w in pose_labels])
     # Poses actions: the six-button layout of Body Presets and Expressions, built with the same helpers.
     def button_rows(page):
@@ -244,7 +244,7 @@ def section_ui_pass(window, tabs, env, boxes, QtGui):
         window.refresh_pose_view()
         window.pose_list.setCurrentRow(0)
         check("U7 the text above the list stays the Motion Editor note (no pose details)",
-              window.pose_summary.text() == u"You must be in the Motion Editor to apply poses.")
+              window.pose_summary.text() == u"Apply poses in the Motion Editor.")
         window.busy = True
         window.refresh_pose_buttons()
         check("U7 busy: every Poses button disabled",
@@ -253,9 +253,11 @@ def section_ui_pass(window, tabs, env, boxes, QtGui):
         window.refresh_pose_buttons()
         info = capture_dialog(QtGui, window.open_pose_info)
         d = info[0] if info else {"status": window.status.text()}
-        check("U8 Pose Info opens a read-only dialog with the pose's details and no availability summary",
-              d.get("title") == u"Pose Info" and u"Arms Up" in d.get("labels", []) and u"Krystal" in
-              d.get("labels", []) and u"shot10" in d.get("labels", []) and u"Source shot:" in d.get("labels", [])
+        check("U8 Pose Info opens a read-only dialog: name, what it includes, the saved source model and date",
+              d.get("title") == u"Pose Info" and d.get("labels", [])[:3] == [u"Arms Up", u"Includes:", u"Left arm"]
+              and u"Saved from:" in d.get("labels", []) and u"krystal2020.mdl" in d.get("labels", [])
+              and not any(t in d.get("labels", []) for t in (u"Source shot:", u"shot10", u"Character:", u"Krystal",
+                                                              u"Model path:", u"Pose rule:", u"Body parts:"))
               and not any(u"From:" in t or u"Available:" in t for t in d.get("labels", []))
               and d.get("buttons") == [u"Close"], d)
         check("U8 Pose Info ended its operation", not window.busy and window.operation is None)
@@ -271,8 +273,11 @@ def section_ui_pass(window, tabs, env, boxes, QtGui):
             QtGui.QMessageBox.exec_ = real_exec
         check("U9 Update Pose asks before overwriting, with Cancel as the default",
               answer is False and seen == [(u"Update Pose", u'Update "Arms Up" using the current pose?',
-                                            u"Its saved values will be replaced.",
+                                            u"Replace this saved pose with the character's current pose.",
                                             [u"Update Pose", u"Cancel"], u"Cancel")], seen)
+        check("U9 Update Pose explains itself in its tooltip",
+              window.update_pose_button.toolTip() == u"Replace this saved pose with the character's current pose.",
+              window.update_pose_button.toolTip())
         shown = []
         real_dialog = QtGui.QDialog.exec_
         QtGui.QDialog.exec_ = lambda self: shown.append(
@@ -667,12 +672,11 @@ def section_polish(window, tabs, env, boxes, QtGui):
                 QtGui.QDialog.exec_ = real_exec
             return seen[0] if seen else {}
         one = info(u"p1")
-        check("V4 Pose Info, one part: Name, Character, Saved, Source shot; Body parts list; model path under "
-              "Technical details; no summary or note",
-              all(t in one.get("labels", []) for t in (u"Name:", u"Wave", u"Character:", u"Krystal", u"Saved:",
-                                                         u"Source shot:", u"shot10", u"Body parts:", u"Model path:"))
-              and one.get("parts") == [u"Left arm"] and one.get("note") is None
-              and one.get("groups") == [u"Pose", u"Technical details"]
+        check("V4 Pose Info, one part: the name, Includes, Saved from (file name), the latest date; no raw list, "
+              "no technical group, no note",
+              one.get("labels", [])[:5] == [u"Wave", u"Includes:", u"Left arm", u"Saved from:", u"krystal2020.mdl"]
+              and one.get("parts") is None and one.get("note") is None and one.get("groups") == []
+              and not any(t in one.get("labels", []) for t in (u"Character:", u"Source shot:", u"Model path:"))
               and not any(u"From:" in t or u"Available" in t for t in one.get("labels", [])), one)
         check("V4 Pose Info: Updated is shown when the pose was updated", u"Updated:" in one.get("labels", []), one)
         updated = info(u"p2")
@@ -680,13 +684,14 @@ def section_polish(window, tabs, env, boxes, QtGui):
               u"Updated:" in updated.get("labels", []), updated)
         items[0][u"record"][u"updated_at"] = items[0][u"record"][u"created_at"]
         window.refresh_pose_view()
-        check("V4 Pose Info: no Updated row when the pose was never updated",
-              u"Updated:" not in info(u"p1").get("labels", []))
+        never = info(u"p1")
+        check("V4 Pose Info: no Updated row when the pose was never updated; the saved date has no seconds",
+              u"Updated:" not in never.get("labels", []) and u"Saved:" in never.get("labels", []) and
+              never["labels"][never["labels"].index(u"Saved:") + 1].count(u":") == 1, never)
         many = info(u"p3")
-        check("V4 Pose Info, several parts: one row each, and a note only for the part Krystal can't use",
-              many.get("parts") == [u"Left arm", u"Right arm"]
-              and many.get("note") == u"Can't be applied to Krystal: Right arm."
-              and many.get("parts_height") > one.get("parts_height"), many)
+        check("V4 Pose Info, several parts: listed together, and a note only for the part Krystal can't use",
+              u"Left arm, Right arm" in many.get("labels", [])
+              and many.get("note") == u"Can't be applied to Krystal: Right arm.", many)
         # Statuses: routine success messages name the item only; a long name is shortened in the middle.
         short = g["tool_status_name"](u"Standing")
         long_name = u"A" * 60 + u"B" * 40
@@ -1063,7 +1068,7 @@ def main():
     check("P4 no character: every Poses button disabled", not [
         b.text() for b in window.pose_page.findChildren(QtGui.QPushButton) if b.isEnabled()])
     check("P4 no character: only the Motion Editor note above an empty list",
-          window.pose_summary.text() == u"You must be in the Motion Editor to apply poses."
+          window.pose_summary.text() == u"Apply poses in the Motion Editor."
           and window.pose_list.count() == 0, (window.pose_summary.text(), window.pose_list.count()))
     check("P4 opening the page raised no dialog", not boxes, boxes)
     check("P5 minimum window size unchanged (540 px wide)", window.minimumWidth() == 540, window.minimumWidth())

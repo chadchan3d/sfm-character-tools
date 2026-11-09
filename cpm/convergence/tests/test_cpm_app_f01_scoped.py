@@ -472,7 +472,8 @@ def section_coverage(ns, fx):
           u"jaw" in S[u"posed"] and inv[u"highlighted"] == [u"jaw"] and S[u"excluded"] == [])
     state = ns["prod_scope_dialog_state"](inv, {u"kind": u"full_body"})
     check("B.full_body_summary_discloses_included_facial_bones", state[u"save_enabled"] and
-          state[u"summary"] == u"Includes supported facial bones; flex expressions unchanged.", state)
+          state[u"summary"] == u"Saves the whole body, including the listed facial bones. Facial expressions (flex "
+                               u"controls) are not saved.", state)
     # An unsupported tail: Full body refuses naming it; Selected parts without it remains available.
     bad = FS.clone(arm)
     bad[u"channels"][u"tail_o"]["from"] = None
@@ -555,8 +556,8 @@ def section_exclusions(ns, root):
             outcome(lambda: capture(ns, ns["prod_scope_request"](u"full_body"))), u"rig-driven")
     state = ns["prod_scope_dialog_state"](inv, {u"kind": u"full_body", u"exclude_highlighted": True})
     check("C.confirmed_exclusion_allows_full_body_with_honest_copy", state[u"save_enabled"] and
-          state[u"summary"] == u"Full body: body articulation captured; the listed facial controls are left "
-                               u"unchanged." and state[u"request"][u"exclusions"][0][u"provenance"] ==
+          state[u"summary"] == u"Saves the whole body except the listed controls, which are left as they are on "
+                               u"the character." and state[u"request"][u"exclusions"][0][u"provenance"] ==
           u"user_confirmed", state)
     lib = library(root, u"synthetic_face")
     saved = ns["prod_pose_save_new"](lib, u"Body only", capture(ns, state[u"request"]), u"20261108-130000-000000", {})
@@ -1507,7 +1508,8 @@ def section_dialog_copy(ns, fx):
     left = [b for r in inv[u"view"] if r[u"path"][-1] == u"LeftFingers" for b in r[u"bones"]]
     state = ns["prod_scope_dialog_state"](inv, {u"kind": u"selected_parts", u"bones": left})
     check("M.picker_selection_summary_names_the_group", state[u"save_enabled"] and
-          state[u"summary"] == u"LeftFingers: articulation only. Unselected parts unchanged.", state[u"summary"])
+          state[u"summary"] == u"Saves the bends of Left fingers. Applying keeps the position and orientation of "
+                               u"bip_hand_L on the destination character.", state[u"summary"])
     state = ns["prod_scope_dialog_state"](inv, {u"kind": u"selected_parts", u"bones": []})
     check("M.empty_selection_cannot_be_saved", not state[u"save_enabled"] and
           state[u"summary"] == u"Select at least one body control.")
@@ -1577,7 +1579,7 @@ def section_semantics(ns, app, fx, root, lib, grip):
           any(i[u"preset_id"] == grip[u"preset_id"] for i in found[u"items"]), found[u"unusable"])
     os.remove(damaged)
     info = ns["prod_scope_info"](item[u"record"])
-    check("E.pose_info_lists_the_scope_and_its_rule", info[u"rows"][0] == (u"Saved scope:", u"Selected parts: Fingers")
+    check("E.pose_info_lists_the_scope_and_its_rule", info[u"rows"][0] == (u"Includes:", u"Fingers")
           and info[u"engine"] == u"direct_fk_v1 revision 1" and sorted(info[u"bones"]) == sorted(FINGERS), info)
 
 
@@ -2350,6 +2352,89 @@ def section_ownership(ns, app, root, lib, grip):
           verdict[u"phase"] == u"committed-unverified" and u"Undo" not in [c[0] for c in w.dm.calls], verdict)
 
 
+# ---------------------------------------------------------------------------
+# UI. Pose Library UI adjudication (Astra, 2026-11-08): truthful coverage wording and Pose Info from the saved record
+# ---------------------------------------------------------------------------
+
+def section_ui_copy(ns, fx, root):
+    arm = arm_fixture()
+    use(ns, FS.World(posed_source(arm)), arm)
+    lib = library(root, u"synthetic_ui")
+    grip = save(ns, lib, ns["prod_scope_request"](u"selected_parts", FINGERS), u"Grip")
+    mixed = save(ns, lib, ns["prod_scope_request"](u"selected_parts", [u"finger1", u"finger3", u"thumb1"]), u"Mixed")
+    body = save(ns, lib, ns["prod_scope_request"](u"full_body"), u"Body")
+    face = face_solver(posed_source(arm))
+    use(ns, FS.World(face), face)
+    excl = [{u"id": u"face", u"bones": [u"jaw"], u"reason": u"r", u"provenance": u"user_confirmed",
+             u"policy_revision": None, u"label": u"Face"}]
+    body_face = save(ns, lib, ns["prod_scope_request"](u"full_body", [], excl), u"Body only")
+    view = ns["prod_pose_info_view"]
+    labels_allowed = set([u"Includes:", u"Not included:", u"Saved from:", u"Saved:", u"Updated:"])
+    for name, rec in ((u"grip", grip), (u"mixed", mixed), (u"body", body), (u"body_face", body_face)):
+        v = view(rec[u"record"])
+        texts = u" ".join(r[1] for r in v[u"rows"]) + u" " + (v[u"effect"] or u"")
+        check("UI.pose_info_%s_has_no_count_rule_bone_list_shot_or_character_rows" % name,
+              set(r[0] for r in v[u"rows"]) <= labels_allowed and u"controls (articulation" not in texts and
+              u"revision" not in texts and u"direct_fk" not in texts and u"shot1" not in texts and
+              u"unchanged" not in texts.lower().replace(u"are not changed", u""), v)
+    v = view(grip[u"record"])
+    check("UI.pose_info_names_the_saved_source_model_and_a_readable_coverage",
+          v[u"rows"][0] == [u"Includes:", u"Fingers", None] and
+          v[u"rows"][1] == [u"Saved from:", u"analytic.mdl", u"models/synthetic/analytic.mdl"] and
+          v[u"rows"][2][0] == u"Saved:" and u"," in v[u"rows"][2][1] and v[u"rows"][2][1].count(u":") == 1, v)
+    check("UI.pose_info_effect_keeps_only_the_true_boundary", v[u"effect"] == (
+        u"Applies the saved bends of these parts. Applying keeps the position and orientation of hand on the "
+        u"destination character."), v[u"effect"])
+    v = view(mixed[u"record"])
+    check("UI.mixed_selection_names_its_controls_and_never_calls_a_carried_part_fixed",
+          v[u"rows"][0][1] == u"thumb1, finger1, finger3" and u"finger2" not in v[u"effect"] and
+          u"of hand on" in v[u"effect"] and u"Parts attached below them move with them." in v[u"effect"], v)
+    v = view(body_face[u"record"])
+    check("UI.full_body_lists_its_consequential_exclusion",
+          [u"Not included:", u"Face controls (chosen when saving)", None] in v[u"rows"] and
+          v[u"rows"][0] == [u"Includes:", u"Full body", None], v)
+    # Version 1 and 2 records: coverage from their regions; the saved model; the latest date.
+    v1 = {u"name": u"Arm", u"created_at": u"20261101-090000-000000", u"updated_at": u"20261102-101500-000000",
+          u"pose": {u"version": 1, u"regions": {u"left_arm": {}}, u"source": {u"model_ref": u"models\\a\\krystal2020.mdl"}}}
+    v2 = {u"name": u"Body", u"created_at": u"20261103-080000-000000", u"updated_at": u"20261103-080000-000000",
+          u"pose": {u"version": 2, u"regions": {u"full_body": {}}, u"source": {u"model_ref": u"models/k.mdl"}}}
+    a, b = view(v1), view(v2)
+    check("UI.legacy_records_show_their_saved_coverage_model_and_latest_date",
+          a[u"rows"] == [[u"Includes:", u"Left arm", None], [u"Saved from:", u"krystal2020.mdl", u"models/a/krystal2020.mdl"],
+                         [u"Updated:", u"2 November 2026, 10:15", None]] and a[u"effect"] is None and
+          b[u"rows"][0] == [u"Includes:", u"Full body", None] and b[u"rows"][2] == [u"Saved:", u"3 November 2026, 08:00", None]
+          and u"gaze" in b[u"effect"], (a, b))
+    check("UI.dates_drop_seconds_and_keep_unknown_text", ns["prod_pose_info_date"](u"20261108-193207-1") ==
+          u"8 November 2026, 19:32" and ns["prod_pose_info_date"](u"odd") == u"odd" and
+          ns["prod_pose_info_date"](None) == u"Unknown")
+    # The Save dialog's coverage line never promises that unselected parts stay unchanged.
+    use(ns, FS.World(posed_source(arm)), arm)
+    inv = inventory(ns)
+    for bones in (FINGERS, [u"thumb1"], [u"forearm"], [u"finger1", u"finger3"], [u"pelvis"]):
+        s = ns["prod_scope_dialog_state"](inv, {u"kind": u"selected_parts", u"bones": bones})[u"summary"]
+        check("UI.selection_summary_%s_states_what_is_saved_without_an_unchanged_promise" % u"_".join(bones[:2]),
+              s.startswith(u"Saves the bends of") and u"unchanged" not in s.lower(), s)
+    s = ns["prod_scope_dialog_state"](inv, {u"kind": u"selected_parts", u"bones": [u"finger1", u"finger3"]})[u"summary"]
+    check("UI.a_part_between_two_selected_parts_is_not_called_fixed", u"finger2" not in s and
+          u"Parts attached below them move with them." in s, s)
+    s = ns["prod_scope_summary"](u"selected_parts", dict(inv, parents=None), [u"thumb1"])
+    check("UI.without_hierarchy_the_summary_falls_back_to_the_general_caution",
+          s == u"Saves the bends of the selected parts. Applying may also move parts attached to them.", s)
+    check("UI.friendly_labels_only_reformat_plain_group_names",
+          ns["prod_scope_friendly_label"](u"LeftFingers") == u"Left fingers" and
+          ns["prod_scope_friendly_label"](u"Selected parts (3)") is None and
+          ns["prod_scope_friendly_label"](u"bip_hand_l") is None)
+    heavy = fx[u"mc02"]
+    use(ns, FS.World(heavy), heavy)
+    inv = inventory(ns)
+    labels = dict(zip([u" > ".join(r[u"path"]) for r in inv[u"view"]], ns["prod_scope_group_labels"](inv[u"view"])))
+    check("UI.group_labels_shorten_only_where_unambiguous",
+          labels[u"RigArms > LeftArm > LeftFingers"] == u"LeftFingers" and
+          labels[u"RigArms > LeftArm"] == u"RigArms > LeftArm" and labels[u"Arms > LeftArm"] == u"Arms > LeftArm"
+          and len(set(labels.values())) == len(labels), labels)
+    check("UI.poses_tab_note_is_instructional", ns["PROD_POSE_EDITOR_NOTE_COPY"] == u"Apply poses in the Motion Editor.")
+
+
 def section_static(app):
     text = route._read_source(route.APP_PATH)[0].decode("utf-8")
     start = text.index(u"# F-01 Pose Library scoped poses, SFP-1")
@@ -2400,6 +2485,7 @@ def main():
         run("window", lambda: section_window(app, ns, fx, os.path.join(root, u"window")))
         run("ui_state", lambda: section_ui_state(ns))
         run("dialog_copy", lambda: section_dialog_copy(ns, fx))
+        run("ui_copy", lambda: section_ui_copy(ns, fx, os.path.join(root, u"ui_copy")))
         run("static", lambda: section_static(app))
     finally:
         shutil.rmtree(root, True)
