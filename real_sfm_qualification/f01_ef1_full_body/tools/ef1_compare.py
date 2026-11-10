@@ -155,6 +155,45 @@ def flex_values(o):
     return out
 
 
+def key_level_problems(before, after, names, t_chan):
+    """R3 section 5 ("Non-root FK positions") and section 9 ("Owned writes") at key level, for each written channel:
+    - the log, its layers (count, identity, type) and its protected metadata (defaults, curve info) are unchanged;
+    - every key at another time is unchanged, and exactly one key exists at the mapped tick afterwards;
+    - a non-root position channel is never updated: an existing key at the tick stays exactly as it was, and a
+      missing one is inserted with the destination's own evaluated value.
+    Unrecorded keys (S0 records them up to its bound) are a problem, never assumed preserved."""
+    a, b = channels(before), channels(after)
+    out = []
+    for n in names:
+        x, y = a.get(n), b.get(n)
+        if x is None or y is None:
+            out.append("%s missing" % n)
+            continue
+        if x.get("log") != y.get("log") or x.get("log_fields") != y.get("log_fields"):
+            out.append("%s log or its metadata changed" % n)
+        lx, ly = x.get("layers") or [], y.get("layers") or []
+        if len(lx) != 1 or len(ly) != 1 or [(l.get("id"), l.get("type")) for l in lx] != \
+                [(l.get("id"), l.get("type")) for l in ly]:
+            out.append("%s layers changed" % n)
+            continue
+        kx, ky = lx[0].get("keys"), ly[0].get("keys")
+        if not isinstance(kx, list) or not isinstance(ky, list):
+            out.append("%s keys not recorded" % n)
+            continue
+        if [k for k in kx if k[0] != t_chan] != [k for k in ky if k[0] != t_chan]:
+            out.append("%s keys at other times changed" % n)
+        at_x, at_y = [k for k in kx if k[0] == t_chan], [k for k in ky if k[0] == t_chan]
+        if len(at_y) != 1:
+            out.append("%s has %d keys at the mapped tick" % (n, len(at_y)))
+            continue
+        if n in POSITION_CHANNELS and n != ROOT + u"_p":
+            if at_x and at_x != at_y:
+                out.append("%s: an existing position key was updated" % n)
+            elif not at_x and dist(at_y[0][1], x.get("value_at_mapped")) > 1e-6:
+                out.append("%s: the inserted position key is not the destination's own value" % n)
+    return out
+
+
 def placement_moved(o1, o2):
     out = []
     for key in ("world_position", "world_orientation", "local_position", "local_orientation"):
@@ -316,6 +355,11 @@ def evaluate(R):
             R.side[step_of(after)]["outside"]["sha256"])
         chk("%s.keys_at_the_mapped_tick" % label, all(channels(after)[n]["layers"][0].get("key_at_mapped") is not None
                                                        for n in ch if n in channels(after)))
+        kl = key_level_problems(before, after, ch, after["time"]["t_chan"])
+        chk("%s.neighbouring_keys_layers_and_metadata_preserved" % label,
+            not [p for p in kl if "position key" not in p], kl[:8])
+        chk("%s.non_root_position_keys_inserted_only_where_missing" % label,
+            not [p for p in kl if "position key" in p], [p for p in kl if "position key" in p][:8])
         return ch
 
     def step_of(obs):

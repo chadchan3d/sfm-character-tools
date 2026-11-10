@@ -424,6 +424,7 @@ class Scene(object):
         for n in FLEX:
             self.keys[n + "_flex_channel"] = [[0, self.flex[n]]]
         self.undo = {"can_undo": True, "can_redo": False, "undo_desc": "Modify Camera", "redo_desc": ""}
+        self.meta = dict((n, {"curveinfo": {"status": "READ", "value": None}}) for n in self.keys)
 
     def key(self, name, value):
         keys = self.keys[name]
@@ -457,10 +458,10 @@ class Scene(object):
         self.undo = {"can_undo": True, "can_redo": False, "undo_desc": "Apply Pose EF1 Body", "redo_desc": ""}
 
     def snapshot(self):
-        return copy.deepcopy((self.keys, self.local, self.undo, self.flex, self.model))
+        return copy.deepcopy((self.keys, self.local, self.undo, self.flex, self.model, self.meta))
 
     def restore(self, snap, undo=None):
-        self.keys, self.local, self.undo, self.flex, self.model = copy.deepcopy(snap)
+        self.keys, self.local, self.undo, self.flex, self.model, self.meta = copy.deepcopy(snap)
         if undo is not None:
             self.undo = dict(undo)
 
@@ -470,11 +471,15 @@ class Scene(object):
     def channel(self, name):
         keys = self.keys[name]
         at = [i for i, k in enumerate(keys) if k[0] == T_CHAN]
-        layer = {"key_count": len(keys), "keys_sha256": sha_bytes(json.dumps(keys).encode("utf-8")),
-                 "key_at_mapped": at[0] if at else None}
+        h = int(sha_bytes(name.encode("ascii"))[:6], 16)
+        kind = "DmeQuaternionLogLayer" if name.endswith("_o") else "DmeVector3LogLayer"
+        layer = {"id": {"handle": h + 2, "type": kind}, "type": kind, "key_count": len(keys),
+                 "keys_sha256": sha_bytes(json.dumps([keys, self.meta[name]]).encode("utf-8")),
+                 "key_at_mapped": at[0] if at else None, "keys": copy.deepcopy(keys)}
         value = keys[at[0]][1] if at else keys[0][1]
-        return {"id": {"name": name, "handle": 1, "type": "DmeChannel"}, "binding": {}, "current_ticks": T_CHAN,
-                "log": {}, "layers": [layer], "value_at_clock": value, "value_at_mapped": copy.deepcopy(value)}
+        return {"id": {"name": name, "handle": h, "type": "DmeChannel"}, "binding": {}, "current_ticks": T_CHAN,
+                "log": {"handle": h + 1}, "log_fields": copy.deepcopy(self.meta[name]), "layers": [layer],
+                "value_at_clock": value, "value_at_mapped": copy.deepcopy(value)}
 
     def world(self, name):
         return C.compose(self.model, self.local[name])
@@ -587,6 +592,7 @@ class Synthetic(object):
         b = Scene(pid, "E:/run/sessions/ef1_destination.dmx", [90.0, 25.0, -10.0], 225.0, -12.0, [-5.0, 2.0, 38.0],
                   flex=0.7)
         b.pose(-12.0, [-5.0, 2.0, 38.0])                    # the Owner's step-0 posing keyed the destination
+        b.key("bip_neck_p", b.local["bip_neck"][0])          # an existing exact position key at the tick
         if "dest_not_distinct" in f:
             b.apply(rec)
             b.undo = {"can_undo": True, "can_redo": False, "undo_desc": "Modify Camera", "redo_desc": ""}
@@ -610,6 +616,14 @@ class Synthetic(object):
             b.set_bone("bip_head", pos=[9.0, 9.0, 9.0])
         if "flex_channel_written" in f:
             b.key("mad_flex_channel", 0.0)
+        if "neighbour_key_changed" in f:
+            b.keys["bip_head_o"][0][1] = qz(33.0)
+        if "extra_key" in f:
+            b.keys["bip_toe_R_o"].append([T_CHAN + 100, qz(5.0)])
+        if "metadata_changed" in f:
+            b.meta["bip_spine_1_o"] = {"curveinfo": {"status": "READ", "value": {"handle": 9}}}
+        if "position_key_updated" in f:
+            b.set_bone("bip_neck", pos=[p + 0.01 for p in b.local["bip_neck"][0]])
         if "outside_changed" in f:
             b.outside = "x" * 64
         self.observe(b, "B3")
@@ -705,6 +719,10 @@ if PY3:
                       "bone_off": "apply.every_bone_takes_the_saved_orientation",
                       "offset_transferred": "apply.non_root_offsets_are_the_destinations_own",
                       "flex_channel_written": "apply.only_skeletal_channels_changed",
+                      "neighbour_key_changed": "apply.neighbouring_keys_layers_and_metadata_preserved",
+                      "extra_key": "apply.neighbouring_keys_layers_and_metadata_preserved",
+                      "metadata_changed": "apply.neighbouring_keys_layers_and_metadata_preserved",
+                      "position_key_updated": "apply.non_root_position_keys_inserted_only_where_missing",
                       "outside_changed": "apply.unrelated_animation_unchanged",
                       "undo_incomplete": "undo.restores_the_destination_baseline",
                       "noop_writes": "repeat.true_noop",
