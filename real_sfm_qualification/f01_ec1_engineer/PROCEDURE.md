@@ -1,6 +1,8 @@
 # F-01 EC-1: TF2 Engineer control-coverage investigation (operator procedure)
 
-**Status:** prepared offline, **not run**. Running it needs the Owner's separate authorization.
+**Status:** run once (`EC1-01`, 2026-11-10). The verdict is **CANDIDATE**, with deviation EC1-D1 accepted. Results:
+`cpm/qualification/F01_EC1_RESULTS.md`. Do not repeat this run. The session-file expectations below were corrected
+after the run (section "Session files").
 
 **Purpose:** decide, from the Engineer's actual SFM animation set, whether `models/player/engineer.mdl` may become a
 candidate for a version 3 Full body Save/Apply native qualification. NQ-03 showed that its header declares no
@@ -91,13 +93,39 @@ animation set, or save.
 | # | Who | Action | Expected |
 |---|---|---|---|
 | 0 | Claude | SFM closed. Copy `ec1.template.json` to `<Q>\ec1.json` and fill the paths. Run `pre`. | `MODEL PASS`, then `PRE PASS` |
-| 1 | Owner | Start SFM. **File > New.** Name the session `EC1_SURVEY`. If SFM asks for a folder, choose `<Q>\sessions`. Open the Script Editor and submit the setup line. | An empty session with one shot. |
+| 1 | Owner | Start SFM. **File > New.** Name the session `EC1_SURVEY`. If SFM asks for a folder, choose `<Q>\sessions`. Open the Script Editor and submit the setup line. | An empty session with one shot. SFM writes its empty starter session `<Q>\sessions\ec1_survey.dmx` now (expected; see "Session files"). |
 | 2 | Owner | In the Animation Set Editor, click **+** > **Create Animation Set for New Model**. Choose `models/player/engineer.mdl` (TF2). Click nothing else. | One animation set, normally named `engineer` (note its exact name). |
 | 3 | Owner | Submit the observe line. | `EC1 EC1-01: OK set=engineer model=models/player/engineer.mdl rigs=[] bones=72 header_bones=72 checksum=1732717760 proctype_nonzero=0 … readonly=True problems=0 findings=1` |
 | 4 | Owner | Exit SFM. Choose **No** when asked to save. | |
-| 5 | Claude | `post`, then `analyze`. | `POST PASS` (the session folder is empty), `MODEL CHECK PASS`, `evidence\EC1_ANALYSIS.md` with a verdict |
+| 5 | Claude | `post`, then `analyze`. | `SESSION FILES PASS` (only SFM's starter session), `MODEL CHECK PASS`, `POSTFLIGHT PASS`; then `evidence\EC1_ANALYSIS.md` with a verdict |
 
 Return the SFM console text, including the `EC1` line.
+
+## Session files
+
+File > New writes SFM's empty **starter session** into the chosen folder at once, before any model is added. Run 1
+showed this: `ec1_survey.dmx`, 3,984 bytes, written at 07:37:21, with no animation set, game model or channel. The
+observation followed at 07:39:55. This is SFM behaviour and not a save; the Owner exited without saving.
+
+`post` therefore runs three checks:
+1. **`mc_tool`'s post, unchanged:** it records `post.json` as it reports. Its emptiness check prints
+   `POST FAIL … the disposable session folder is not empty` whenever the starter session is there. That result is
+   kept as a raw fact.
+2. **The session-folder classification** (`tools/session_files.py`, written to `evidence/session_files.json`):
+   - **Expected:** at most one file, a DMX session holding no `DmeAnimationSet`, `DmeGameModel` or `DmeChannel`.
+   - **Unexpected:** a session holding a character, which means the session was saved; an `.autosave` file; or any
+     other file.
+3. **The model check:** the model still resolves to the pinned bytes.
+
+**`POSTFLIGHT PASS`** requires all of these:
+- every `mc_tool` post check passes, except that its emptiness check may fail;
+- if the emptiness check fails, the classification passes;
+- the model check passes.
+
+The protected inventories, the sessions folder among them, are compared by `mc_tool` exactly as before.
+
+Run 1 predates the classification. Its `post.json` keeps `POST FAIL` on the emptiness check. A read-only replay of the
+classification on its folder gives `starter` for `ec1_survey.dmx` and nothing unexpected (EC1-D1).
 
 ## Evidence
 
@@ -126,7 +154,8 @@ Return the SFM console text, including the `EC1` line.
 
 ## Offline preparation evidence (2026-11-10)
 
-- **Tests:** `tests\test_ec1.py` passes 13/13 on Python 3.10.6, and its 4 observer tests on SFM's Python 2.7.5.
+- **Tests:** `tests\test_ec1.py` passes 13/13 on Python 3.10.6, and its 4 observer tests on SFM's Python 2.7.5. After
+  the session-file correction the count is 14/14; the added test covers the classifier and the post rule.
   - **Observer:** read-only composition, with refusals on label, existing file, animation set, model and each
     pinned observer.
   - **Analysis, NOT-CANDIDATE through both routes:** the committed real Heavy structure (MC-01).

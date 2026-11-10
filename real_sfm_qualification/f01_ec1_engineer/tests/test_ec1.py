@@ -300,6 +300,34 @@ if PY3:
                 header = json.loads(f.read().decode("utf-8"))
             self.assertEqual(c["model_pins"], {header["game_relative"]: header["file_sha256"]})
 
+        def test_session_files_tell_the_starter_from_a_saved_character_session(self):
+            import session_files as SF
+            head = b"<!-- dmx encoding binary 5 format sfm_session 20 -->\n"
+            starter = head + b"DmElement session DmeFilmClip DmeTrack DmeTimeFrame"
+            character = head + b"DmeFilmClip DmeAnimationSet DmeGameModel DmeChannel"
+            self.assertEqual(SF.classify_bytes("ec1_survey.dmx", starter)["class"], "starter")
+            self.assertEqual(SF.classify_bytes("ec1_survey.dmx", character)["class"], "character")
+            self.assertEqual(SF.classify_bytes("ec1_survey.autosave", character)["class"], "autosave")
+            self.assertEqual(SF.classify_bytes("notes.txt", b"hello")["class"], "other")
+            self.assertEqual(SF.classify_bytes("x.dmx", head + b"DmeChannel")["class"], "other")
+            q = os.path.join(self.dir, "Q")
+            os.makedirs(os.path.join(q, "sessions"))
+            c = self.config()
+            c["paths"]["Q"] = q
+            self.assertTrue(self.T.session_check(c)["pass"])                  # empty: nothing unexpected
+            with io.open(os.path.join(q, "sessions", "ec1_survey.dmx"), "wb") as f:
+                f.write(starter)
+            check = self.T.session_check(c)
+            self.assertEqual((check["pass"], check["starter_sessions"]), (True, ["ec1_survey.dmx"]))
+            with io.open(os.path.join(q, "sessions", "ec1_survey.dmx"), "wb") as f:
+                f.write(character)                                           # the session was saved
+            self.assertEqual(self.T.session_check(c)["unexpected"], ["ec1_survey.dmx"])
+            with io.open(os.path.join(q, "sessions", "ec1_survey.dmx"), "wb") as f:
+                f.write(starter)
+            with io.open(os.path.join(q, "sessions", "ec1_survey.autosave"), "wb") as f:
+                f.write(character)
+            self.assertFalse(self.T.session_check(c)["pass"])
+
         def test_model_identity_follows_the_search_order_and_the_pin(self):
             os.makedirs(os.path.join(self.dir, "usermod"))
             with io.open(os.path.join(self.dir, "usermod", "gameinfo.txt"), "w") as f:
