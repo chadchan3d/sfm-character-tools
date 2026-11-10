@@ -112,8 +112,8 @@ def main():
     check("D1 Full body is the default; the inactive picker is hidden; the review lists the highlighted controls",
           seen[u"state"][:6] == (True, True, True, True, [u"jaw"], True), seen[u"state"])
     check("D1 coverage line comes from the ledger state",
-          seen[u"state"][6] == u"Saves the whole body, including the listed facial bones. Facial expressions (flex "
-                               u"controls) are not saved.", seen[u"state"][6])
+          seen[u"state"][6] == u"Includes the listed facial bones. Facial expressions are not saved.",
+          seen[u"state"][6])
     check("D1 group labels drop a repeated prefix only where unambiguous; the full path is the tooltip",
           seen[u"groups"][0][:2] == (u"LeftFingers", u"Arms > LeftFingers") and seen[u"groups"][1][0] == u"Face",
           seen[u"groups"])
@@ -133,8 +133,7 @@ def main():
         return True
     got, seen = drive(window, QtGui, QtCore, inventory(), False, leave)
     check("D2 leaving the reviewed controls unchanged is an explicit, recorded user decision",
-          seen[u"summary"] == u"Saves the whole body except the listed controls, which are left as they are on the "
-                              u"character."
+          seen[u"summary"] == u"The listed controls are left as they are on the character."
           and got[u"request"][u"exclusions"] == [{u"id": u"face", u"bones": [u"jaw"], u"reason": u"expression controls "
                                                   u"left unchanged by the artist", u"provenance": u"user_confirmed",
                                                   u"policy_revision": None, u"label": u"Face"}], (seen, got))
@@ -152,9 +151,8 @@ def main():
     got, seen = drive(window, QtGui, QtCore, inventory(), False, parts)
     check("D3 Selected parts shows the picker; nothing selected cannot be saved",
           seen[u"empty"] == (True, False, u"Select at least one body control."), seen[u"empty"])
-    check("D3 checking a group selects its controls and names the group",
-          seen[u"after"] == (True, u"Saves the bends of Left fingers. Applying keeps the position and orientation "
-                                   u"of hand on the destination character.", [True, True]) and
+    check("D3 checking a group selects its controls; an ordinary finger selection needs no explanation",
+          seen[u"after"] == (True, u"", [True, True]) and
           seen[u"review_hidden"], seen)
     check("D3 Save returns the explicit selected bones",
           got == {u"name": u"Pose", u"kind": u"selected_parts",
@@ -170,8 +168,8 @@ def main():
     got, seen = drive(window, QtGui, QtCore, inventory(highlighted=()), True, route)
     check("D5 a registry character's full body keeps its version 2 route",
           got == {u"name": u"Pose", u"kind": u"full_body", u"request": None} and seen[u"save"] and
-          seen[u"summary"] == u"Saves the whole body using the character's rig. Facial expressions, gaze and the "
-                              u"character's placement in the scene are not saved.", (got, seen))
+          seen[u"summary"] == u"Facial expressions, gaze and the character's place in the scene are not saved.",
+          (got, seen))
     refused = {u"status": u"refused", u"code": u"rig-driven", u"review": [],
                u"message": u"Full body can't be saved: parts of this character's body are driven by its rig. Choose "
                            u"Selected parts to save a smaller pose."}

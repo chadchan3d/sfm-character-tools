@@ -445,7 +445,7 @@ F01_SFP1_NEW_TOP = set([
     "prod_scope_instance_elements", "PROD_SCOPE_VALUE_OPERATORS",
     # Pose Library UI refinement (Astra UI adjudication 2026-11-08): presentation helpers only.
     "prod_scope_friendly_label", "prod_scope_selection_effect", "prod_scope_group_labels", "prod_pose_info_date",
-    "prod_pose_info_view", "PROD_POSE_INFO_MONTHS", "PROD_POSE_FULL_BODY_EFFECT"
+    "prod_pose_info_view", "PROD_POSE_INFO_MONTHS", "PROD_POSE_FULL_BODY_NOT_INCLUDED"
 ])
 F01_SFP1_NEW_METHODS = set(["prompt_pose_scope"])
 EXPECTED_CHANGED_TOP = (STEP2B_CHANGED_TOP | STEP3_CHANGED_TOP | STEP4_CHANGED_TOP | R14_CHANGED_TOP

@@ -685,9 +685,9 @@ def section_polish(window, tabs, env, boxes, QtGui):
         items[0][u"record"][u"updated_at"] = items[0][u"record"][u"created_at"]
         window.refresh_pose_view()
         never = info(u"p1")
-        check("V4 Pose Info: no Updated row when the pose was never updated; the saved date has no seconds",
+        check("V4 Pose Info: no Updated row when the pose was never updated; the saved date reads Month D, YYYY",
               u"Updated:" not in never.get("labels", []) and u"Saved:" in never.get("labels", []) and
-              never["labels"][never["labels"].index(u"Saved:") + 1].count(u":") == 1, never)
+              never["labels"][never["labels"].index(u"Saved:") + 1] == u"November 1, 2026", never)
         many = info(u"p3")
         check("V4 Pose Info, several parts: listed together, and a note only for the part Krystal can't use",
               u"Left arm, Right arm" in many.get("labels", [])

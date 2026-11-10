@@ -36361,9 +36361,8 @@ class ProdWindow(QtGui.QDialog):
                 kind = u"selected_parts" if parts.isChecked() else u"full_body"
                 choice = {u"kind": kind, u"bones": chosen_bones(), u"exclude_highlighted": leave.isChecked()}
                 if kind == u"full_body" and body_route:
-                    state = {u"save_enabled": True, u"summary": u"Saves the whole body using the character's rig. "
-                                                                  u"Facial expressions, gaze and the character's "
-                                                                  u"placement in the scene are not saved.",
+                    state = {u"save_enabled": True, u"summary": u"Facial expressions, gaze and the character's "
+                                                                  u"place in the scene are not saved.",
                              u"review": [], u"picker_enabled": False, u"request": None}
                 else:
                     state = prod_scope_dialog_state(inventory, choice)
@@ -47761,22 +47760,27 @@ def prod_scope_availability(record, identity, mode):
 
 
 def prod_scope_friendly_label(label):
-    """A saved selection's group label as readable words ("LeftFingers" -> "Left fingers"), only when the label is a
-    plain one-word group name; a generated count label, a control name or anything else returns None (the caller then
-    names the recorded controls). Never classifies anatomy."""
-    if not isinstance(label, type(u"")) or not re.match(u"^[A-Za-z]+$", label) or label.lower() == u"selected":
+    """A saved selection's group label for display, or None. A label of plain words is kept as recorded ("Left
+    Fingers", "Left fingers"); a single camel-case word is spaced ("LeftFingers" -> "Left fingers"). A generated count
+    label, a control name or anything else returns None (the caller then names the recorded controls). The record's
+    label is a group name only when the saved selection exactly covered that group (prod_scope_label). Never classifies
+    anatomy."""
+    if not isinstance(label, type(u"")) or not re.match(u"^[A-Za-z]+( [A-Za-z]+)*$", label) or \
+            label.lower() == u"selected":
         return None
+    if u" " in label:
+        return label
     words = re.sub(u"(?<=[a-z])(?=[A-Z])", u" ", label).split(u" ")
     return u" ".join([words[0][:1].upper() + words[0][1:].lower()] + [w.lower() for w in words[1:]])
 
 
 def prod_scope_selection_effect(chosen, parents):
-    """What applying a selection does, from the actual hierarchy (parents: {bone: parent or None}): the parts the
-    selection hangs from keep their position and orientation on the destination; parts attached below move with it;
-    a selected body root keeps its position. Bone and control names are used as recorded."""
+    """Only the consequential effects of applying a selection, from the actual hierarchy (parents: {bone: parent or
+    None}): unselected parts attached below the selection move with it; a selected body root keeps its position. An
+    ordinary selection with neither gives no text (Astra UI review). No bone identifiers in the prose."""
     chosen = set(chosen)
     if not parents:
-        return u"Applying may also move parts attached to them."
+        return u""
     children = {}
     for name, parent in parents.items():
         children.setdefault(parent, []).append(name)
@@ -47786,24 +47790,18 @@ def prod_scope_selection_effect(chosen, parents):
             if c not in below:
                 below.add(c)
                 pending.append(c)
-    # Only parts outside the moving set stay where they are (a part between two selected parts moves with them).
-    bounds = sorted(set(parents.get(b) for b in chosen if parents.get(b) is not None and parents.get(b) not in chosen
-                        and parents.get(b) not in below))
     text = []
-    if bounds:
-        text.append(u"Applying keeps the position and orientation of %s on the destination character." %
-                    prod_scope_list_phrase(bounds, 3))
     if below - chosen:
-        text.append(u"Parts attached below them move with them.")
+        text.append(u"Unselected parts attached to these parts move with them.")
     if any(parents.get(b) is None for b in chosen):
         text.append(u"The body root keeps its position.")
     return u" ".join(text)
 
 
 def prod_scope_summary(kind, inventory, bones=None, include_highlighted=True, root=None):
-    """The coverage line shown before saving, from the actual ledger inputs (never the label alone). It states what is
-    saved and the consequence of applying it; it never promises that unselected anatomy stays motionless (Astra UI
-    adjudication 2026-11-08)."""
+    """The guidance line shown before saving, from the actual ledger inputs: only what affects the decision (a refusal,
+    a required review or exclusion, what a full body does not save, movement of attached unselected parts, a selected
+    body root). An ordinary valid selection needs none. It never promises that unselected parts stay motionless."""
     if kind == u"full_body":
         full = inventory[u"full_body"]
         if full[u"status"] == u"refused":
@@ -47811,26 +47809,18 @@ def prod_scope_summary(kind, inventory, bones=None, include_highlighted=True, ro
         if full[u"status"] == u"review-required" and include_highlighted:
             return full[u"message"]
         if inventory[u"highlighted"] and not include_highlighted:
-            return u"Saves the whole body except the listed controls, which are left as they are on the character."
+            return u"The listed controls are left as they are on the character."
         if inventory[u"highlighted"]:
-            return (u"Saves the whole body, including the listed facial bones. Facial expressions (flex controls) are "
-                    u"not saved.")
-        return (u"Saves the whole body. Facial expressions (flex controls) and the character's placement in the scene "
-                u"are not saved.")
+            return u"Includes the listed facial bones. Facial expressions are not saved."
+        return u"Facial expressions and the character's place in the scene are not saved."
     bones = list(bones or [])
     if not bones:
         return PROD_SCOPE_MESSAGES[u"empty-selection"]
-    chosen = set(bones)
-    name = None
-    for row in inventory[u"view"]:
-        if row[u"bones"] and set(row[u"bones"]) == chosen:
-            name = prod_scope_friendly_label(row[u"path"][-1])
-    first = u"Saves the bends of %s." % (name or u"the selected parts")
     parents = inventory.get(u"parents")
-    if root is not None and parents is not None and root in chosen:
+    if root is not None and parents is not None and root in bones:
         parents = dict(parents)
         parents[root] = None
-    return (first + u" " + prod_scope_selection_effect(chosen, parents)).strip()
+    return prod_scope_selection_effect(bones, parents)
 
 
 def prod_scope_dialog_state(inventory, choice):
@@ -47873,49 +47863,46 @@ def prod_scope_dialog_state(inventory, choice):
 
 PROD_POSE_INFO_MONTHS = (u"January", u"February", u"March", u"April", u"May", u"June", u"July", u"August",
                          u"September", u"October", u"November", u"December")
-PROD_POSE_FULL_BODY_EFFECT = {
-    3: u"Applies the saved body pose. Facial expressions (flex controls) and the character's placement in the scene are "
-       u"not changed.",
-    2: u"Applies the saved body pose using the character's rig. Facial expressions, gaze and the character's placement "
-       u"in the scene are not changed."}
+PROD_POSE_FULL_BODY_NOT_INCLUDED = {3: [u"facial expressions", u"scene placement"],
+                                    2: [u"facial expressions", u"gaze", u"scene placement"]}
 
 
 def prod_pose_info_date(stamp):
-    """A saved stamp (YYYYMMDD-HHMMSS-...) as "8 November 2026, 19:32" (no seconds); anything else unchanged."""
-    m = re.match(u"^(\\d{4})(\\d{2})(\\d{2})-(\\d{2})(\\d{2})", u(stamp or u""))
+    """A saved stamp (YYYYMMDD-HHMMSS-...) as "November 8, 2026"; anything else unchanged."""
+    m = re.match(u"^(\\d{4})(\\d{2})(\\d{2})-\\d{6}", u(stamp or u""))
     if m is None or not 1 <= int(m.group(2)) <= 12:
         return u(stamp or u"") or u"Unknown"
-    return u"%d %s %s, %s:%s" % (int(m.group(3)), PROD_POSE_INFO_MONTHS[int(m.group(2)) - 1], m.group(1), m.group(4),
-                                 m.group(5))
+    return u"%s %d, %s" % (PROD_POSE_INFO_MONTHS[int(m.group(2)) - 1], int(m.group(3)), m.group(1))
 
 
 def prod_pose_info_view(record):
-    """What Pose Info shows for any saved pose (versions 1-3), from the record alone: what it includes and any
-    consequential exclusion; the source model it was saved from (file name, full path as a tooltip); the latest saved
-    date; and one sentence on what applying it does. No control count, raw bone list, rule or source shot (Astra UI
-    adjudication 2026-11-08). Returns {name, rows: [[label, text, tooltip]], effect}."""
+    """What Pose Info shows for any saved pose (versions 1-3), from the record alone: what it includes; what it does
+    not include when that is consequential (recorded exclusions; for a full body, what is never saved); the source
+    model file it was saved from (full path as a tooltip); the latest saved date; and a sentence only for a
+    consequential effect (unselected attached parts that move, a selected body root). An ordinary pose has no
+    explanation (Astra UI review). Returns {name, rows: [[label, text, tooltip]], effect}."""
     pose = record[u"pose"]
-    rows, effect = [], None
+    rows, effect, not_included = [], None, []
     if prod_scope_is_record(record):
         sc = pose[u"scope"]
+        not_included = [u"%s controls" % e[u"label"] for e in sc[u"exclusions"]]
         if sc[u"kind"] == u"full_body":
             rows.append([u"Includes:", u"Full body", None])
-            effect = PROD_POSE_FULL_BODY_EFFECT[3]
+            not_included += PROD_POSE_FULL_BODY_NOT_INCLUDED[3]
         else:
             friendly = prod_scope_friendly_label(sc[u"label"])
             rows.append([u"Includes:", friendly or prod_scope_list_phrase(sc[u"posed"]),
                          None if friendly else prod_scope_list_phrase(sc[u"posed"], 64)])
             parents = dict((b[u"id"], b[u"parent"]) for b in pose[u"structure"][u"bones"])
-            effect = u"Applies the saved bends of these parts. " + prod_scope_selection_effect(sc[u"posed"], parents)
-        for e in sc[u"exclusions"]:
-            rows.append([u"Not included:", u"%s controls (%s)" % (
-                e[u"label"], u"chosen when saving" if e[u"provenance"] == u"user_confirmed" else
-                u"from supported metadata"), None])
+            effect = prod_scope_selection_effect(sc[u"posed"], parents) or None
     else:
         regions = [r for r in PROD_POSE_REGIONS + (u"full_body",) if r in pose[u"regions"]]
         rows.append([u"Includes:", u", ".join(PROD_POSE_PART_NAMES[r] for r in regions), None])
         if u"full_body" in regions:
-            effect = PROD_POSE_FULL_BODY_EFFECT[2]
+            not_included += PROD_POSE_FULL_BODY_NOT_INCLUDED[2]
+    if not_included:
+        text = u", ".join(not_included)
+        rows.append([u"Not included:", text[:1].upper() + text[1:], None])
     model = u(pose[u"source"].get(u"model_ref") or u"").replace(u"\\", u"/")
     rows.append([u"Saved from:", model.rsplit(u"/", 1)[-1] or u"Unknown", model or None])
     updated = record.get(u"updated_at")
@@ -47923,7 +47910,7 @@ def prod_pose_info_view(record):
         rows.append([u"Updated:", prod_pose_info_date(updated), None])
     else:
         rows.append([u"Saved:", prod_pose_info_date(record.get(u"created_at")), None])
-    return {u"name": u(record[u"name"]), u"rows": rows, u"effect": effect.strip() if effect else None}
+    return {u"name": u(record[u"name"]), u"rows": rows, u"effect": effect}
 
 
 def prod_scope_group_labels(view):
