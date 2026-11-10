@@ -1,0 +1,667 @@
+{
+ "bones": [
+  {
+   "flags": 392960,
+   "index": 0,
+   "name": "bip_pelvis",
+   "parent": -1,
+   "physicsbone": 0,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 130816,
+   "index": 1,
+   "name": "bip_hip_R",
+   "parent": 0,
+   "physicsbone": 2,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 130816,
+   "index": 2,
+   "name": "bip_knee_R",
+   "parent": 1,
+   "physicsbone": 3,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 392960,
+   "index": 3,
+   "name": "bip_spine_0",
+   "parent": 0,
+   "physicsbone": 8,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 392960,
+   "index": 4,
+   "name": "bip_spine_1",
+   "parent": 3,
+   "physicsbone": 8,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 392960,
+   "index": 5,
+   "name": "bip_spine_2",
+   "parent": 4,
+   "physicsbone": 8,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 392960,
+   "index": 6,
+   "name": "bip_spine_3",
+   "parent": 5,
+   "physicsbone": 8,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 392960,
+   "index": 7,
+   "name": "bip_neck",
+   "parent": 6,
+   "physicsbone": 14,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 392960,
+   "index": 8,
+   "name": "bip_head",
+   "parent": 7,
+   "physicsbone": 15,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 130816,
+   "index": 9,
+   "name": "bip_hip_L",
+   "parent": 0,
+   "physicsbone": 5,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 130816,
+   "index": 10,
+   "name": "bip_knee_L",
+   "parent": 9,
+   "physicsbone": 6,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 392960,
+   "index": 11,
+   "name": "bip_collar_L",
+   "parent": 6,
+   "physicsbone": 8,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 392960,
+   "index": 12,
+   "name": "bip_upperArm_L",
+   "parent": 11,
+   "physicsbone": 11,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 392960,
+   "index": 13,
+   "name": "bip_lowerArm_L",
+   "parent": 12,
+   "physicsbone": 12,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 392960,
+   "index": 14,
+   "name": "bip_collar_R",
+   "parent": 6,
+   "physicsbone": 8,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 392960,
+   "index": 15,
+   "name": "bip_upperArm_R",
+   "parent": 14,
+   "physicsbone": 9,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 392960,
+   "index": 16,
+   "name": "bip_lowerArm_R",
+   "parent": 15,
+   "physicsbone": 10,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 65280,
+   "index": 17,
+   "name": "bip_foot_L",
+   "parent": 10,
+   "physicsbone": 7,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 65280,
+   "index": 18,
+   "name": "bip_foot_R",
+   "parent": 2,
+   "physicsbone": 4,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 270080,
+   "index": 19,
+   "name": "bip_hand_R",
+   "parent": 16,
+   "physicsbone": 16,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 270080,
+   "index": 20,
+   "name": "bip_hand_L",
+   "parent": 13,
+   "physicsbone": 13,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 3072,
+   "index": 21,
+   "name": "bip_toe_L",
+   "parent": 17,
+   "physicsbone": 7,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 3072,
+   "index": 22,
+   "name": "bip_index_0_L",
+   "parent": 20,
+   "physicsbone": 13,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 262144,
+   "index": 23,
+   "name": "weapon_bone_L",
+   "parent": 20,
+   "physicsbone": 13,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 512,
+   "index": 24,
+   "name": "effect_hand_L",
+   "parent": 20,
+   "physicsbone": 13,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 512,
+   "index": 25,
+   "name": "effect_hand_R",
+   "parent": 19,
+   "physicsbone": 16,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 3072,
+   "index": 26,
+   "name": "bip_pinky_0_L",
+   "parent": 20,
+   "physicsbone": 13,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 3072,
+   "index": 27,
+   "name": "bip_toe_R",
+   "parent": 18,
+   "physicsbone": 4,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 3072,
+   "index": 28,
+   "name": "bip_ring_0_L",
+   "parent": 20,
+   "physicsbone": 13,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 3072,
+   "index": 29,
+   "name": "bip_thumb_0_R",
+   "parent": 19,
+   "physicsbone": 16,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 3072,
+   "index": 30,
+   "name": "prp_cord",
+   "parent": 0,
+   "physicsbone": 1,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 3072,
+   "index": 31,
+   "name": "bip_thumb_0_L",
+   "parent": 20,
+   "physicsbone": 13,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 3072,
+   "index": 32,
+   "name": "bip_index_0_R",
+   "parent": 19,
+   "physicsbone": 16,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 3072,
+   "index": 33,
+   "name": "prp_pouch",
+   "parent": 0,
+   "physicsbone": 0,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 3072,
+   "index": 34,
+   "name": "bip_middle_0_L",
+   "parent": 20,
+   "physicsbone": 13,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 265216,
+   "index": 35,
+   "name": "prp_legPouch",
+   "parent": 0,
+   "physicsbone": 17,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 3072,
+   "index": 36,
+   "name": "bip_middle_0_R",
+   "parent": 19,
+   "physicsbone": 16,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 3072,
+   "index": 37,
+   "name": "bip_ring_0_R",
+   "parent": 19,
+   "physicsbone": 16,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 262144,
+   "index": 38,
+   "name": "weapon_bone_1",
+   "parent": 19,
+   "physicsbone": 16,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 262144,
+   "index": 39,
+   "name": "weapon_bone",
+   "parent": 19,
+   "physicsbone": 16,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 3072,
+   "index": 40,
+   "name": "bip_pinky_0_R",
+   "parent": 19,
+   "physicsbone": 16,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 1024,
+   "index": 41,
+   "name": "bip_pinky_1_R",
+   "parent": 40,
+   "physicsbone": 16,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 1024,
+   "index": 42,
+   "name": "bip_pinky_2_R",
+   "parent": 41,
+   "physicsbone": 16,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 1024,
+   "index": 43,
+   "name": "bip_ring_1_R",
+   "parent": 37,
+   "physicsbone": 16,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 1024,
+   "index": 44,
+   "name": "bip_ring_2_R",
+   "parent": 43,
+   "physicsbone": 16,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 1024,
+   "index": 45,
+   "name": "bip_middle_1_R",
+   "parent": 36,
+   "physicsbone": 16,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 1024,
+   "index": 46,
+   "name": "bip_middle_2_R",
+   "parent": 45,
+   "physicsbone": 16,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 1024,
+   "index": 47,
+   "name": "bip_index_1_R",
+   "parent": 32,
+   "physicsbone": 16,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 1024,
+   "index": 48,
+   "name": "bip_index_2_R",
+   "parent": 47,
+   "physicsbone": 16,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 1024,
+   "index": 49,
+   "name": "bip_thumb_1_R",
+   "parent": 29,
+   "physicsbone": 16,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 1024,
+   "index": 50,
+   "name": "bip_thumb_2_R",
+   "parent": 49,
+   "physicsbone": 16,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 1024,
+   "index": 51,
+   "name": "bip_thumb_1_L",
+   "parent": 31,
+   "physicsbone": 13,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 1024,
+   "index": 52,
+   "name": "bip_middle_1_L",
+   "parent": 34,
+   "physicsbone": 13,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 1024,
+   "index": 53,
+   "name": "bip_thumb_2_L",
+   "parent": 51,
+   "physicsbone": 13,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 1024,
+   "index": 54,
+   "name": "bip_index_1_L",
+   "parent": 22,
+   "physicsbone": 13,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 1024,
+   "index": 55,
+   "name": "bip_pinky_1_L",
+   "parent": 26,
+   "physicsbone": 13,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 1024,
+   "index": 56,
+   "name": "bip_pinky_2_L",
+   "parent": 55,
+   "physicsbone": 13,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 1024,
+   "index": 57,
+   "name": "bip_ring_1_L",
+   "parent": 28,
+   "physicsbone": 13,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 1024,
+   "index": 58,
+   "name": "bip_ring_2_L",
+   "parent": 57,
+   "physicsbone": 13,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 1024,
+   "index": 59,
+   "name": "bip_middle_2_L",
+   "parent": 52,
+   "physicsbone": 13,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 1024,
+   "index": 60,
+   "name": "bip_index_2_L",
+   "parent": 54,
+   "physicsbone": 13,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 265216,
+   "index": 61,
+   "name": "prp_helmet",
+   "parent": 8,
+   "physicsbone": 15,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 262144,
+   "index": 62,
+   "name": "medal_bone",
+   "parent": 5,
+   "physicsbone": 8,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 3072,
+   "index": 63,
+   "name": "prp_starter",
+   "parent": 19,
+   "physicsbone": 16,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 262144,
+   "index": 64,
+   "name": "mvm",
+   "parent": 0,
+   "physicsbone": 0,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 262656,
+   "index": 65,
+   "name": "prop_bone",
+   "parent": 0,
+   "physicsbone": 0,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 262656,
+   "index": 66,
+   "name": "prop_bone_1",
+   "parent": 0,
+   "physicsbone": 0,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 262656,
+   "index": 67,
+   "name": "prop_bone_2",
+   "parent": 0,
+   "physicsbone": 0,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 262656,
+   "index": 68,
+   "name": "prop_bone_3",
+   "parent": 0,
+   "physicsbone": 0,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 262656,
+   "index": 69,
+   "name": "prop_bone_4",
+   "parent": 0,
+   "physicsbone": 0,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 262656,
+   "index": 70,
+   "name": "prop_bone_5",
+   "parent": 0,
+   "physicsbone": 0,
+   "procindex": 0,
+   "proctype": 0
+  },
+  {
+   "flags": 262656,
+   "index": 71,
+   "name": "prop_bone_6",
+   "parent": 0,
+   "physicsbone": 0,
+   "procindex": 0,
+   "proctype": 0
+  }
+ ],
+ "description": "The engine-loaded studio header of the pinned model as NQ-03 read it through SFM's model cache (run NQ03-01). EC-1 requires the in-scene model's header to equal it.",
+ "file_sha256": "a505bba46574f265a8df60abc7bb6c0370535c99b3f7988e571d010010a8508c",
+ "format": "F01-EC1-expected-header-v1",
+ "game_relative": "tf/models/player/engineer.mdl",
+ "header": {
+  "checksum": 1732717760,
+  "name": "player/engineer.mdl",
+  "numbones": 72
+ },
+ "model_ref": "models/player/engineer.mdl",
+ "source": {
+  "observation": "NQ03-01",
+  "observation_sha256": "ed7762b8296d21f2db08b82358273875c81dafc1f514ade70233c8efbb9e6954",
+  "resolution_sha256": "4545b8c918d5bdcecdc07629b169d5b32cc5022dd4b117684537dcfbbf637fd3"
+ }
+}

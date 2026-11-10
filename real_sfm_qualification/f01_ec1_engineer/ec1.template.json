@@ -1,0 +1,37 @@
+{
+ "format": "F01-MC-config-v1",
+ "description": "F-01 EC-1 Engineer control coverage (read-only). Copy to <Q>/ec1.json and replace the path placeholders. Nothing is installed; the published CPM stays in place and is not opened. The session is new and disposable and is never saved. The model must resolve through usermod's search paths to the pinned file (the NQ-03 bytes).",
+ "paths": {
+  "Q": "<RUN_DIR>",
+  "REPO": "<REPO>",
+  "GAME": "<SFM game>",
+  "LIBRARY": "%USERPROFILE%/Documents/SFM Character Preset Manager",
+  "SESSIONS": "<SFM sessions folder>",
+  "SCRIPTS_ROOT": "{GAME}/usermod/scripts",
+  "CFG_ROOT": "{GAME}/usermod/cfg"
+ },
+ "pins": {
+  "published_cpm_sha256": "ccbed9d794984643fc6f7d7d9c65ef90e5812eb27f85dc4a86855a17c2d3d8df",
+  "wrapper_sha256": "da71f1b04afb6e931b0f2651cea931df410d40d81b5bc9615d6690dcc0e95515",
+  "s0_observer_sha256": "4a358cc05449592c7ea3cd6828cb40ca2faed08fc602156c2f15a9398e67c0c4",
+  "mc_observer_sha256": "f8d52035048a2e48d41d511968ce7f40caab09235d4a541970b6703bf389b5cd",
+  "nq_observer_sha256": "1ac46682e0095ee716dfccbea978b33cec5ef4a0a7386b50f9d94cce2bb893ff",
+  "expected_header_sha256": "5faabf6bfab619853a4e95d57fd35d5c0d23676d2d9cf16ea2e2c6ab5c2630ca"
+ },
+ "models": [
+  "tf/models/player/engineer.mdl"
+ ],
+ "model_pins": {
+  "tf/models/player/engineer.mdl": "a505bba46574f265a8df60abc7bb6c0370535c99b3f7988e571d010010a8508c"
+ },
+ "rig_scripts": [],
+ "housekeeping": [
+  "cfg\\config.cfg",
+  "cfg\\ifm.txt",
+  "cfg\\server_blacklist.txt",
+  "demoheader.tmp",
+  "stats.txt",
+  "tf2_playerstats.dmx",
+  "voice_ban.dt"
+ ]
+}
