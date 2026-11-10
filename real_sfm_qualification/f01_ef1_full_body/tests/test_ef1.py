@@ -345,6 +345,31 @@ if PY3:
                              (sha_bytes(CHARACTER), sha_bytes(CHARACTER + b" posed")))
             self.assertEqual([r["name"] for r in pins["autosaves_at_inspect"]], ["ef1_source.autosave"])
 
+        def test_inspect_accepts_only_a_verified_starter_backup_of_a_prepared_session(self):
+            # EF1-D1: File > Save keeps SFM's own starter session as <stem>.bak
+            c = self.sessions({"ef1_source.bak": STARTER, "ef1_source.dmx": CHARACTER,
+                               "ef1_destination.dmx": CHARACTER + b" posed"})
+            capture(lambda: TOOL.cmd_inspect(c))
+            pins = TOOL.T.read_json(os.path.join(self.dir, "Q", "evidence", "destination.json"))
+            self.assertEqual([(b["name"], b["sha256"]) for b in pins["starter_backups"]],
+                             [("ef1_source.bak", sha_bytes(STARTER))])
+            q = os.path.join(self.dir, "Q")
+            for files, later in (({"ef1_source.bak": CHARACTER}, False),      # a backup holding a character
+                                 ({"ef1_source.bak": HEAD + b"DmeChannel"}, False),   # animation data
+                                 ({"other.bak": STARTER}, False),            # not a prepared session's backup
+                                 ({"ef1_source.bak": STARTER}, True)):       # newer than its session
+                shutil.rmtree(q)
+                os.makedirs(q)
+                files = dict(files)
+                files.update({"ef1_source.dmx": CHARACTER, "ef1_destination.dmx": CHARACTER + b" posed"})
+                c = self.sessions(files)
+                if later:
+                    bak = os.path.join(q, "sessions", "ef1_source.bak")
+                    st = os.stat(bak)
+                    os.utime(bak, (st.st_atime + 120, st.st_mtime + 120))
+                self.assertRaises(SystemExit, lambda: capture(lambda: TOOL.cmd_inspect(c)))
+                self.assertFalse(os.path.exists(os.path.join(q, "evidence", "destination.json")), files)
+
         def test_inspect_refuses_a_starter_identical_or_unexpected_file(self):
             for files in ({"ef1_source.dmx": STARTER, "ef1_destination.dmx": CHARACTER},
                           {"ef1_source.dmx": CHARACTER, "ef1_destination.dmx": CHARACTER},
@@ -677,6 +702,16 @@ class Synthetic(object):
         if "extra_session_file" in f:
             with open(os.path.join(self.q, "sessions", "ef1_other.dmx"), "wb") as fh:
                 fh.write(STARTER)
+        if "starter_backup" in f or "backup_changed" in f or "backup_removed" in f:
+            with open(os.path.join(self.q, "sessions", "ef1_source.bak"), "wb") as fh:
+                fh.write(STARTER)
+            pins["starter_backups"] = [{"name": "ef1_source.bak", "sha256": sha_bytes(STARTER)}]
+            self.dump(os.path.join("evidence", "destination.json"), pins)
+            if "backup_changed" in f:
+                with open(os.path.join(self.q, "sessions", "ef1_source.bak"), "wb") as fh:
+                    fh.write(CHARACTER)
+            if "backup_removed" in f:
+                os.remove(os.path.join(self.q, "sessions", "ef1_source.bak"))
         if "character_left" in f:
             os.makedirs(os.path.join(self.lib, "Characters", CHAR))
         return self
@@ -711,6 +746,13 @@ if PY3:
             v = self.verdict(("autosave",))
             self.assertEqual((v["verdict"], v["failed"]), ("PASS", []))
             self.assertTrue(any("autosave" in x for x in v["findings"]))
+
+        def test_a_pinned_starter_backup_is_a_finding_and_must_stay_unchanged(self):
+            v = self.verdict(("starter_backup",))
+            self.assertEqual((v["verdict"], v["failed"]), ("PASS", []))
+            self.assertTrue(any("EF1-D1" in x for x in v["findings"]))
+            self.assertIn("sessions.starter_backup_ef1_source.bak_unchanged", self.verdict(("backup_changed",))["failed"])
+            self.assertIn("sessions.starter_backups_preserved", self.verdict(("backup_removed",))["failed"])
 
         def test_counterexamples_fail(self):
             expect = {"root_not_moved": "apply.body_root_takes_the_saved_translation",

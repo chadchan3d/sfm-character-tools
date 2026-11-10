@@ -202,13 +202,30 @@ def cmd_pre(c):
           "%s (empty). Next: preparation step 0" % S.q(c, "sessions"))
 
 
+def starter_backup(row, session):
+    """EF1-D1: when File > Save replaces SFM's own starter session, SFM keeps it as `<session stem>.bak`. Such a file
+    is expected only when all three hold:
+    - its name is exactly the prepared session's stem plus `.bak` (any case);
+    - its content is positively an empty starter session (session_files class `starter`: an sfm_session DMX with no
+      DmeAnimationSet, DmeGameModel or DmeChannel);
+    - it is not newer than that session.
+    Any other `.bak`, or one holding a character or animation data, is unexpected."""
+    if row is None or session is None:
+        return False
+    stem = session["name"].rsplit(".", 1)[0]
+    return row["name"].lower() == (stem + ".bak").lower() and row["class"] == "starter" and \
+        row.get("mtime", "") <= session.get("mtime", "")
+
+
 def sessions_state(c):
-    """The two prepared sessions and SFM's autosave copies in Q/sessions, classified (never pinned: autosaves)."""
+    """The two prepared sessions, SFM's verified starter backups (EF1-D1) and its autosave copies in Q/sessions,
+    classified. Autosaves are never pinned; starter backups are pinned by hash so the comparator can verify them."""
     rows = SF.classify_folder(S.q(c, "sessions"))
     src, dst = SF.by_name(rows, SOURCE), SF.by_name(rows, DESTINATION)
+    backups = [r for r in rows if starter_backup(r, src) or starter_backup(r, dst)]
     autosaves = [r for r in rows if r["class"] == "autosave"]
-    other = [r for r in rows if r not in (src, dst) and r["class"] != "autosave"]
-    return rows, src, dst, autosaves, other
+    other = [r for r in rows if r not in (src, dst) and r["class"] != "autosave" and r not in backups]
+    return rows, src, dst, autosaves, other, backups
 
 
 def cmd_inspect(c):
@@ -216,7 +233,7 @@ def cmd_inspect(c):
     running = T.sfm_running()
     if running:
         problems.append(running)
-    rows, src, dst, autosaves, other = sessions_state(c)
+    rows, src, dst, autosaves, other, backups = sessions_state(c)
     for name, row in ((SOURCE, src), (DESTINATION, dst)):
         if row is None:
             problems.append("%s does not exist (preparation step 0 saves it)" % name)
@@ -235,12 +252,15 @@ def cmd_inspect(c):
     result = {"at": time.strftime("%Y-%m-%d %H:%M:%S"), "source_name": src["name"], "source_sha256": src["sha256"],
               "destination_name": dst["name"], "destination_sha256": dst["sha256"],
               "autosaves_at_inspect": [dict((k, r[k]) for k in ("name", "sha256", "mtime")) for r in autosaves],
+              "starter_backups": [dict((k, r[k]) for k in ("name", "sha256", "size", "mtime", "element_types"))
+                                  for r in backups],
               "files": rows, "pass": True}
     T.write_json(S.q(c, "evidence", "destination.json"), result, exclusive=True)
     print(json.dumps(dict((k, v) for k, v in result.items() if k != "files"), indent=1))
-    print("INSPECTED: %s and %s are pinned%s. Next: install" % (
-        src["name"], dst["name"], (" (SFM autosaves recorded: %s)" % [r["name"] for r in autosaves])
-        if autosaves else ""))
+    print("INSPECTED: %s and %s are pinned%s%s. Next: install" % (
+        src["name"], dst["name"],
+        (" (SFM starter backups verified and pinned: %s)" % [r["name"] for r in backups]) if backups else "",
+        (" (SFM autosaves recorded: %s)" % [r["name"] for r in autosaves]) if autosaves else ""))
 
 
 def cmd_restore(c):

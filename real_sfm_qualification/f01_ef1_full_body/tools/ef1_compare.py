@@ -422,9 +422,22 @@ def evaluate(R):
         chk("sessions.%s_not_saved_during_the_run" % key, row is not None and pins.get(key + "_sha256") is not None
             and row["sha256"] == pins[key + "_sha256"], row and row.get("sha256"))
     known = set(n.lower() for n in (pins.get("source_name"), pins.get("destination_name")) if n)
+    # EF1-D1: SFM's starter-session backups, verified and pinned by hash at inspect; they must be unchanged and
+    # still classify as an empty starter session.
+    backups = dict((b["name"].lower(), b["sha256"]) for b in pins.get("starter_backups") or [])
+    for r in rows:
+        if r["name"].lower() in backups:
+            chk("sessions.starter_backup_%s_unchanged" % r["name"].lower(), r["class"] == "starter" and
+                r["sha256"] == backups[r["name"].lower()], r.get("sha256"))
+    missing_backups = sorted(set(backups) - set(r["name"].lower() for r in rows))
+    chk("sessions.starter_backups_preserved", not missing_backups, missing_backups)
     autosaves = [r["name"] for r in rows if r["class"] == "autosave"]
-    unexpected = [r["name"] for r in rows if r["name"].lower() not in known and r["class"] != "autosave"]
+    unexpected = [r["name"] for r in rows if r["name"].lower() not in known and r["class"] != "autosave" and
+                  r["name"].lower() not in backups]
     chk("sessions.no_unexpected_files", not unexpected, unexpected)
+    if backups:
+        R.findings.append("EF1-D1: SFM's starter-session backup(s) kept as evidence, verified empty: %s" %
+                          sorted(backups))
     if autosaves:
         R.findings.append("SFM autosave copies in the sessions folder (not saves): %s" % autosaves)
 

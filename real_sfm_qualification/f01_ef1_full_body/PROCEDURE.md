@@ -95,6 +95,15 @@ The kit files run from the repository through the Script Editor; they are never 
 - **The starter session (expected):** File > New writes SFM's empty starter session (`ef1_source.dmx`) at once, before
   the model is added (EC-1 deviation EC1-D1). File > Save then overwrites it with the Engineer. `inspect` refuses if a
   session still holds no character, which would mean Save was skipped.
+- **The starter backup (EF1-D1, expected):** when File > Save replaces the starter, SFM keeps it as
+  `ef1_source.bak`. In run 1 it was 3,984 bytes, `86af982d…`, byte-identical to the EC-1 starter, and `inspect`
+  first refused it as unexpected. That file is accepted only when all three hold:
+  - its name is exactly a prepared session's stem plus `.bak`;
+  - it classifies as an empty starter session (no `DmeAnimationSet`, `DmeGameModel` or `DmeChannel`);
+  - it is not newer than its session.
+
+  `inspect` pins its hash, and the comparator requires it to be preserved unchanged. Any other `.bak`, or one
+  holding a character or animation data, refuses.
 - **Name case:** SFM writes the names in lowercase; every check ignores case.
 - **SFM's autosave copies:** a `.autosave` file beside an open session is expected. It is recorded as a finding,
   never pinned, and never counted as a save.
@@ -235,7 +244,7 @@ paused…") needs only an SFM restart after restore.
 
 ## Offline preparation evidence (2026-11-10)
 
-- **Tests:** `tests\test_ef1.py` passes 20/20 on Python 3.10.6, and its 9 wrapper and UI tests on SFM's Python 2.7.5.
+- **Tests:** `tests\test_ef1.py` passes 22/22 on Python 3.10.6, and its 9 wrapper and UI tests on SFM's Python 2.7.5.
   - **Observer wrapper:** read-only; it refuses a repeated or unknown step, a wrong model, a missing animation set or
     a modified S0, and reclassifies only the exact no-rig note. Its step table equals the comparator's.
   - **UI capture:** records a version 3 Full body pose and reports STOP otherwise.
