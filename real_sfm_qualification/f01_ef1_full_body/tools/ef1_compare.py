@@ -64,7 +64,7 @@ NO_RIG = "expected one rig registration for the animation set, found 0"
 class Run(object):
     def __init__(self, c):
         self.c, self.q = c, c["paths"]["Q"]
-        self.checks, self.timing, self.findings = [], [], []
+        self.checks, self.timing, self.findings, self.deviations = [], [], [], []
         self.ids = read_json(os.path.join(self.q, "staged", "IDENTITIES.json"))
         self.obs, self.side = {}, {}
         for step, label in LABELS.items():
@@ -430,7 +430,23 @@ def evaluate(R):
             chk("sessions.starter_backup_%s_unchanged" % r["name"].lower(), r["class"] == "starter" and
                 r["sha256"] == backups[r["name"].lower()], r.get("sha256"))
     missing_backups = sorted(set(backups) - set(r["name"].lower() for r in rows))
-    chk("sessions.starter_backups_preserved", not missing_backups, missing_backups)
+    # EF1-D2: an absent starter backup is accepted only when the Owner's acceptance record names it with its pinned
+    # hash. It is then a reported deviation: the preservation check is not reported as passed.
+    accepted_path = os.path.join(R.q, "evidence", "DEVIATIONS_ACCEPTED.json")
+    accepted = read_json(accepted_path).get("accepted") or [] if os.path.isfile(accepted_path) else []
+    absent_ok = dict((a.get("name", "").lower(), a) for a in accepted if a.get("kind") == "starter_backup_absent")
+    unexcused = []
+    for name in missing_backups:
+        a = absent_ok.get(name)
+        if a is not None and a.get("sha256") == backups[name]:
+            chk("sessions.starter_backup_%s_absent_as_accepted_deviation_%s" % (name, a.get("id")), True,
+                {"pinned_sha256": backups[name]})
+            R.deviations.append({"id": a.get("id"), "what": "%s (pinned %s, SFM's empty starter session) is absent; "
+                                 "accepted by the Owner; not preserved" % (name, backups[name])})
+        else:
+            unexcused.append(name)
+    if unexcused or not missing_backups:
+        chk("sessions.starter_backups_preserved", not unexcused, unexcused)
     autosaves = [r["name"] for r in rows if r["class"] == "autosave"]
     unexpected = [r["name"] for r in rows if r["name"].lower() not in known and r["class"] != "autosave" and
                   r["name"].lower() not in backups]
@@ -458,7 +474,8 @@ def run(c):
     failed = [x for x in R.checks if not x["pass"]]
     verdict = "PASS" if R.checks and not failed and perf["class"] in ("responsive", "finding") else "FAIL"
     out = {"format": "F01-EF1-verdict-v1", "verdict": verdict, "identities": R.ids, "checks": R.checks,
-           "failed": [x["id"] for x in failed], "performance": perf, "timing": R.timing, "findings": R.findings}
+           "failed": [x["id"] for x in failed], "performance": perf, "timing": R.timing, "findings": R.findings,
+           "deviations": R.deviations}
     ev = os.path.join(R.q, "evidence")
     for name, data in (("EF1_VERDICT.json", json.dumps(out, indent=1, sort_keys=True, default=str)),
                        ("EF1_VERDICT.md", markdown(out))):
@@ -481,6 +498,8 @@ def markdown(out):
     lines += ["", "Performance: **%s** (worst %s ms; responsive <= %d ms, limit %d ms)." % (
         perf["class"], perf.get("worst_ms"), PERF["responsive_ms"], PERF["limit_ms"]), ""]
     lines += ["Findings: %s" % ("; ".join(out["findings"]) or "none"), ""]
+    lines += ["Accepted deviations (not passes): %s" % ("; ".join("%s: %s" % (d["id"], d["what"])
+                                                                for d in out.get("deviations") or []) or "none"), ""]
     return "\n".join(lines) + "\n"
 
 

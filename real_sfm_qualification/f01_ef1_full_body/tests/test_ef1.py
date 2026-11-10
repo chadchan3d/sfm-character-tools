@@ -712,6 +712,12 @@ class Synthetic(object):
                     fh.write(CHARACTER)
             if "backup_removed" in f:
                 os.remove(os.path.join(self.q, "sessions", "ef1_source.bak"))
+            for fault, sha in (("accepted_absence", sha_bytes(STARTER)), ("accepted_wrong_hash", "0" * 64)):
+                if fault in f:
+                    self.dump(os.path.join("evidence", "DEVIATIONS_ACCEPTED.json"), {"accepted": [
+                        {"id": "EF1-D2", "kind": "starter_backup_absent", "name": "ef1_source.bak", "sha256": sha}]})
+            if "destination_missing" in f:
+                os.remove(os.path.join(self.q, "sessions", "ef1_destination.dmx"))
         if "character_left" in f:
             os.makedirs(os.path.join(self.lib, "Characters", CHAR))
         return self
@@ -753,6 +759,23 @@ if PY3:
             self.assertTrue(any("EF1-D1" in x for x in v["findings"]))
             self.assertIn("sessions.starter_backup_ef1_source.bak_unchanged", self.verdict(("backup_changed",))["failed"])
             self.assertIn("sessions.starter_backups_preserved", self.verdict(("backup_removed",))["failed"])
+
+        def test_an_accepted_absent_starter_backup_is_a_deviation_never_a_preservation_pass(self):
+            v = self.verdict(("starter_backup", "backup_removed", "accepted_absence"))
+            self.assertEqual((v["verdict"], v["failed"]), ("PASS", []))
+            ids = [x["id"] for x in v["checks"]]
+            self.assertNotIn("sessions.starter_backups_preserved", ids)
+            self.assertIn("sessions.starter_backup_ef1_source.bak_absent_as_accepted_deviation_EF1-D2", ids)
+            self.assertEqual([d["id"] for d in v["deviations"]], ["EF1-D2"])
+            # the acceptance names a different hash: still a failure
+            v = self.verdict(("starter_backup", "backup_removed", "accepted_wrong_hash"))
+            self.assertIn("sessions.starter_backups_preserved", v["failed"])
+            # an acceptance never excuses a missing character session, an unexpected file or a changed session
+            for extra, check in (("destination_missing", "sessions.destination_not_saved_during_the_run"),
+                                 ("extra_session_file", "sessions.no_unexpected_files"),
+                                 ("session_saved", "sessions.destination_not_saved_during_the_run")):
+                v = self.verdict(("starter_backup", "backup_removed", "accepted_absence", extra))
+                self.assertIn(check, v["failed"], extra)
 
         def test_counterexamples_fail(self):
             expect = {"root_not_moved": "apply.body_root_takes_the_saved_translation",
