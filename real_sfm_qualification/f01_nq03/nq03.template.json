@@ -1,0 +1,56 @@
+{
+ "format": "F01-MC-config-v1",
+ "description": "F-01 NQ-03 header inventory (read-only). Copy to <Q>/nq03.json and replace the path placeholders. Nothing is installed; the published CPM stays in place and is not opened. The models list is the candidates resolved through usermod's search paths (nq03_tool resolve verifies it).",
+ "paths": {
+  "Q": "<RUN_DIR>",
+  "REPO": "<REPO>",
+  "GAME": "<SFM game>",
+  "LIBRARY": "%USERPROFILE%/Documents/SFM Character Preset Manager",
+  "SESSIONS": "<SFM sessions folder>",
+  "SCRIPTS_ROOT": "{GAME}/usermod/scripts",
+  "CFG_ROOT": "{GAME}/usermod/cfg",
+  "Q_SURVEY": "<the model survey run folder>"
+ },
+ "pins": {
+  "published_cpm_sha256": "ccbed9d794984643fc6f7d7d9c65ef90e5812eb27f85dc4a86855a17c2d3d8df",
+  "wrapper_sha256": "745f6dc9af95cf3909d2258d70d800d77017b0a054443042d8d1f370e0625d3d",
+  "s0_observer_sha256": "4a358cc05449592c7ea3cd6828cb40ca2faed08fc602156c2f15a9398e67c0c4",
+  "candidates_sha256": "9f77ba71abedb06ef8cf01fca0113e8519eb555c863491750493f459196a84ee"
+ },
+ "models": [
+  "hl2/models/humans/group01/male_07.mdl",
+  "hl2/models/humans/group01/female_01.mdl",
+  "hl2/models/alyx.mdl",
+  "hl2/models/barney.mdl",
+  "hl2/models/kleiner.mdl",
+  "hl2/models/gman_high.mdl",
+  "hl2/models/police.mdl",
+  "hl2/models/combine_soldier.mdl",
+  "CSS/models/player/ct_gign.mdl",
+  "CSS/models/player/t_leet.mdl",
+  "dod/models/player/american_assault.mdl",
+  "dod/models/player/german_assault.mdl",
+  "tf/models/player/scout.mdl",
+  "tf/models/player/soldier.mdl",
+  "tf/models/player/pyro.mdl",
+  "tf/models/player/demo.mdl",
+  "tf/models/player/engineer.mdl",
+  "tf/models/player/medic.mdl",
+  "tf/models/player/sniper.mdl",
+  "tf/models/player/spy.mdl",
+  "tf/models/player/heavy.mdl",
+  "left4dead2_movies/models/survivors/survivor_coach.mdl",
+  "Portal2/models/player/chell/player.mdl",
+  "blackmesa/models/humans/scientist.mdl"
+ ],
+ "rig_scripts": [],
+ "housekeeping": [
+  "cfg\\config.cfg",
+  "cfg\\ifm.txt",
+  "cfg\\server_blacklist.txt",
+  "demoheader.tmp",
+  "stats.txt",
+  "tf2_playerstats.dmx",
+  "voice_ban.dt"
+ ]
+}

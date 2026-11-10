@@ -1,0 +1,30 @@
+{
+ "format": "F01-NQ03-candidates-v1",
+ "description": "Stock character models whose engine-loaded studio headers NQ-03 reads (procedural declarations only). The Heavy is the known control (two declared QUATINTERP helpers, NQ-S6).",
+ "candidates": [
+  {"path": "models/humans/group01/male_07.mdl", "family": "Half-Life 2"},
+  {"path": "models/humans/group01/female_01.mdl", "family": "Half-Life 2"},
+  {"path": "models/alyx.mdl", "family": "Half-Life 2"},
+  {"path": "models/barney.mdl", "family": "Half-Life 2"},
+  {"path": "models/kleiner.mdl", "family": "Half-Life 2"},
+  {"path": "models/gman_high.mdl", "family": "Half-Life 2"},
+  {"path": "models/police.mdl", "family": "Half-Life 2"},
+  {"path": "models/combine_soldier.mdl", "family": "Half-Life 2"},
+  {"path": "models/player/ct_gign.mdl", "family": "Counter-Strike: Source"},
+  {"path": "models/player/t_leet.mdl", "family": "Counter-Strike: Source"},
+  {"path": "models/player/american_assault.mdl", "family": "Day of Defeat: Source"},
+  {"path": "models/player/german_assault.mdl", "family": "Day of Defeat: Source"},
+  {"path": "models/player/scout.mdl", "family": "Team Fortress 2"},
+  {"path": "models/player/soldier.mdl", "family": "Team Fortress 2"},
+  {"path": "models/player/pyro.mdl", "family": "Team Fortress 2"},
+  {"path": "models/player/demo.mdl", "family": "Team Fortress 2"},
+  {"path": "models/player/engineer.mdl", "family": "Team Fortress 2"},
+  {"path": "models/player/medic.mdl", "family": "Team Fortress 2"},
+  {"path": "models/player/sniper.mdl", "family": "Team Fortress 2"},
+  {"path": "models/player/spy.mdl", "family": "Team Fortress 2"},
+  {"path": "models/player/heavy.mdl", "family": "Team Fortress 2 (control)"},
+  {"path": "models/survivors/survivor_coach.mdl", "family": "Left 4 Dead 2"},
+  {"path": "models/player/chell/player.mdl", "family": "Portal 2"},
+  {"path": "models/humans/scientist.mdl", "family": "Black Mesa"}
+ ]
+}
