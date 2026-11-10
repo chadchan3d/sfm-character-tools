@@ -7,12 +7,15 @@ status and post: SFM closed; the published CPM with no registry beside it; the p
 hashes; the four protected inventories; housekeeping and .pyc backups and their restoration; a verified copy of the
 preserved survey session (the S0 anchor), and the preserved original's hash after the run. Only this kit's files are
 substituted (the inventory observer and the candidate list, both pinned). Added:
-  resolve  offline, read-only: resolve every candidate through usermod's gameinfo SearchPaths (first loose file wins),
-           record each resolved file and its SHA-256 in Q/evidence/resolution.json, and refuse unless the
-           configuration's "models" list is exactly the resolved files (so pre/post pin the bytes SFM will load)
+  resolve  offline, read-only, run after post: resolve every candidate through usermod's gameinfo SearchPaths (first
+           loose file wins), record each resolved file and its SHA-256 in Q/evidence/resolution.json, and refuse
+           unless the configuration's "models" list is exactly the resolved files (so the bytes pre/post pinned are
+           the bytes SFM loads). pre and status refuse while Q/evidence holds anything, so resolve never runs first.
   analyze  nq03_analyze.py on Q/observations into Q/evidence (NQ03_ANALYSIS.json, NQ03_ANALYSIS.md)
 
-usage: python -I nq03_tool.py NQ03.json resolve | pre | copy | status | post | analyze
+Order: pre, copy, the native observation, post, resolve, analyze.
+
+usage: python -I nq03_tool.py NQ03.json pre | copy | status | post | resolve | analyze
 """
 from __future__ import print_function
 
