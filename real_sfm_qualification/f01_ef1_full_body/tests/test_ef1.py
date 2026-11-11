@@ -309,6 +309,19 @@ if PY3:
                              (TOOL.T.sha(WRAPPER), TOOL.T.sha(UI), TOOL.T.sha(TOOL.comparator())))
             self.assertEqual(ids["expected_header_sha256"], c["pins"]["expected_header_sha256"])
 
+        def test_build_refuses_every_superseded_build(self):
+            # run 1 (7548d1eb/a378e25a) and Amendment 01 only (f4de5b61/fd0844cf): the repository CPM is neither.
+            for cand, qual in (("7548d1eb25a7479c9b3c0fffa2186d187ef3763b123412ca5ae6ef2cf6899a45",
+                                "a378e25ae932d273d53a13e2c7c0ab2aa1ae7f71f31ea944667fd8d93aed971e"),
+                               ("f4de5b611bbbb1ee82758fcba7632a00d5e3f41fa27aded356e4ea209a433bde",
+                                "fd0844cf3da65148d27ff0833ba186af20854e1f868972f41796163027d1689e")):
+                path, c = config(self.dir)
+                c["pins"]["candidate_cpm_sha256"], c["pins"]["qualification_cpm_sha256"] = cand, qual
+                with open(path, "wb") as f:
+                    f.write(json.dumps(c).encode("utf-8"))
+                self.assertRaises(SystemExit, lambda: capture(lambda: TOOL.cmd_build(TOOL.S.load(path))))
+                self.assertFalse(os.path.exists(os.path.join(self.dir, "Q", "staged")), cand)
+
         def test_build_refuses_a_wrong_qualification_pin(self):
             path, c = config(self.dir)
             c["pins"]["qualification_cpm_sha256"] = "0" * 64
@@ -595,7 +608,8 @@ class Synthetic(object):
     def scoped(self, pid, actions, noop=False, abort=False, verified=True):
         lines = ['PROD_POSE_SCOPE-P1 {"actions": %s, "noop": %s}' % (json.dumps(actions), "true" if noop else "false")]
         if abort:
-            lines += ['PROD_POSE_SCOPE-P3-P6-failure {}', 'PROD_POSE_SCOPE-abort-verified {}']
+            lines += ["PROD_POSE_SCOPE-P3-P6-failure {\"error\": \"RuntimeError(u'qualification fault injected at "
+                      "after-writes',)\", \"finished\": false, \"written\": 145}", "PROD_POSE_SCOPE-abort-verified {}"]
         elif not noop:
             lines += ['PROD_POSE_SCOPE-P6 {"owned": true}',
                       'PROD_POSE_SCOPE-P7-verified {}' if verified else 'PROD_POSE_SCOPE-P7-unverified {}']
@@ -822,6 +836,314 @@ if PY3:
                 s.fault_B1 = fault
             for hook, check in ((wrong_cpm, "cpm.B3"), (problem, "valid.A2"), (finding, "findings.B1_only_the_no_rig_note")):
                 self.assertIn(check, self.verdict(hook=hook)["failed"])
+
+
+# --- the continuation (run 2): tool and comparator (Python 3) --------------------------------------------------------
+
+RUN1_BUILD = "r" * 64
+INHERITED = ("observations/S0-01.json", "observations/S0-01.ef1.json", "observations/S0-02.json",
+             "observations/S0-02.ef1.json", "observations/S0-03.json", "observations/S0-03.ef1.json",
+             "observations/UI-A.json", "evidence/library_A.json", "evidence/EF1_STOPPED.json")
+
+
+def fake_run1(root, record_bytes=b'{"name": "EF1 Body"}', sessions=None):
+    """A run-1 folder with every file the continuation pins; returns the continuation pins."""
+    sessions = sessions or {"ef1_source.dmx": CHARACTER + b" source", "ef1_destination.dmx": CHARACTER + b" dest"}
+    files = {}
+    for name, data in sessions.items():
+        files["sessions/" + name] = data
+    files["evidence/library_poses/%s/EF1 Body--a236dddc4e22.json" % CHAR] = record_bytes
+    for rel in INHERITED:
+        files.setdefault(rel, ("inherited " + rel).encode("ascii"))
+    for rel, data in files.items():
+        path = os.path.join(root, *rel.split("/"))
+        if not os.path.isdir(os.path.dirname(path)):
+            os.makedirs(os.path.dirname(path))
+        with open(path, "wb") as f:
+            f.write(data)
+    return {"run1_qualification_cpm_sha256": RUN1_BUILD,
+            "sessions": dict((n, sha_bytes(d)) for n, d in sessions.items()),
+            "record": {"EF1 Body--a236dddc4e22.json": sha_bytes(record_bytes)},
+            "inherited": dict((rel, sha_bytes(files[rel])) for rel in INHERITED)}
+
+
+if PY3:
+    class ContinuationToolTests(unittest.TestCase):
+        def setUp(self):
+            self.dir = tempfile.mkdtemp(prefix="ef1cont")
+            self.run1 = os.path.join(self.dir, "run1")
+            self.q = os.path.join(self.dir, "Q")
+            os.makedirs(self.q)
+            self.saved = (TOOL.T.sfm_running, TOOL.S.state)
+            TOOL.T.sfm_running = lambda: None
+
+        def tearDown(self):
+            TOOL.T.sfm_running, TOOL.S.state = self.saved
+            shutil.rmtree(self.dir, True)
+
+        def config(self, pins):
+            path, c = config(self.dir, Q=self.q, RUN1=self.run1)
+            c["paths"]["RUN1"] = self.run1
+            c["continuation"] = pins
+            with open(path, "wb") as f:
+                f.write(json.dumps(c).encode("utf-8"))
+            return TOOL.S.load(path)
+
+        def test_the_continuation_template_pins_run1_and_the_amendment_02_build(self):
+            with io.open(os.path.join(ROOT, "ef1_continuation.template.json"), "rb") as f:
+                t = json.loads(f.read().decode("utf-8"))
+            with io.open(os.path.join(ROOT, "ef1.template.json"), "rb") as f:
+                base = json.loads(f.read().decode("utf-8"))
+            self.assertEqual(t["pins"], base["pins"])                 # the Amendment 02 build, as the kit's
+            self.assertEqual(t["pins"]["qualification_cpm_sha256"],
+                             "bb0433a985620d599fc75574ab749b3b8c603488f812612afdd79a7dfe17c343")
+            k = t["continuation"]
+            self.assertEqual(k["run1_qualification_cpm_sha256"],
+                             "a378e25ae932d273d53a13e2c7c0ab2aa1ae7f71f31ea944667fd8d93aed971e")
+            self.assertEqual(k["sessions"], {
+                "ef1_source.dmx": "cc3d2745e67cfb0cea247fcd5c6828e4bbce3ca1525a4bce19d10808793a76fc",
+                "ef1_destination.dmx": "de31257bd014373118c20e9eeac6c783db35a4197ddeb94e6e8ed50aeb22cc89"})
+            self.assertEqual(k["record"], {
+                "EF1 Body--a236dddc4e22.json": "0e0390e0f982e0f84cf56893a9c679bad4652042209accff67014a5542e7f2be"})
+            self.assertTrue(set(INHERITED) <= set(k["inherited"]))
+            self.assertRaises(SystemExit, TOOL.S.load, os.path.join(ROOT, "ef1_continuation.template.json"))
+
+        def test_run1_files_missing_altered_or_in_place_refuse(self):
+            c = self.config(fake_run1(self.run1))
+            self.assertEqual(TOOL.run1_problems(c), [])
+            with open(os.path.join(self.run1, "observations", "S0-02.json"), "ab") as f:
+                f.write(b" altered")
+            self.assertTrue(any("S0-02.json" in p for p in TOOL.run1_problems(c)))
+            os.remove(os.path.join(self.run1, "evidence", "library_A.json"))
+            self.assertTrue(any("library_A.json" in p for p in TOOL.run1_problems(c)))
+            c["paths"]["Q"] = self.run1
+            self.assertTrue(any("own run folder" in p for p in TOOL.run1_problems(c)))
+
+        def prepared(self, pins):
+            c = self.config(pins)
+            for d in ("sessions", "evidence", "pre_run", "observations"):
+                os.makedirs(os.path.join(self.q, d))
+            for name in pins["sessions"]:
+                shutil.copyfile(os.path.join(self.run1, "sessions", name), os.path.join(self.q, "sessions", name))
+            TOOL.T.write_json(os.path.join(self.q, "pre_run", "pre.json"),
+                              {"continuation": {"run1_inventory_sha256": TOOL.run1_inventory(c)}})
+            return c
+
+        def test_inspect_accepts_exactly_the_two_run1_copies(self):
+            c = self.prepared(fake_run1(self.run1))
+            capture(lambda: TOOL.cmd_inspect(c))
+            pins = TOOL.T.read_json(os.path.join(self.q, "evidence", "destination.json"))
+            self.assertEqual(sorted([pins["source_sha256"], pins["destination_sha256"]]),
+                             sorted(c["continuation"]["sessions"].values()))
+            self.assertEqual((pins["starter_backups"], pins["autosaves_at_inspect"]), ([], []))
+
+        def test_inspect_refuses_extra_altered_or_run1_changed(self):
+            for case in ("starter_bak", "autosave", "altered", "run1_changed"):
+                shutil.rmtree(self.q, True)
+                shutil.rmtree(self.run1, True)
+                os.makedirs(self.q)
+                c = self.prepared(fake_run1(self.run1))
+                s = os.path.join(self.q, "sessions")
+                if case == "starter_bak":
+                    with open(os.path.join(s, "ef1_source.bak"), "wb") as f:
+                        f.write(STARTER)
+                elif case == "autosave":
+                    with open(os.path.join(s, "ef1_destination.autosave"), "wb") as f:
+                        f.write(CHARACTER)
+                elif case == "altered":
+                    with open(os.path.join(s, "ef1_destination.dmx"), "ab") as f:
+                        f.write(b" saved")
+                else:
+                    with open(os.path.join(self.run1, "evidence", "late.txt"), "wb") as f:
+                        f.write(b"x")
+                self.assertRaises(SystemExit, lambda: capture(lambda: TOOL.cmd_inspect(c)))
+                self.assertFalse(os.path.exists(os.path.join(self.q, "evidence", "destination.json")), case)
+
+        def seeded_setup(self, record_bytes=b'{"name": "EF1 Body"}'):
+            c = self.prepared(fake_run1(self.run1, record_bytes))
+            capture(lambda: TOOL.cmd_inspect(c))
+            TOOL.S.state = lambda cfg: ("qualification", "q" * 64)
+            return c
+
+        def test_seed_copies_the_record_byte_for_byte_and_keeps_inherited_evidence_apart(self):
+            c = self.seeded_setup()
+            capture(lambda: TOOL.cmd_seed(c))
+            rec = os.path.join(TOOL.S.poses_dir(c), "EF1 Body--a236dddc4e22.json")
+            self.assertEqual(TOOL.T.sha(rec), c["continuation"]["record"]["EF1 Body--a236dddc4e22.json"])
+            for rel, digest in c["continuation"]["inherited"].items():
+                self.assertEqual(TOOL.T.sha(os.path.join(self.q, "inherited", *rel.split("/"))), digest)
+            self.assertEqual(os.listdir(os.path.join(self.q, "observations")), [])
+            la = TOOL.T.read_json(os.path.join(self.q, "evidence", "library_A.json"))
+            self.assertEqual((la["files"], la["inherited"]), (c["continuation"]["record"], True))
+            self.assertRaises(SystemExit, lambda: capture(lambda: TOOL.cmd_seed(c)))      # never twice
+
+        def test_seed_refuses_a_corrupted_record_wrong_install_or_single_run(self):
+            c = self.seeded_setup()
+            with open(os.path.join(self.run1, "evidence", "library_poses", CHAR, "EF1 Body--a236dddc4e22.json"),
+                      "ab") as f:
+                f.write(b" corrupted")
+            self.assertRaises(SystemExit, lambda: capture(lambda: TOOL.cmd_seed(c)))
+            self.assertFalse(os.path.exists(TOOL.S.poses_dir(c)))
+            self.assertFalse(os.path.exists(os.path.join(self.q, "inherited")))
+            shutil.rmtree(self.q, True)
+            shutil.rmtree(self.run1, True)
+            os.makedirs(self.q)
+            c = self.seeded_setup()
+            TOOL.S.state = lambda cfg: ("published", "p" * 64)                         # not installed
+            self.assertRaises(SystemExit, lambda: capture(lambda: TOOL.cmd_seed(c)))
+            c.pop("continuation")
+            self.assertRaises(SystemExit, lambda: capture(lambda: TOOL.cmd_seed(c)))
+
+
+class ContinuationSynthetic(Synthetic):
+    """The single-run synthetic, rearranged as a continuation: Process A (run under run 1's build) lives in a run-1
+    folder and in Q/inherited, verified by pins; Process B is this run's."""
+
+    def build(self):
+        Synthetic.build(self)
+        q, f = self.q, self.faults
+        self.run1 = self.q + "_run1"
+        for label in ("S0-01", "S0-02", "S0-03", "UI-A"):
+            for ext in ((".json", ".ef1.json") if label != "UI-A" else (".json",)):
+                path = os.path.join(q, "observations", label + ext)
+                data = load(path)
+                if label != "UI-A":
+                    if ext == ".json" and "a_under_run2_build" not in f:
+                        data["cpm_loaded"]["build_sha256"] = RUN1_BUILD
+                elif "a_under_run2_build" not in f:
+                    data["cpm_build_sha256"] = RUN1_BUILD
+                raw = json.dumps(data, indent=1, sort_keys=True).encode("utf-8")
+                for base in (os.path.join(self.run1, "observations"), os.path.join(q, "inherited", "observations")):
+                    if not os.path.isdir(base):
+                        os.makedirs(base)
+                    with open(os.path.join(base, label + ext), "wb") as fh:
+                        fh.write(raw)
+                os.remove(path)
+        rec_path = os.path.join(q, "evidence", "library_poses", CHAR, u"EF1 Body--a1.json")
+        with open(rec_path, "rb") as fh:
+            rec_raw = fh.read()
+        os.makedirs(os.path.join(self.run1, "evidence", "library_poses", CHAR))
+        with open(os.path.join(self.run1, "evidence", "library_poses", CHAR, u"EF1 Body--a1.json"), "wb") as fh:
+            fh.write(rec_raw)
+        for rel in ("evidence/library_A.json", "evidence/EF1_STOPPED.json"):
+            data = ("run 1 " + rel).encode("ascii")
+            for base in (self.run1, os.path.join(q, "inherited")):
+                path = os.path.join(base, *rel.split("/"))
+                if not os.path.isdir(os.path.dirname(path)):
+                    os.makedirs(os.path.dirname(path))
+                with open(path, "wb") as fh:
+                    fh.write(data)
+        os.makedirs(os.path.join(self.run1, "sessions"))
+        sessions = {}
+        for name in ("ef1_source.dmx", "ef1_destination.dmx"):
+            with open(os.path.join(q, "sessions", name), "rb") as fh:
+                data = fh.read()
+            with open(os.path.join(self.run1, "sessions", name), "wb") as fh:
+                fh.write(data)
+            sessions[name] = sha_bytes(data)
+        inherited = {}
+        for root, _, files in os.walk(os.path.join(q, "inherited")):
+            for n in files:
+                p = os.path.join(root, n)
+                inherited[os.path.relpath(p, os.path.join(q, "inherited")).replace(os.sep, "/")] = TOOL.T.sha(p)
+        self.pins = {"run1_qualification_cpm_sha256": RUN1_BUILD, "sessions": sessions,
+                     "record": {u"EF1 Body--a1.json": sha_bytes(rec_raw)}, "inherited": inherited}
+        files = dict(self.pins["record"])
+        self.dump(os.path.join("evidence", "library_A.json"), {"files": files, "inherited": True, "tag": "A"})
+        self.dump(os.path.join("evidence", "library_B.json"), {"files": files})
+        pins = load(os.path.join(q, "evidence", "destination.json"))
+        pins["continuation_of"] = self.run1
+        self.dump(os.path.join("evidence", "destination.json"), pins)
+        if not os.path.isdir(os.path.join(q, "pre_run")):
+            os.makedirs(os.path.join(q, "pre_run"))
+        self.dump(os.path.join("pre_run", "pre.json"), {"continuation": {
+            "run1_inventory_sha256": TOOL.T.inventory(self.run1)["sha256"]}})
+        # counterexamples on the continuation's own evidence
+        if "inherited_altered" in f:
+            with open(os.path.join(q, "inherited", "observations", "S0-02.json"), "ab") as fh:
+                fh.write(b" ")
+        if "inherited_missing" in f:
+            os.remove(os.path.join(q, "inherited", "observations", "S0-03.ef1.json"))
+        if "run1_changed" in f:
+            with open(os.path.join(self.run1, "evidence", "late.txt"), "wb") as fh:
+                fh.write(b"x")
+        if "record_corrupted" in f:
+            with open(rec_path, "ab") as fh:
+                fh.write(b" ")
+        if "restore_incomplete" in f:
+            self.dump(os.path.join("evidence", "restore.json"), {"restored": False})
+        if "b_missing" in f:
+            os.remove(os.path.join(q, "observations", "S0-10.json"))
+        return self
+
+    def scoped(self, pid, actions, noop=False, abort=False, verified=True):
+        if abort and "abort_was_a_refusal" in self.faults:
+            self.op(pid, ['PROD_POSE_SCOPE-refused {"code": "fk-position"}'])
+            return
+        Synthetic.scoped(self, pid, actions, noop, abort, verified)
+
+
+if PY3:
+    class ContinuationCompareTests(unittest.TestCase):
+        def setUp(self):
+            self.dir = tempfile.mkdtemp(prefix="ef1ccmp")
+
+        def tearDown(self):
+            shutil.rmtree(self.dir, True)
+
+        def verdict(self, faults=()):
+            q = os.path.join(self.dir, "run%d" % len(os.listdir(self.dir)))
+            s = ContinuationSynthetic(q, faults).build()
+            c = {"paths": {"Q": q, "LIBRARY": s.lib, "RUN1": s.run1}, "character_dir": CHAR,
+                 "continuation": s.pins}
+            capture(lambda: C.run(c))
+            return load(os.path.join(q, "evidence", "EF1_VERDICT.json"))
+
+        def test_a_complete_continuation_passes_with_inherited_process_a_reported_apart(self):
+            v = self.verdict()
+            self.assertEqual((v["verdict"], v["failed"]), ("PASS", []))
+            ids = [x["id"] for x in v["checks"]]
+            self.assertTrue(all(i.startswith("inherited.") for i in ids if ".A1" in i or i.endswith("UI-A_pose_info_and_apply_state")
+                                or "save." in i))
+            self.assertIn("inherited.save.captures_the_visible_pose", ids)
+            self.assertIn("apply.every_bone_takes_the_saved_orientation", ids)       # Process B: this run's own
+            self.assertIn("abort.reached_the_writes_and_was_verified_by_cpm", ids)
+            self.assertTrue(any(i.startswith("provenance.") for i in ids))
+            self.assertEqual(v["provenance"]["mode"], "continuation")
+            self.assertIn("inherited from run 1", v["provenance"]["process_a"])
+
+        def test_continuation_counterexamples_fail(self):
+            expect = {"inherited_altered": "provenance.inherited_observations/S0-02.json_is_run1s",
+                      "inherited_missing": "inherited.observed.A3",
+                      "run1_changed": "provenance.run1_folder_untouched_since_pre",
+                      "record_corrupted": "provenance.record_is_run1s_byte_for_byte",
+                      "restore_incomplete": "restore.published_and_inventories_equal",
+                      "b_missing": "observed.B7",
+                      "a_under_run2_build": "inherited.cpm.A1",
+                      "abort_was_a_refusal": "abort.reached_the_writes_and_was_verified_by_cpm",
+                      "extra_session_file": "sessions.no_unexpected_files",
+                      "session_saved": "sessions.destination_not_saved_during_the_run",
+                      "root_not_moved": "apply.body_root_takes_the_saved_translation"}
+            for fault, check in sorted(expect.items()):
+                v = self.verdict((fault,))
+                self.assertEqual(v["verdict"], "FAIL", fault)
+                self.assertIn(check, v["failed"], (fault, v["failed"][:8]))
+
+        def test_a_precommit_refusal_is_never_a_verified_abort_in_a_single_run_either(self):
+            q = os.path.join(self.dir, "single")
+            s = Synthetic(q)
+            real = s.scoped
+
+            def scoped(pid, actions, noop=False, abort=False, verified=True):
+                if abort:
+                    s.op(pid, ['PROD_POSE_SCOPE-refused {"code": "proportions"}'])
+                    return
+                real(pid, actions, noop, abort, verified)
+            s.scoped = scoped
+            s.build()
+            capture(lambda: C.run({"paths": {"Q": q, "LIBRARY": s.lib}, "character_dir": CHAR}))
+            v = load(os.path.join(q, "evidence", "EF1_VERDICT.json"))
+            self.assertIn("abort.reached_the_writes_and_was_verified_by_cpm", v["failed"])
 
 
 if __name__ == "__main__":

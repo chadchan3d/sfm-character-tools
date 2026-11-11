@@ -34,8 +34,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 RSQ = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, os.path.join(RSQ, "f01_full_body_s3", "tools"))
 sys.path.insert(0, os.path.join(RSQ, "f01_ec1_engineer", "tools"))
+sys.path.insert(0, os.path.join(RSQ, "f01_stage_d_nq1", "tools"))
 import s3_compare as K  # noqa: E402  (also puts the S0 analysis on the path)
 import session_files as SF  # noqa: E402
+from nq1_tool import inventory  # noqa: E402  (the same file inventory ef1_tool fingerprints run 1 with)
 
 angle, dist, read_json, parse_logs, apply_operations = K.angle, K.dist, K.read_json, K.parse_logs, K.apply_operations
 compose, invert, s0_hash, validate = K.compose, K.invert, K.s0_hash, K.s0_analyze.validate
@@ -66,10 +68,15 @@ class Run(object):
         self.c, self.q = c, c["paths"]["Q"]
         self.checks, self.timing, self.findings, self.deviations = [], [], [], []
         self.ids = read_json(os.path.join(self.q, "staged", "IDENTITIES.json"))
+        # A continuation (run 2) inherits Process A from run 1: those observations are read from Q/inherited only,
+        # verified against run 1's pins, and reported as inherited.*; Process B is this run's own native evidence.
+        self.cont = c.get("continuation")
         self.obs, self.side = {}, {}
         for step, label in LABELS.items():
-            path = os.path.join(self.q, "observations", label + ".json")
-            side = os.path.join(self.q, "observations", label + ".ef1.json")
+            folder = os.path.join(self.q, "inherited", "observations") if self.cont and step in A else \
+                os.path.join(self.q, "observations")
+            path = os.path.join(folder, label + ".json")
+            side = os.path.join(folder, label + ".ef1.json")
             if os.path.isfile(path):
                 self.obs[step] = read_json(path)
             if os.path.isfile(side):
@@ -84,6 +91,14 @@ class Run(object):
     def check(self, cid, ok, detail=None):
         self.checks.append({"id": cid, "pass": bool(ok), "detail": detail})
         return ok
+
+    def a_id(self, cid):
+        """A check computed only from Process A evidence: `inherited.` in a continuation (not this run's native)."""
+        return ("inherited." + cid) if self.cont else cid
+
+    def a_build(self):
+        """The CPM build Process A ran under: this run's, or run 1's in a continuation."""
+        return self.cont["run1_qualification_cpm_sha256"] if self.cont else self.ids["qualification_cpm_sha256"]
 
     def record(self, name):
         rows = self.records.get(name) or []
@@ -260,19 +275,47 @@ def scoped_timing(op, step):
 
 # --- the checks ------------------------------------------------------------------------------------------------------
 
+def provenance(R):
+    """Continuation only: the inherited files equal run 1's pins; run 1's whole folder is unchanged since this run's
+    pre; the sessions are run 1's; the record seeded and restored is run 1's natively saved record, byte for byte."""
+    k, chk = R.cont, R.check
+    for rel, digest in sorted(k["inherited"].items()):
+        path = os.path.join(R.q, "inherited", rel.replace("/", os.sep))
+        chk("provenance.inherited_%s_is_run1s" % rel, os.path.isfile(path) and s0_hash(path) == digest, rel)
+    pre = read_json(os.path.join(R.q, "pre_run", "pre.json"))
+    run1_now = inventory(R.c["paths"]["RUN1"])["sha256"] if os.path.isdir(R.c["paths"]["RUN1"]) else None
+    chk("provenance.run1_folder_untouched_since_pre", run1_now is not None and
+        run1_now == ((pre.get("continuation") or {}).get("run1_inventory_sha256")), run1_now)
+    pins_path = os.path.join(R.q, "evidence", "destination.json")
+    pins = read_json(pins_path) if os.path.isfile(pins_path) else {}
+    chk("provenance.sessions_are_run1s", sorted([pins.get("source_sha256"), pins.get("destination_sha256")]) ==
+        sorted(k["sessions"].values()), pins.get("continuation_of"))
+    folder = os.path.join(R.q, "evidence", "library_poses", R.c["character_dir"])
+    files = sorted(os.listdir(folder)) if os.path.isdir(folder) else []
+    chk("provenance.record_is_run1s_byte_for_byte", files == sorted(k["record"]) and all(
+        s0_hash(os.path.join(folder, n)) == d for n, d in k["record"].items()), files)
+    la = os.path.join(R.q, "evidence", "library_A.json")
+    chk("provenance.library_A_is_the_seeded_run1_record", os.path.isfile(la) and
+        read_json(la).get("files") == k["record"] and read_json(la).get("inherited") is True)
+
+
 def evaluate(R):
     o, chk = R.obs, R.check
     steps = A + B
+    if R.cont:
+        provenance(R)
     for step in steps:
-        if not chk("observed.%s" % step, step in o and step in R.side, LABELS[step]):
+        a = R.a_id if step in A else (lambda x: x)
+        if not chk(a("observed.%s" % step), step in o and step in R.side, LABELS[step]):
             continue
         problems = validate(o[step]) + list(o[step].get("problems") or []) + list(R.side[step]["mismatch"])
-        chk("valid.%s" % step, not problems and o[step]["readonly"]["unchanged"], problems[:5])
-        chk("findings.%s_only_the_no_rig_note" % step, (o[step].get("findings") or []) == [NO_RIG],
+        chk(a("valid.%s" % step), not problems and o[step]["readonly"]["unchanged"], problems[:5])
+        chk(a("findings.%s_only_the_no_rig_note" % step), (o[step].get("findings") or []) == [NO_RIG],
             o[step].get("findings"))
-        chk("cpm.%s" % step, (o[step].get("cpm_loaded") or {}).get("build_sha256") == R.ids["qualification_cpm_sha256"],
+        build = R.a_build() if step in A else R.ids["qualification_cpm_sha256"]
+        chk(a("cpm.%s" % step), (o[step].get("cpm_loaded") or {}).get("build_sha256") == build,
             o[step].get("cpm_loaded"))
-        chk("structure.%s_has_the_72_engineer_bones" % step, sorted(o[step].get("bones") or {}) == BONES,
+        chk(a("structure.%s_has_the_72_engineer_bones" % step), sorted(o[step].get("bones") or {}) == BONES,
             len(o[step].get("bones") or {}))
     missing = sorted(s for s in steps if s not in o or s not in R.side)
     if missing:
@@ -297,7 +340,7 @@ def evaluate(R):
         read_json(la)["files"] == read_json(lb)["files"] and len(read_json(la)["files"]) == 1)
     pose = rec["pose"]
     sc = pose.get("scope") or {}
-    chk("save.is_version_3_full_body_of_all_72_bones",
+    chk(R.a_id("save.is_version_3_full_body_of_all_72_bones"),
         pose.get("version") == 3 and sc.get("kind") == u"full_body" and sc.get("completeness") == u"declared_body" and
         sorted(sc.get("posed") or []) == BONES and sc.get("carried") == [] and sc.get("exclusions") == [] and
         sc.get("root_translation") == u"included" and (pose.get("structure") or {}).get("root") == ROOT and
@@ -305,22 +348,22 @@ def evaluate(R):
         {"version": pose.get("version"), "kind": sc.get("kind"), "posed": len(sc.get("posed") or []),
          "carried": sc.get("carried"), "root_translation": sc.get("root_translation"),
          "root": (pose.get("structure") or {}).get("root"), "engine": pose.get("engine")})
-    chk("save.oracle_frame_is_the_model", (pose.get("oracle") or {}).get("frame") == u"component-boundary" and
+    chk(R.a_id("save.oracle_frame_is_the_model"), (pose.get("oracle") or {}).get("frame") == u"component-boundary" and
         sorted((pose.get("oracle") or {}).get("bones") or {}) == BONES)
     err = oracle_errors(o["A2"], rec)
-    chk("save.captures_the_visible_pose", err["local_degrees"] <= TOL["angle_degrees"] and
+    chk(R.a_id("save.captures_the_visible_pose"), err["local_degrees"] <= TOL["angle_degrees"] and
         err["root_units"] <= TOL["position"] and err["model_frame_units"] <= TOL["position"] and
         err["model_frame_degrees"] <= TOL["angle_degrees"], err)
     rt = (pose.get("values") or {}).get("root_translation")
-    chk("save.root_translation_is_the_root_channel_value", isinstance(rt, list) and len(rt) == 3 and
+    chk(R.a_id("save.root_translation_is_the_root_channel_value"), isinstance(rt, list) and len(rt) == 3 and
         dist(rt, channels(o["A2"])[ROOT + u"_p"]["value_at_mapped"]) <= TOL["position"], rt)
     spread = body_spread(o["A1"], o["A2"])
-    chk("save.pose_differs_visibly_from_the_source_baseline", spread["degrees"] >= VISIBLE_DEGREES and
+    chk(R.a_id("save.pose_differs_visibly_from_the_source_baseline"), spread["degrees"] >= VISIBLE_DEGREES and
         spread["root_units"] >= VISIBLE_UNITS, spread)
-    chk("save.source_posing_touched_only_bones", not non_bone_controls_changed(o["A1"], o["A2"]) and
+    chk(R.a_id("save.source_posing_touched_only_bones"), not non_bone_controls_changed(o["A1"], o["A2"]) and
         not placement_moved(o["A1"], o["A2"]), (non_bone_controls_changed(o["A1"], o["A2"])[:6],
                                                 placement_moved(o["A1"], o["A2"])))
-    chk("save.writes_nothing_to_the_scene", doc_unchanged(o["A2"], o["A3"]))
+    chk(R.a_id("save.writes_nothing_to_the_scene"), doc_unchanged(o["A2"], o["A3"]))
 
     # --- a visibly different destination ------------------------------------------------------------------------
     b1 = o["B1"]
@@ -380,15 +423,18 @@ def evaluate(R):
 
     # --- UI captures ----------------------------------------------------------------------------------------------
     for label, step in (("UI-A", "A"), ("UI-B", "B")):
-        path = os.path.join(R.q, "observations", label + ".json")
+        inherited = R.cont and step == "A"
+        path = os.path.join(R.q, "inherited" if inherited else "", "observations", label + ".json")
         ui = read_json(path) if os.path.isfile(path) else None
         sel = (ui or {}).get("selected") or {}
-        chk("ui.%s_pose_info_and_apply_state" % label, ui is not None and sel.get("name") == POSE and
+        build = R.a_build() if step == "A" else R.ids["qualification_cpm_sha256"]
+        chk((R.a_id if step == "A" else (lambda x: x))("ui.%s_pose_info_and_apply_state" % label),
+            ui is not None and sel.get("name") == POSE and
             sel.get("version") == 3 and sel.get("scope_kind") == u"full_body" and sel.get("posed") == len(BONES) and
             ui.get("apply_button_enabled") is True and ui.get("registry_mode") == u"qualification" and
             not ui.get("recovery_paused") and (ui.get("pose_info") or {}).get("engine") == u"direct_fk_v1 revision 1"
             and "error" not in (ui.get("pose_info") or {}) and ui.get("pid") == o[step + "1"]["pid"] and
-            ui.get("cpm_build_sha256") == R.ids["qualification_cpm_sha256"], sel)
+            ui.get("cpm_build_sha256") == build, sel)
 
     # --- CPM's own log --------------------------------------------------------------------------------------------
     logs = parse_logs(os.path.join(R.q, "evidence", "logs"))
@@ -398,6 +444,15 @@ def evaluate(R):
         all(op["owned"] and op["scoped_p7"] for op in applied_ops), [op["id"] for op in applied_ops])
     chk("log.abort_verified_before_the_apply", len([op for op in ops if op["abort"]]) == 1 and
         bool(applied_ops) and [op for op in ops if op["abort"]][0]["begin"] < applied_ops[0]["begin"])
+    # A verified Abort only if the first Apply reached the owned writes: P1 not a no-op, the injected after-writes
+    # fault inside the transaction (P3-P6 failure), CPM's abort verification, and no refusal. A refusal before any
+    # write (for example fk-position or proportions at P1) is never a verified Abort.
+    first = ops[0] if ops else None
+    chk("abort.reached_the_writes_and_was_verified_by_cpm", first is not None and first["abort"] and
+        (first["p1"] or {}).get("noop") is False and
+        any(t.startswith("PROD_POSE_SCOPE-P3-P6-failure") and "qualification fault injected at after-writes" in t
+            for t in first["text"]) and not any("SCOPE-refused" in t for t in first["text"]),
+        first and [t[:120] for t in first["text"]][:6])
     chk("log.repeat_is_noop", len([op for op in ops if (op["p1"] or {}).get("noop") is True and not op["scoped_p6"]])
         == 1)
     chk("log.apply_writes_the_body", bool(applied_ops) and sum(((applied_ops[0]["p1"] or {}).get("actions") or {})
@@ -475,7 +530,12 @@ def run(c):
     verdict = "PASS" if R.checks and not failed and perf["class"] in ("responsive", "finding") else "FAIL"
     out = {"format": "F01-EF1-verdict-v1", "verdict": verdict, "identities": R.ids, "checks": R.checks,
            "failed": [x["id"] for x in failed], "performance": perf, "timing": R.timing, "findings": R.findings,
-           "deviations": R.deviations}
+           "deviations": R.deviations, "provenance": {
+               "mode": "continuation" if R.cont else "single run",
+               "process_a": ("inherited from run 1 %s (STOPPED before any Apply), run under %s; not re-observed in "
+                             "this run (checks inherited.*)" % (R.c["paths"]["RUN1"], R.cont["run1_qualification_cpm_sha256"])
+                             if R.cont else "native, this run"),
+               "process_b": "native, this run, under %s" % R.ids.get("qualification_cpm_sha256")}}
     ev = os.path.join(R.q, "evidence")
     for name, data in (("EF1_VERDICT.json", json.dumps(out, indent=1, sort_keys=True, default=str)),
                        ("EF1_VERDICT.md", markdown(out))):
@@ -489,6 +549,8 @@ def run(c):
 def markdown(out):
     lines = ["# F-01 EF-1 Engineer Full body native qualification verdict: %s" % out["verdict"], "",
              "Qualification CPM `%s`." % out["identities"].get("qualification_cpm_sha256"), "",
+             "Provenance (%s): Process A %s. Process B %s." % (
+                 out["provenance"]["mode"], out["provenance"]["process_a"], out["provenance"]["process_b"]), "",
              "| Check | Result | Detail |", "|---|---|---|"]
     for x in out["checks"]:
         lines.append("| `%s` | %s | %s |" % (x["id"], "PASS" if x["pass"] else "**FAIL**",

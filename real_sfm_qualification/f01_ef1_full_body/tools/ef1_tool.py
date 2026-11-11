@@ -28,7 +28,16 @@ wrapper and the UI capture. Its own commands:
            into evidence and compares every inventory; the emptied character folder is removed last
   compare  run tools/ef1_compare.py on this run (Q/evidence/EF1_VERDICT.json and EF1_VERDICT.md)
 
-usage: python -I ef1_tool.py EF1.json build | pre | status | inspect | install | check | library TAG |
+A continuation run (configuration section "continuation", paths RUN1; R3 Amendments 01-02; F01_EF1_REPEAT_PLAN.md)
+reuses run 1's pinned fixtures and runs Process B only. Run 1 is only ever read:
+  pre      also verifies every pinned run-1 file (both sessions, the saved record, the inherited Process A evidence),
+           copies the two sessions, verified, into Q/sessions, and fingerprints run 1's whole folder
+  inspect  requires Q/sessions to be exactly those two copies (no starter, backup, autosave or other file) and run 1
+           unchanged
+  seed     after install: run 1's record, byte for byte, into the run's Poses folder; the Process A evidence into
+           Q/inherited (never Q/observations); library_A.json (tag A, seeded from run 1)
+
+usage: python -I ef1_tool.py EF1.json build | pre | status | inspect | install | seed | check | library TAG |
                                        collect-logs | restore | compare
 """
 from __future__ import print_function
@@ -75,6 +84,45 @@ def kit_paths(c):
 
 def character_dir(c):
     return os.path.join(S.p(c, "LIBRARY"), "Characters", c["character_dir"])
+
+
+# --- the continuation (run 2): run 1's pinned fixtures and inherited Process A evidence -----------------------------
+
+def cont(c):
+    return c.get("continuation")
+
+
+def run1(c):
+    return S.p(c, "RUN1")
+
+
+def run1_files(c):
+    """Run 1's pinned files the continuation reuses: (group, relative path in run 1, absolute path, sha256)."""
+    k = cont(c)
+    out = []
+    for name, digest in sorted(k["sessions"].items()):
+        out.append(("session", os.path.join("sessions", name), os.path.join(run1(c), "sessions", name), digest))
+    for name, digest in sorted(k["record"].items()):
+        rel = os.path.join("evidence", "library_poses", c["character_dir"], name)
+        out.append(("record", rel, os.path.join(run1(c), rel), digest))
+    for rel, digest in sorted(k["inherited"].items()):
+        out.append(("inherited", rel.replace("/", os.sep), os.path.join(run1(c), rel.replace("/", os.sep)), digest))
+    return out
+
+
+def run1_problems(c):
+    """Every pinned run-1 file present with its exact bytes, and run 1 distinct from this run."""
+    problems = []
+    if os.path.normcase(os.path.abspath(run1(c))) == os.path.normcase(os.path.abspath(S.p(c, "Q"))):
+        problems.append("the continuation needs its own run folder (RUN1 is Q)")
+    for group, rel, path, digest in run1_files(c):
+        if not os.path.isfile(path) or T.sha(path) != digest:
+            problems.append("run 1 %s %s is missing or not %s" % (group, rel, digest))
+    return problems
+
+
+def run1_inventory(c):
+    return T.inventory(run1(c))["sha256"]
 
 
 def cmd_build(c):
@@ -158,9 +206,11 @@ def cmd_pre(c):
         problems.append("the preset library already holds Poses folders (%s): stop and report" % existing)
     if os.path.lexists(character_dir(c)):
         problems.append("the Engineer's character folder %s already exists: stop and report" % character_dir(c))
-    for d in ("pre_run", "sessions", "observations", "evidence"):
+    for d in ("pre_run", "sessions", "observations", "evidence", "inherited"):
         if os.path.exists(S.q(c, d)):
             problems.append("%s already exists" % S.q(c, d))
+    if cont(c):
+        problems += run1_problems(c)
     S.refuse(problems, "PRE")
     print("MODEL PASS: %s (%s)" % (model["resolved"], model["sha256"]))
     print("pre: recording backups and four inventories; this takes a few minutes. Wait for PRE PASS.")
@@ -188,6 +238,15 @@ def cmd_pre(c):
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
                 T.copy_verified(src, dst, T.sha(src))
                 pyc[rel] = T.sha(src)
+    continuation = None
+    if cont(c):
+        # Verified copies of run 1's two pinned sessions; run 1 is only read. Its whole tree is fingerprinted so the
+        # comparator can show it stayed untouched.
+        for group, rel, path, digest in run1_files(c):
+            if group == "session":
+                T.copy_verified(path, S.q(c, "sessions", os.path.basename(rel)), digest)
+        continuation = {"run1": run1(c), "run1_inventory_sha256": run1_inventory(c),
+                        "sessions": cont(c)["sessions"], "record": cont(c)["record"]}
     inv = dict((k, T.inventory(S.p(c, k))) for k in S.INVENTORIES)
     for k, v in inv.items():
         with open(os.path.join(pre_dir, "inventory_%s.txt" % k), "w") as f:
@@ -195,9 +254,13 @@ def cmd_pre(c):
     T.write_json(os.path.join(pre_dir, "pre.json"), {
         "at": time.strftime("%Y-%m-%d %H:%M:%S"), "at_epoch": time.time(), "installation": "published",
         "installed_cpm_sha256": cpm, "identities": ids, "model": model, "housekeeping": house, "pyc": pyc,
-        "character_dir_existed": False,
+        "character_dir_existed": False, "continuation": continuation,
         "inventories": dict((k, {"files": v["files"], "sha256": v["sha256"]}) for k, v in inv.items()),
         "pass": True}, exclusive=True)
+    if continuation:
+        print("PRE PASS (continuation): backups and inventories are in place; nothing was installed. Run 1's two "
+              "sessions are copied, verified, into %s. Next: inspect" % S.q(c, "sessions"))
+        return
     print("PRE PASS: backups and inventories are in place; nothing was installed. The disposable session folder is "
           "%s (empty). Next: preparation step 0" % S.q(c, "sessions"))
 
@@ -228,7 +291,91 @@ def sessions_state(c):
     return rows, src, dst, autosaves, other, backups
 
 
+def cmd_inspect_continuation(c):
+    """The continuation's sessions folder must hold exactly the two verified copies of run 1's pinned sessions: no
+    starter session or backup (they are copies, never created with File > New), no autosave, nothing else. Run 1 must
+    be untouched since pre."""
+    problems = []
+    running = T.sfm_running()
+    if running:
+        problems.append(running)
+    pre = T.read_json(S.q(c, "pre_run", "pre.json"))
+    rows = SF.classify_folder(S.q(c, "sessions"))
+    pins = cont(c)["sessions"]
+    names = sorted(r["name"].lower() for r in rows)
+    if names != sorted(n.lower() for n in pins):
+        problems.append("the sessions folder is not exactly run 1's two sessions: %s" % [r["name"] for r in rows])
+    for name, digest in sorted(pins.items()):
+        row = SF.by_name(rows, name)
+        if row is None or row["sha256"] != digest or row["class"] != "character":
+            problems.append("%s is not run 1's pinned session %s" % (name, digest))
+    if run1_inventory(c) != pre["continuation"]["run1_inventory_sha256"]:
+        problems.append("run 1 changed since pre")
+    problems += run1_problems(c)
+    if os.path.exists(S.q(c, "evidence", "destination.json")):
+        problems.append("the sessions were already pinned")
+    if os.path.isfile(S.q(c, "pre_run", "install_journal.json")):
+        problems.append("an installation was already started")
+    S.refuse(problems, "INSPECT")
+    src, dst = SF.by_name(rows, SOURCE), SF.by_name(rows, DESTINATION)
+    result = {"at": time.strftime("%Y-%m-%d %H:%M:%S"), "source_name": src["name"], "source_sha256": src["sha256"],
+              "destination_name": dst["name"], "destination_sha256": dst["sha256"], "autosaves_at_inspect": [],
+              "starter_backups": [], "continuation_of": run1(c), "files": rows, "pass": True}
+    T.write_json(S.q(c, "evidence", "destination.json"), result, exclusive=True)
+    print(json.dumps(dict((k, v) for k, v in result.items() if k != "files"), indent=1))
+    print("INSPECTED (continuation): run 1's %s and %s are pinned. Next: install, then seed" % (src["name"],
+                                                                                              dst["name"]))
+
+
+def cmd_seed(c):
+    """Continuation only, after install: put run 1's natively saved record, byte for byte, into the run's new
+    Engineer Poses folder, and copy run 1's Process A evidence into Q/inherited (never Q/observations): the
+    observations A1-A3 and their sidecars, UI-A and library A, each verified against its pin. Records seed.json
+    and library_A.json (tag A, seeded from run 1)."""
+    if not cont(c):
+        raise SystemExit("REFUSED: seed is for a continuation run only")
+    problems = []
+    running = T.sfm_running()
+    if running:
+        problems.append(running)
+    if S.state(c)[0] != "qualification":
+        problems.append("the qualification build is not installed (run install first)")
+    if not os.path.isfile(S.q(c, "evidence", "destination.json")):
+        problems.append("run inspect first")
+    if os.path.lexists(S.poses_dir(c)):
+        problems.append("%s already exists" % S.poses_dir(c))
+    if os.path.exists(S.q(c, "inherited")):
+        problems.append("%s already exists" % S.q(c, "inherited"))
+    if os.listdir(S.q(c, "observations")):
+        problems.append("Q/observations is not empty")
+    pre = T.read_json(S.q(c, "pre_run", "pre.json"))
+    if run1_inventory(c) != pre["continuation"]["run1_inventory_sha256"]:
+        problems.append("run 1 changed since pre")
+    problems += run1_problems(c)
+    S.refuse(problems, "SEED")
+    seeded = {"record": {}, "inherited": {}}
+    os.makedirs(S.poses_dir(c))
+    for group, rel, path, digest in run1_files(c):
+        if group == "record":
+            T.copy_verified(path, os.path.join(S.poses_dir(c), os.path.basename(rel)), digest)
+            seeded["record"][os.path.basename(rel)] = digest
+        elif group == "inherited":
+            target = S.q(c, "inherited", rel)
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            T.copy_verified(path, target, digest)
+            seeded["inherited"][rel.replace(os.sep, "/")] = digest
+    at = time.strftime("%Y-%m-%d %H:%M:%S")
+    T.write_json(S.q(c, "evidence", "seed.json"), dict(seeded, at=at, poses_dir=S.poses_dir(c), seeded_from=run1(c)),
+                 exclusive=True)
+    T.write_json(S.q(c, "evidence", "library_A.json"), {"at": at, "tag": "A", "files": seeded["record"],
+                                                        "seeded_from": run1(c), "inherited": True}, exclusive=True)
+    print("SEEDED: run 1's record %s and %d inherited Process A files (Q/inherited). Next: Process B" % (
+        sorted(seeded["record"]), len(seeded["inherited"])))
+
+
 def cmd_inspect(c):
+    if cont(c):
+        return cmd_inspect_continuation(c)
     problems = []
     running = T.sfm_running()
     if running:
@@ -312,7 +459,7 @@ def cmd_compare(c):
 
 def main(argv):
     commands = {"build": cmd_build, "pre": cmd_pre, "status": S.cmd_status, "inspect": cmd_inspect,
-                "install": S.cmd_install, "check": S.cmd_check, "collect-logs": S.cmd_collect_logs,
+                "install": S.cmd_install, "seed": cmd_seed, "check": S.cmd_check, "collect-logs": S.cmd_collect_logs,
                 "restore": cmd_restore, "compare": cmd_compare}
     if len(argv) == 4 and argv[2] == "library":
         return S.cmd_library(S.load(argv[1]), argv[3]) or 0
