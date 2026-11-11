@@ -55,8 +55,9 @@ The offline replay (EC-1 and this kit's checks) is **not** native acceptance.
 | Item | Value |
 |---|---|
 | Source branch | `feature/f01-pose-library`. The EC-1 closure is at `28efe0a`. The CPM is unchanged since the accepted UI implementation `ccc6d7c`. |
-| Candidate CPM `cpm/app/SFM_Character_Preset_Manager.py` (production source, accepted UI) | `7548d1eb25a7479c9b3c0fffa2186d187ef3763b123412ca5ae6ef2cf6899a45` |
-| Qualification CPM (`build`; exactly one changed line, 42118: `PROD_POSE_REGISTRY_MODE = u"qualification"`) | `a378e25ae932d273d53a13e2c7c0ab2aa1ae7f71f31ea944667fd8d93aed971e` |
+| Candidate CPM `cpm/app/SFM_Character_Preset_Manager.py` (production source, accepted UI, R3 Amendments 01 and 02) | `3da2b6537d67bc4c55ae7952f24f86ec61ea4f51b2c6721078a3a159a466a35d` |
+| Qualification CPM (`build`; exactly one changed line, 42118: `PROD_POSE_REGISTRY_MODE = u"qualification"`) | `bb0433a985620d599fc75574ab749b3b8c603488f812612afdd79a7dfe17c343` |
+| Run 1 (STOPPED, 2026-11-11) used | candidate `7548d1eb…`, qualification `a378e25a…` (recorded in its `staged\IDENTITIES.json`; superseded, never rebuilt) |
 | Pose registry (pinned by the candidate; not used by Full body v3) | `f445d5ef7fb183e6bcae3099b3812ffd2363213911605134231c2a1f708d6d00` |
 | Body registry (pinned by the candidate; not used by Full body v3) | `22dcd1599c0556bcb71df0a9b9d14657684173b3bbf557250710a8104a6baa26` |
 | Published CPM (installed before and after) | `ccbed9d794984643fc6f7d7d9c65ef90e5812eb27f85dc4a86855a17c2d3d8df` |

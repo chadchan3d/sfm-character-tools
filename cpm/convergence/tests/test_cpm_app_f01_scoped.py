@@ -48,6 +48,7 @@ SCOPED_SHA256 = {
     "mc02_heavy_rig.json": "816c73360c2283251cd7c621892924146600b67bec016891a7bf080893b9f6e1",
     "ef1_destination_b1.json": "cfab63e1b5c344ff3659f4331c23be03398e884cfa0244fd5e55005ebe501228",
     "ef1_body_record.json": "0e0390e0f982e0f84cf56893a9c679bad4652042209accff67014a5542e7f2be",
+    "ef1_source_a2.json": "e05dfb353fc84d9468e8d5f2b71f0f80893694b57c3c94a25b29d129d15066dd",
 }
 HEAVY = u"models/player/heavy.mdl"
 SYNTH = u"models/synthetic/analytic.mdl"
@@ -2541,9 +2542,8 @@ def euclid(a, b):
 
 def section_offset_amendment(ns, root):
     check("AM.message_names_the_attachment_point", ns["PROD_SCOPE_MESSAGES"][u"fk-position"] == NEW_MESSAGE)
-    check("AM.limits_by_scope", ns["PROD_SCOPE_FK_POSITION_LIMIT"] == {u"full_body": 0.001,
-                                                                       u"selected_parts": 0.00005},
-          ns["PROD_SCOPE_FK_POSITION_LIMIT"])
+    check("AM.limits_by_scope_amendments_01_and_02", ns["PROD_SCOPE_FK_POSITION_LIMIT"] == {
+        u"full_body": 0.001, u"selected_parts": 0.001}, ns["PROD_SCOPE_FK_POSITION_LIMIT"])
     check("AM.composed_and_angular_tolerances_unchanged", ns["PROD_SCOPE_TOLERANCES"] == {
         u"angle_degrees": 0.01, u"effective_angle_degrees": 0.001, u"position": 0.001})
     check("AM.legacy_v2_offset_tolerance_and_copy_unchanged",
@@ -2694,19 +2694,206 @@ def section_offset_amendment(ns, root):
     refused("AM.one_ulp_change_at_P2_within_the_new_limit_refuses", got, u"stale")
     check("AM.p2_refusal_writes_nothing", not writes(w))
 
-    # Selected parts: unchanged at 0.00005.
+    section_offset_amendment_02(ns, root, arm, lib)
+
+
+def verified(got):
+    return got[0] == "ok" and got[1][1] == {u"phase": u"committed-verified"}
+
+
+def boundary_pair(ns, value):
+    """The largest float32 within 0.001 of `value` (inclusive) and the next float32 above it, as offsets."""
+    def prev_f32(v):
+        bits = struct.unpack("<I", struct.pack("<f", float(v)))[0]
+        return struct.unpack("<f", struct.pack("<I", bits - 1))[0]
+    x = f32(value + 0.001)
+    while abs(x - value) > 0.001:
+        x = prev_f32(x)
+    while abs(next_f32(x) - value) <= 0.001:
+        x = next_f32(x)
+    return x - value, next_f32(x) - value
+
+
+def section_offset_amendment_02(ns, root, arm, lib):
+    """R3 Amendment 02 (Astra, Owner-accepted 2026-11-11): Selected parts non-root local offsets are also compatible
+    within 0.001 units inclusive (Euclidean); the composed and P7 0.001 limits, P1/P2 exactness, the key plan and
+    every structural check unchanged. Astra's minimum coverage, items 1-10 (item 11: the other sections and suites)."""
     use(ns, FS.World(posed_source(arm)), arm)
     grip = save(ns, lib, ns["prod_scope_request"](u"selected_parts", FINGERS), u"Amendment fingers")
-    for label, delta, ok in ((u"within", 0.00004, True), (u"beyond", 0.00006, False), (u"new_limit", 0.0009, False)):
-        f = offset_destination(arm, {u"finger2": [delta, 0.0, 0.0]})
+    fingers_saved = grip[u"record"][u"pose"][u"values"][u"orientations"]
+
+    def apply_grip(deltas, record=None):
+        f = offset_destination(arm, deltas)
         w = FS.World(f)
         use(ns, w, arm)
+        before = all_keys(w)
+        return w, f, before, outcome(lambda: apply(ns, reload(ns, lib, record or grip)))
+
+    # 3/6/8. Within 0.001 under the placed destination, whose wrist (hand) is turned 75 degrees and arm and spine
+    # differ: the fingers take the saved articulation, the destination offsets are kept exactly, and only the finger
+    # inputs change.
+    for label, delta in ((u"0.00004", 0.00004), (u"past_the_former_0.00005", 0.00006), (u"0.0009", 0.0009)):
+        w, f, before, got = apply_grip({u"finger2": [delta, 0.0, 0.0]})
+        check("AM2.selected_parts_offset_%s_applies_under_a_rotated_wrist" % label, verified(got), got[:2])
+        if not verified(got):
+            continue
+        after = all_keys(w)
+        own = [f32(c) for c in f[u"bones"][u"finger2"][u"local_position"]]
+        t = f[u"t_chan"]
+        check("AM2.selected_parts_offset_%s_position_key_is_the_destination_value" % label,
+              [k for k in after[u"finger2_p"] if k[0] == t] == [[t, own]] and
+              [k for k in after[u"finger2_p"] if k[0] != t] == [k for k in before[u"finger2_p"] if k[0] != t])
+        check("AM2.selected_parts_offset_%s_fingers_take_the_saved_articulation" % label,
+              all(ns["prod_pose_angle_deg"](w.keys(n + u"_o")[-1][1], fingers_saved[n]) <= 0.01 for n in FINGERS))
+        check("AM2.selected_parts_offset_%s_only_finger_inputs_changed" % label,
+              changed_channels(before, after) == sorted(n + s for n in FINGERS for s in (u"_o", u"_p")),
+              changed_channels(before, after))
+    # 4. Beyond the limit, a Euclidean vector, a material change.
+    for label, d in ((u"beyond_0.002", [0.002, 0.0, 0.0]), (u"euclidean_0.0006_each_axis", [0.0006, 0.0006, 0.0006]),
+                     (u"material_0.05", [0.05, 0.0, 0.0]), (u"bone_length_1", [0.0, 1.0, 0.0])):
+        w, f, before, got = apply_grip({u"finger2": d})
+        refused("AM2.selected_parts_%s_refuses" % label, got, u"fk-position")
+        check("AM2.selected_parts_%s_writes_nothing" % label, not writes(w))
+    check("AM2.euclidean_components_each_within_the_limit", 0.0006 < 0.001 < math.sqrt(3) * 0.0006)
+
+    # 1. The inclusive boundary for Selected parts, on an unscaled body (no ancestor-scale amplification).
+    flat = arm_fixture(spine_scale=1.0, finger_scale=1.0)
+    use(ns, FS.World(posed_source(flat)), flat)
+    flat_grip = save(ns, lib, ns["prod_scope_request"](u"selected_parts", FINGERS), u"Amendment fingers flat")
+    y = flat_grip[u"record"][u"pose"][u"structure"][u"offsets"][u"thumb1"][1]
+    at, above = boundary_pair(ns, y)
+    check("AM2.boundary_values_bracket_0.001", at <= 0.001 < above and above - at < 1e-6, (at, above))
+
+    def apply_flat(deltas):
+        f = offset_destination(flat, deltas)
+        w = FS.World(f)
+        use(ns, w, flat)
+        return w, outcome(lambda: apply(ns, reload(ns, lib, flat_grip)))
+    real_against = ns["prod_scope_check_against_source"]
+    ns["prod_scope_check_against_source"] = lambda *args: []
+    try:
+        w, got = apply_flat({u"thumb1": [0.0, at, 0.0]})
+        check("AM2.selected_parts_local_rule_at_0.001_inclusive_admits", verified(got), (at, got[:2]))
+        w, got = apply_flat({u"thumb1": [0.0, above, 0.0]})
+        refused("AM2.selected_parts_local_rule_one_float32_step_above_refuses", got, u"fk-position")
+        check("AM2.selected_parts_boundary_refusal_writes_nothing_with_the_new_message",
+              not writes(w) and got[2] == NEW_MESSAGE, got)
+    finally:
+        ns["prod_scope_check_against_source"] = real_against
+    w, got = apply_flat({u"thumb1": [0.0, at, 0.0]})
+    check("AM2.selected_parts_end_to_end_boundary_verified_or_composed_refusal_without_writes",
+          verified(got) or (got[0] != "ok" and got[1] == u"proportions" and not writes(w)), got[:2])
+
+    # 5. Accumulated parent-first discrepancies: a chain (finger2 then finger3, aligned), and ancestor-scale
+    # amplification (finger2 under the cumulative scale 1.2 x 0.9 = 1.08).
+    fd = placed_destination(arm)
+    q2 = fd[u"channels"][u"finger2_o"]["keys"][0][1]
+    d2 = [0.0009, 0.0, 0.0]
+    d3 = mvec(mat([-q2[0], -q2[1], -q2[2], q2[3]]), d2)
+    w, f, before, got = apply_grip({u"finger2": d2, u"finger3": d3})
+    refused("AM2.selected_parts_chain_whose_composed_result_exceeds_0.001_refuses", got, u"proportions")
+    check("AM2.selected_parts_chain_refusal_writes_nothing", not writes(w))
+    w, f, before, got = apply_grip({u"finger2": [0.00095, 0.0, 0.0]})
+    refused("AM2.selected_parts_ancestor_scale_amplification_refuses", got, u"proportions")
+    check("AM2.selected_parts_amplification_refusal_writes_nothing", not writes(w))
+
+    # 7. A mixed selection with an unselected carried bridge: upper arm and hand selected, forearm carried. The hand's
+    # offset 0.0009 away is admitted; the bridge receives no write; the hand keeps the destination offset.
+    use(ns, FS.World(posed_source(arm)), arm)
+    bridge = save(ns, lib, ns["prod_scope_request"](u"selected_parts", [u"upperarm", u"hand"]), u"Amendment bridge")
+    w, f, before, got = apply_grip({u"hand": [0.0009, 0.0, 0.0]}, bridge)
+    check("AM2.mixed_selection_with_a_carried_bridge_applies", verified(got), got[:2])
+    after = all_keys(w)
+    check("AM2.mixed_selection_bridge_and_carried_fingers_receive_no_write",
+          after[u"forearm_o"] == before[u"forearm_o"] and after[u"forearm_p"] == before[u"forearm_p"] and
+          all(after[n + u"_o"] == before[n + u"_o"] for n in FINGERS))
+    check("AM2.mixed_selection_hand_keeps_the_destination_offset",
+          after[u"hand_p"][-1][1] == [f32(c) for c in f[u"bones"][u"hand"][u"local_position"]])
+
+    # 9. One float32 step between P1 and P2, within the new limit.
+    f = offset_destination(arm, {u"finger2": [0.0009, 0.0, 0.0]})
+    w = FS.World(f)
+    use(ns, w, arm)
+    real = ns["prod_scope_preflight"]
+
+    def preflight_then_ulp(*args):
+        pre = real(*args)
+        layer = w.channels[u"finger2_p"].attrs["log"].layer
+        v = FB.plain(layer.keys[0][1])
+        layer.keys[0][1] = FB.native([next_f32(v[0]), v[1], v[2]], "vec")
+        w.evaluate()
+        return pre
+    ns["prod_scope_preflight"] = preflight_then_ulp
+    try:
         got = outcome(lambda: apply(ns, reload(ns, lib, grip)))
+    finally:
+        ns["prod_scope_preflight"] = real
+    refused("AM2.selected_parts_one_ulp_change_at_P2_refuses", got, u"stale")
+    check("AM2.selected_parts_p2_refusal_writes_nothing", not writes(w))
+
+    # 10. P7 keeps its 0.001 position limit: an expected position 0.0011 off is never verified; 0.0009 off verifies.
+    # (Only the expectation is wrong; the pre-write source cross-check is disabled so the error reaches P7.)
+    for label, err, ok in ((u"0.0011", 0.0011, False), (u"0.0009", 0.0009, True)):
+        w = FS.World(placed_destination(arm))
+        use(ns, w, arm)
+        saved_fns = dict((k, ns[k]) for k in (u"prod_scope_expected", u"prod_scope_check_against_source"))
+
+        def shifted(*args, **kw):
+            exp = dict(saved_fns[u"prod_scope_expected"](*args, **kw))
+            p, q = exp[u"finger3"]
+            exp[u"finger3"] = ([p[0] + err, p[1], p[2]], q)
+            return exp
+        try:
+            ns["prod_scope_expected"] = shifted
+            ns["prod_scope_check_against_source"] = lambda *a, **k: []
+            result, verdict = apply(ns, reload(ns, lib, grip))
+        finally:
+            ns.update(saved_fns)
         if ok:
-            check("AM.selected_parts_offset_%s_0.00005_applies" % label, got[0] == "ok" and
-                  got[1][1] == {u"phase": u"committed-verified"}, got)
+            check("AM2.p7_position_error_%s_within_0.001_verifies" % label, verdict == {u"phase": u"committed-verified"},
+                  verdict)
         else:
-            refused("AM.selected_parts_offset_%s_refuses" % label, got, u"fk-position")
+            check("AM2.p7_position_error_%s_above_0.001_is_never_verified" % label,
+                  result[u"phase"] == u"verification-pending" and verdict[u"phase"] == u"committed-unverified", verdict)
+
+    # 3. EF-1 native: Selected parts subsets saved on the native source (A2) and applied to the native destination
+    # (B1), each containing an affected bone (bip_head 6.08e-4, bip_upperArm_R 5.98e-4 from the saved offsets).
+    src = scoped_fixture("ef1_source_a2.json")
+    dst = scoped_fixture("ef1_destination_b1.json")
+    elib = library(os.path.join(root, u"ef1_parts"), u"engineer--6111c38a013f")
+    for bones in ([u"bip_head"], [u"bip_upperArm_R", u"bip_lowerArm_R", u"bip_hand_R"]):
+        use(ns, FS.World(src), src)
+        ef1_identity()
+        label = u"_".join(b[4:] for b in bones)
+        part = save(ns, elib, ns["prod_scope_request"](u"selected_parts", bones), u"EF1 parts " + label)
+        saved = part[u"record"][u"pose"][u"structure"][u"offsets"]
+        d = max(euclid(saved[b], dst[u"bones"][b][u"local_position"]) for b in bones)
+        check("AM2.ef1_parts_%s_contains_an_affected_offset" % label, 0.00005 < d <= 0.001, d)
+        former = dict(ns["PROD_SCOPE_FK_POSITION_LIMIT"])
+        ns["PROD_SCOPE_FK_POSITION_LIMIT"] = {u"full_body": 0.001, u"selected_parts": 0.00005}
+        try:
+            w = FS.World(dst)
+            use(ns, w, dst)
+            ef1_identity()
+            got = outcome(lambda: apply(ns, reload(ns, elib, part)))
+            refused("AM2.ef1_parts_%s_refused_under_the_former_0.00005" % label, got, u"fk-position")
+            check("AM2.ef1_parts_%s_former_refusal_writes_nothing" % label, not writes(w))
+        finally:
+            ns["PROD_SCOPE_FK_POSITION_LIMIT"] = former
+        w = FS.World(dst)
+        use(ns, w, dst)
+        ef1_identity()
+        before = all_keys(w)
+        got = outcome(lambda: apply(ns, reload(ns, elib, part)))
+        check("AM2.ef1_parts_%s_applies_under_amendment_02" % label, verified(got), got[:2])
+        after = all_keys(w)
+        t = dst[u"t_chan"]
+        check("AM2.ef1_parts_%s_position_keys_are_the_destination_values" % label, all(
+            [k for k in after[b + u"_p"] if k[0] == t] == [[t, [f32(c) for c in dst[u"bones"][b][u"local_position"]]]]
+            and [k for k in after[b + u"_p"] if k[0] != t] == [k for k in before[b + u"_p"] if k[0] != t]
+            for b in bones))
+        check("AM2.ef1_parts_%s_only_the_selected_inputs_changed" % label, changed_channels(before, after) == sorted(
+            b + s for b in bones for s in (u"_o", u"_p")), changed_channels(before, after))
 
 
 def main():

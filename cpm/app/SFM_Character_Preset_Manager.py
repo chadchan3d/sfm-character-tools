@@ -45445,11 +45445,12 @@ PROD_SCOPE_PROVENANCE = (u"user_confirmed", u"supported_metadata")
 PROD_SCOPE_MODEL_FRAME = u"@model"
 PROD_SCOPE_MAX_BONES = 4096
 PROD_SCOPE_MAX_RECORD_BYTES = 4 << 20            # the existing bounded pose-record reader's large-record limit
-# direct_fk_v1 revision 1 (R3 5; R3 Amendment 01, 2026-11-11): the largest compatible Euclidean distance between a
-# non-root bone's saved and destination local offsets, inclusive, by scope. Full body: 0.001 units (Amendment 01;
-# native EF-1 showed SFM's own rotate tool moving offsets up to 6.1e-4). Selected parts: 0.00005 units (unchanged).
-# The destination always keeps its own offsets; the composed 0.001 check (PROD_SCOPE_TOLERANCES) is separate.
-PROD_SCOPE_FK_POSITION_LIMIT = {u"full_body": 0.001, u"selected_parts": 0.00005}
+# direct_fk_v1 revision 1 (R3 5; R3 Amendments 01 and 02, 2026-11-11): the largest compatible Euclidean distance
+# between a non-root bone's saved and destination local offsets, inclusive, by scope: 0.001 units for both scopes
+# (Amendment 01: Full body; Amendment 02: Selected parts; native EF-1 showed SFM's own rotate tool moving offsets up
+# to 6.1e-4). The destination always keeps its own offsets; the composed and P7 0.001 checks (PROD_SCOPE_TOLERANCES)
+# are separate and unchanged.
+PROD_SCOPE_FK_POSITION_LIMIT = {u"full_body": 0.001, u"selected_parts": 0.001}
 # The established observation tolerances (body_krystal_v1), unchanged.
 PROD_SCOPE_TOLERANCES = {u"angle_degrees": 0.01, u"effective_angle_degrees": 0.001, u"position": 0.001}
 PROD_SCOPE_TRANSFORM_TYPES = {u"position": (u"DmeVector3Log", u"DmeVector3LogLayer"),

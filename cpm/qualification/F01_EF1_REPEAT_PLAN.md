@@ -1,4 +1,4 @@
-# F-01 EF-1 repeat (run 2) after R3 Amendment 01: plan (2026-11-11)
+# F-01 EF-1 repeat (run 2) after R3 Amendments 01 and 02: plan (2026-11-11)
 
 **Status:** plan only. Nothing is built, installed or run. Execution needs the Owner's separate authorization. The
 kit changes below also need it, as a reviewed kit commit.
@@ -46,7 +46,9 @@ posing and a new record, and the 72-bone check still compares against whatever i
 ## 3. Kit changes needed (a reviewed commit before execution)
 
 - **`ef1.template.json` pins:**
-  - candidate `f4de5b61…`, qualification `fd0844cf…` (one line, 42118);
+  - candidate `3da2b653…`, qualification `bb0433a9…` (one line, 42118; Amendment 02). These are already updated in
+    `ef1.template.json`, and the kit's build test passes. The superseded `f4de5b61…`/`fd0844cf…` (Amendment 01
+    only) must not be used;
   - the three fixture pins above;
   - registries, published CPM, S0 observer and expected header unchanged.
 - **`ef1_tool`, a continuation mode modelled on `s3_tool`'s:**

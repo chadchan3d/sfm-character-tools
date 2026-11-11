@@ -15,8 +15,8 @@
   "LOG_DIR": "C:/Users/Public/Documents/SFM Character Preset Manager Logs"
  },
  "pins": {
-  "candidate_cpm_sha256": "7548d1eb25a7479c9b3c0fffa2186d187ef3763b123412ca5ae6ef2cf6899a45",
-  "qualification_cpm_sha256": "a378e25ae932d273d53a13e2c7c0ab2aa1ae7f71f31ea944667fd8d93aed971e",
+  "candidate_cpm_sha256": "3da2b6537d67bc4c55ae7952f24f86ec61ea4f51b2c6721078a3a159a466a35d",
+  "qualification_cpm_sha256": "bb0433a985620d599fc75574ab749b3b8c603488f812612afdd79a7dfe17c343",
   "profile_sha256": "f445d5ef7fb183e6bcae3099b3812ffd2363213911605134231c2a1f708d6d00",
   "body_profile_sha256": "22dcd1599c0556bcb71df0a9b9d14657684173b3bbf557250710a8104a6baa26",
   "published_cpm_sha256": "ccbed9d794984643fc6f7d7d9c65ef90e5812eb27f85dc4a86855a17c2d3d8df",
