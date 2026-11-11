@@ -46,6 +46,8 @@ SCOPED_FIXTURES = os.path.join(_THIS_DIR, "fixtures", "f01_scoped")
 SCOPED_SHA256 = {
     "mc01_heavy_norig.json": "eb240d2e0f78e05f4df83a01086b56105e497de065eb45eff2f512af5aad8a63",
     "mc02_heavy_rig.json": "816c73360c2283251cd7c621892924146600b67bec016891a7bf080893b9f6e1",
+    "ef1_destination_b1.json": "cfab63e1b5c344ff3659f4331c23be03398e884cfa0244fd5e55005ebe501228",
+    "ef1_body_record.json": "0e0390e0f982e0f84cf56893a9c679bad4652042209accff67014a5542e7f2be",
 }
 HEAVY = u"models/player/heavy.mdl"
 SYNTH = u"models/synthetic/analytic.mdl"
@@ -976,8 +978,10 @@ def section_full_body(ns, root):
     use(ns, FS.World(two), two)
     refused("I.ambiguous_body_root_refuses", outcome(lambda: capture(ns, ns["prod_scope_request"](u"full_body"))),
             u"placement-ambiguous")
-    # Structural offsets: within the provisional limit passes, beyond it refuses; a one-ULP drift at P2 refuses.
-    for label, delta, ok in ((u"within", 0.00004, True), (u"beyond", 0.00006, False)):
+    # Structural offsets (R3 Amendment 01: Full body 0.001, inclusive; boundaries in section AM): within the limit
+    # passes, including the former 0.00005 boundary; beyond it refuses; a one-ULP drift at P2 refuses.
+    for label, delta, ok in ((u"within", 0.00004, True), (u"past_the_former_0.00005", 0.00006, True),
+                             (u"beyond", 0.002, False)):
         f = placed_destination(arm)
         p = f[u"channels"][u"forearm_p"]["keys"][0][1]
         FS.set_key(f, u"forearm_p", [p[0] + delta, p[1], p[2]])
@@ -2480,6 +2484,231 @@ def section_static(app):
                                                                                u'"face" in n', u"startswith(u\"bip")))
 
 
+# ---------------------------------------------------------------------------
+# AM. R3 Amendment 01 (Astra, Owner-accepted 2026-11-11): generic v3 Full body non-root local offsets compatible
+# within 0.001 units inclusive (Euclidean); Selected parts unchanged at 0.00005; the composed 0.001 check, P1/P2
+# exactness and the key plan unchanged. Native evidence: EF-1 B1 (the TF2 Engineer, ef1_destination_b1.json from
+# S0-04 2d0c6815...) and its saved record EF1 Body (ef1_body_record.json 0e0390e0...).
+# ---------------------------------------------------------------------------
+
+EF1_REJECTED = {u"bip_head": 0.0006076501902309318, u"bip_hip_R": 0.0002902101860361438,
+                u"bip_knee_L": 0.0004295913791899374, u"bip_lowerArm_L": 0.0004686719144459026,
+                u"bip_spine_2": 0.00027803922893557547, u"bip_upperArm_R": 0.0005981216188503319}
+NEW_MESSAGE = u"A bone's attachment point differs too much from the saved pose. Nothing was changed."
+
+
+def ef1_item(ns, root):
+    raw = core.read(os.path.join(SCOPED_FIXTURES, "ef1_body_record.json"))
+    check("fixture.ef1_body_record.json.matches_its_pin", core.sha(raw) == SCOPED_SHA256["ef1_body_record.json"])
+    rec = json.loads(raw.decode("utf-8"))
+    lib = library(root, u"engineer--6111c38a013f")
+    lib[u"character_key"] = rec[u"character_key"]
+    poses = os.path.join(lib[u"char_dir"], u"Poses")
+    os.makedirs(poses)
+    with open(os.path.join(poses, u"EF1 Body--a236dddc4e22.json"), "wb") as f:
+        f.write(raw)
+    items = ns["prod_pose_discover"](lib[u"char_dir"], lib[u"character_key"], {})[u"items"]
+    return rec, [i for i in items if i[u"preset_id"] == rec[u"preset_id"]][0]
+
+
+def ef1_identity():
+    Pin.identity = {"model": u"models/player/engineer.mdl", "checksum": 1732717760, "animset_name": u"engineer1"}
+
+
+def model_frame(world, name):
+    """A bone's evaluated world transform relative to the model's (an independent quaternion evaluation)."""
+    dag = world.bone_dag[name]
+    mq = [world.gm.wq[0], world.gm.wq[1], world.gm.wq[2], world.gm.wq[3]]
+    inv = mat([-mq[0], -mq[1], -mq[2], mq[3]])
+    p = mvec(inv, [dag.wp[k] - world.gm.wp[k] for k in range(3)])
+    return p, mmul(inv, mat(list(dag.wq)))
+
+
+def offset_destination(arm, deltas):
+    """The placed destination with each named bone's local offset moved by its delta (in its parent frame)."""
+    f = placed_destination(arm)
+    for name, d in deltas.items():
+        p = f[u"channels"][name + u"_p"]["keys"][0][1]
+        v = [f32(p[k] + d[k]) for k in range(3)]
+        FS.set_key(f, name + u"_p", v)
+        f[u"bones"][name][u"local_position"] = v
+    return f
+
+
+def euclid(a, b):
+    return math.sqrt(sum((float(a[k]) - float(b[k])) ** 2 for k in range(3)))
+
+
+def section_offset_amendment(ns, root):
+    check("AM.message_names_the_attachment_point", ns["PROD_SCOPE_MESSAGES"][u"fk-position"] == NEW_MESSAGE)
+    check("AM.limits_by_scope", ns["PROD_SCOPE_FK_POSITION_LIMIT"] == {u"full_body": 0.001,
+                                                                       u"selected_parts": 0.00005},
+          ns["PROD_SCOPE_FK_POSITION_LIMIT"])
+    check("AM.composed_and_angular_tolerances_unchanged", ns["PROD_SCOPE_TOLERANCES"] == {
+        u"angle_degrees": 0.01, u"effective_angle_degrees": 0.001, u"position": 0.001})
+    check("AM.legacy_v2_offset_tolerance_and_copy_unchanged",
+          ns["PROD_BODY_FK_POSITION_TOLERANCE"] == {u"body_krystal_v1": 0.00005} and
+          ns["PROD_BODY_FK_POSITION_COPY"] == u"This pose uses different bone positions and can't be applied safely.")
+
+    # 1-3. The native EF-1 refusal, replayed: the saved pose on the B1 destination.
+    rec, item = ef1_item(ns, os.path.join(root, u"ef1"))
+    fx = scoped_fixture("ef1_destination_b1.json")
+    saved = rec[u"pose"][u"structure"][u"offsets"]
+    measured = dict((n, euclid(saved[n], fx[u"bones"][n][u"local_position"])) for n in EF1_REJECTED)
+    check("AM.ef1_six_offsets_as_measured_natively", all(abs(measured[n] - EF1_REJECTED[n]) < 1e-9
+                                                          for n in EF1_REJECTED), measured)
+    others = max(euclid(saved[n], b[u"local_position"]) for n, b in fx[u"bones"].items()
+                 if n in saved and n not in EF1_REJECTED and n != u"bip_pelvis")   # the root's translation is pose data
+    check("AM.ef1_every_other_offset_within_the_former_limit", others <= 0.00005, others)
+    w = FS.World(fx)
+    use(ns, w, fx)
+    ef1_identity()
+    before = all_keys(w)
+    del ns["LOG"][:]
+    got = outcome(lambda: apply(ns, item))
+    check("AM.ef1_previously_refused_full_body_now_applies_and_verifies", got[0] == "ok" and
+          got[1][1] == {u"phase": u"committed-verified"}, got)
+    check("AM.ef1_no_offset_refusal_logged", not any(u"fk-position" in u"%s" % r for r in ns["LOG"]))
+    after = all_keys(w)
+    t = fx[u"t_chan"]
+    composed = max(euclid(model_frame(w, n)[0], rec[u"pose"][u"oracle"][u"bones"][n][u"relative_position"])
+                   for n in fx[u"bones"])
+    check("AM.ef1_composed_72_bone_result_within_0.001", len(fx[u"bones"]) == 72 and composed <= 0.001, composed)
+    bad = []
+    for n in sorted(fx[u"bones"]):
+        if n == u"bip_pelvis":
+            continue
+        kb, ka = before[n + u"_p"], after[n + u"_p"]
+        at_b, at_a = [k for k in kb if k[0] == t], [k for k in ka if k[0] == t]
+        own = fx[u"bones"][n][u"local_position"]
+        if [k for k in kb if k[0] != t] != [k for k in ka if k[0] != t] or len(at_a) != 1 or \
+                (at_b and at_b != at_a) or at_a[0][1] != [f32(c) for c in own]:
+            bad.append(n)
+    check("AM.ef1_non_root_position_keys_are_the_exact_destination_values", not bad, bad[:8])
+    check("AM.ef1_drifted_offsets_are_kept_not_imported",
+          all(after[n + u"_p"][-1][1] == [f32(c) for c in fx[u"bones"][n][u"local_position"]] and
+              euclid(after[n + u"_p"][-1][1], saved[n]) == measured[n] for n in EF1_REJECTED))
+
+    # 4-7. The synthetic body: boundaries, Euclidean length, a composed chain, a material change.
+    arm = arm_fixture()
+    use(ns, FS.World(posed_source(arm)), arm)
+    lib = library(os.path.join(root, u"synthetic"), u"synthetic_body")
+    full = save(ns, lib, ns["prod_scope_request"](u"full_body"), u"Amendment body")
+    offsets = full[u"record"][u"pose"][u"structure"][u"offsets"]
+    limit = ns["prod_pose_f32"](0.001)
+
+    def apply_with(deltas, label):
+        f = offset_destination(arm, deltas)
+        w = FS.World(f)
+        use(ns, w, arm)
+        return w, outcome(lambda: apply(ns, reload(ns, lib, full)))
+
+    # The boundary: the largest float32 destination offset whose distance (as CPM measures it) is within 0.001, and
+    # the next float32 above it. On `leg` (under the unscaled pelvis), so the separate composed 0.001 check does not
+    # amplify the difference; under an ancestor scale s > 1 the composed check refuses first (the chain case below).
+    base = offsets[u"leg"]
+    y = base[1]             # 3.0: a realistic magnitude, one float32 step ~2.4e-7 (never inside float32(0.001) rounding)
+
+    def within(v):          # the amendment's boundary: Euclidean distance <= 0.001, inclusive
+        return abs(v - y) <= 0.001
+
+    def prev_f32(v):
+        bits = struct.unpack("<I", struct.pack("<f", float(v)))[0]
+        return struct.unpack("<f", struct.pack("<I", bits - 1))[0]
+    x = f32(y + 0.001)
+    while not within(x):
+        x = prev_f32(x)
+    while within(next_f32(x)):
+        x = next_f32(x)
+    at, above = x - y, next_f32(x) - y
+    check("AM.boundary_values_bracket_0.001", at <= 0.001 < above and above - at < 1e-6, (at, above))
+    # The local rule in isolation (the separate composed check replaced by a pass for these two rows only).
+    real_against = ns["prod_scope_check_against_source"]
+    ns["prod_scope_check_against_source"] = lambda *args: []
+    try:
+        w, got = apply_with({u"leg": [0.0, at, 0.0]}, u"at")
+        check("AM.local_rule_boundary_at_0.001_inclusive_admits", got[0] == "ok" and
+              got[1][1] == {u"phase": u"committed-verified"}, (at, got[:2]))
+        w, got = apply_with({u"leg": [0.0, above, 0.0]}, u"above")
+        refused("AM.local_rule_one_float32_step_above_refuses", got, u"fk-position")
+        check("AM.refusal_writes_nothing_and_uses_the_new_message", not writes(w) and got[2] == NEW_MESSAGE, got)
+    finally:
+        ns["prod_scope_check_against_source"] = real_against
+    # End to end: at the exact boundary the unchanged composed 0.001 check may also bind, because the expected
+    # model-frame position carries the source/destination composition noise (a few 1e-6, direction-dependent).
+    # Required: the local rule never refuses there, and the outcome is a verified Apply or a composed refusal that
+    # writes nothing.
+    w, got = apply_with({u"leg": [0.00099, 0.0, 0.0]}, u"near")
+    check("AM.end_to_end_0.00099_applies", got[0] == "ok" and got[1][1] == {u"phase": u"committed-verified"}, got)
+    for axis in (0, 1):
+        d = [0.0, 0.0, 0.0]
+        d[axis] = at
+        w, got = apply_with({u"leg": d}, u"exact")
+        check("AM.end_to_end_exact_boundary_axis_%d_verified_or_composed_refusal_without_writes" % axis,
+              (got[0] == "ok" and got[1][1] == {u"phase": u"committed-verified"}) or
+              (got[0] != "ok" and got[1] == u"proportions" and not writes(w)), got[:2])
+    comp = 0.0006
+    w, got = apply_with({u"leg": [comp, comp, comp]}, u"euclid")
+    check("AM.euclidean_length_not_components_decides",
+          comp < 0.001 and math.sqrt(3) * comp > 0.001 and got[0] != "ok" and got[1] == u"fk-position", got)
+    # A chain: forearm and hand each within 0.001 locally, aligned so their composed shift at the hand exceeds 0.001.
+    fd = placed_destination(arm)
+    qf = fd[u"channels"][u"forearm_o"]["keys"][0][1]
+    d1 = [0.0009, 0.0, 0.0]
+    inv = mat([-qf[0], -qf[1], -qf[2], qf[3]])
+    d2 = mvec(inv, d1)
+    w, got = apply_with({u"forearm": [0.0009, 0.0, 0.0]}, u"scaled")
+    refused("AM.offset_within_0.001_under_ancestor_scale_1.2_refuses_on_the_composed_check", got, u"proportions")
+    check("AM.chain_each_local_offset_within_the_limit", euclid(d1, [0, 0, 0]) <= 0.001 and
+          euclid(d2, [0, 0, 0]) <= 0.001)
+    w, got = apply_with({u"forearm": d1, u"hand": d2}, u"chain")
+    refused("AM.chain_whose_composed_result_exceeds_0.001_refuses", got, u"proportions")
+    check("AM.chain_refusal_writes_nothing", not writes(w))
+    w, got = apply_with({u"leg": [0.05, 0.0, 0.0]}, u"material")
+    refused("AM.materially_altered_attachment_offset_refuses", got, u"fk-position")
+    w, got = apply_with({u"hand": [0.0, 0.0, 1.0]}, u"bone_length")
+    refused("AM.a_different_bone_length_refuses", got, u"fk-position")
+
+    # 8. P2 exactness at the new limit: a destination 0.0009 away applies, but a one-ULP change between P1 and P2
+    # refuses as stale and writes nothing.
+    f = offset_destination(arm, {u"leg": [0.0009, 0.0, 0.0]})
+    w = FS.World(f)
+    use(ns, w, arm)
+    check("AM.p2_destination_0.0009_away_applies", outcome(lambda: apply(ns, reload(ns, lib, full)))[0] == "ok")
+    w = FS.World(f)
+    use(ns, w, arm)
+    real = ns["prod_scope_preflight"]
+
+    def preflight_then_ulp(*args):
+        pre = real(*args)
+        layer = w.channels[u"leg_p"].attrs["log"].layer
+        v = FB.plain(layer.keys[0][1])
+        layer.keys[0][1] = FB.native([next_f32(v[0]), v[1], v[2]], "vec")
+        w.evaluate()
+        return pre
+    ns["prod_scope_preflight"] = preflight_then_ulp
+    try:
+        got = outcome(lambda: apply(ns, reload(ns, lib, full)))
+    finally:
+        ns["prod_scope_preflight"] = real
+    refused("AM.one_ulp_change_at_P2_within_the_new_limit_refuses", got, u"stale")
+    check("AM.p2_refusal_writes_nothing", not writes(w))
+
+    # Selected parts: unchanged at 0.00005.
+    use(ns, FS.World(posed_source(arm)), arm)
+    grip = save(ns, lib, ns["prod_scope_request"](u"selected_parts", FINGERS), u"Amendment fingers")
+    for label, delta, ok in ((u"within", 0.00004, True), (u"beyond", 0.00006, False), (u"new_limit", 0.0009, False)):
+        f = offset_destination(arm, {u"finger2": [delta, 0.0, 0.0]})
+        w = FS.World(f)
+        use(ns, w, arm)
+        got = outcome(lambda: apply(ns, reload(ns, lib, grip)))
+        if ok:
+            check("AM.selected_parts_offset_%s_0.00005_applies" % label, got[0] == "ok" and
+                  got[1][1] == {u"phase": u"committed-verified"}, got)
+        else:
+            refused("AM.selected_parts_offset_%s_refuses" % label, got, u"fk-position")
+
+
 def main():
     if "--phase=run" not in sys.argv[1:]:
         print("usage: %s --phase=run" % os.path.basename(sys.argv[0]))
@@ -2511,6 +2740,7 @@ def main():
                 run("sequential", lambda: section_sequential(ns, root, full[0], full[1], frames[0], frames[1]))
             run("semantics", lambda: section_semantics(ns, app, fx, root, frames[0], frames[1]))
         run("rigged_heavy", lambda: section_rigged_heavy(ns, fx, os.path.join(root, u"heavy_rig")))
+        run("offset_amendment", lambda: section_offset_amendment(ns, os.path.join(root, u"amendment")))
         run("window", lambda: section_window(app, ns, fx, os.path.join(root, u"window")))
         run("ui_state", lambda: section_ui_state(ns))
         run("dialog_copy", lambda: section_dialog_copy(ns, fx))

@@ -45445,9 +45445,11 @@ PROD_SCOPE_PROVENANCE = (u"user_confirmed", u"supported_metadata")
 PROD_SCOPE_MODEL_FRAME = u"@model"
 PROD_SCOPE_MAX_BONES = 4096
 PROD_SCOPE_MAX_RECORD_BYTES = 4 << 20            # the existing bounded pose-record reader's large-record limit
-# Provisional, versioned with direct_fk_v1 revision 1 (R3 5): the largest saved/destination structural offset
-# difference that is compatible. The destination always keeps its own offsets.
-PROD_SCOPE_FK_POSITION_LIMIT = 0.00005
+# direct_fk_v1 revision 1 (R3 5; R3 Amendment 01, 2026-11-11): the largest compatible Euclidean distance between a
+# non-root bone's saved and destination local offsets, inclusive, by scope. Full body: 0.001 units (Amendment 01;
+# native EF-1 showed SFM's own rotate tool moving offsets up to 6.1e-4). Selected parts: 0.00005 units (unchanged).
+# The destination always keeps its own offsets; the composed 0.001 check (PROD_SCOPE_TOLERANCES) is separate.
+PROD_SCOPE_FK_POSITION_LIMIT = {u"full_body": 0.001, u"selected_parts": 0.00005}
 # The established observation tolerances (body_krystal_v1), unchanged.
 PROD_SCOPE_TOLERANCES = {u"angle_degrees": 0.01, u"effective_angle_degrees": 0.001, u"position": 0.001}
 PROD_SCOPE_TRANSFORM_TYPES = {u"position": (u"DmeVector3Log", u"DmeVector3LogLayer"),
@@ -45483,7 +45485,7 @@ PROD_SCOPE_MESSAGES = {
     u"scope-differs": u"This character's controls differ from the ones this pose was saved with. Nothing was changed.",
     u"proportions": u"This pose was saved with different body proportions and can't be applied safely. Nothing was "
                     u"changed.",
-    u"fk-position": u"This pose uses different bone positions and can't be applied safely.",
+    u"fk-position": u"A bone's attachment point differs too much from the saved pose. Nothing was changed.",
     u"placement-ambiguous": u"CPM can't identify this character's body root, so a full-body pose can't be used here. "
                             u"Nothing was changed.",
     u"scale-unsupported": u"This character's scale isn't supported for poses yet. Nothing was changed.",
@@ -46806,8 +46808,9 @@ def prod_scope_record_request(pose):
 def prod_scope_compatible(pose, D, C, S, identity):
     """Scope-aware compatibility of a destination with a saved v3 pose: the same validated model and skeleton
     layout, the same resolved scope (posed, carried, ledger, root), the same scales of every affected bone and
-    boundary, and structural offsets within the provisional direct_fk_v1 limit. Returns the pinned destination
-    offsets. Different wrist or arm posture is allowed; different bone lengths, scale state or bindings are not."""
+    boundary, and structural offsets within the direct_fk_v1 limit of the pose's scope (PROD_SCOPE_FK_POSITION_LIMIT;
+    Euclidean, inclusive). Returns the pinned destination offsets. Different wrist or arm posture is allowed;
+    different bone lengths, scale state or bindings are not."""
     src = pose[u"source"]
     if prod_pose_model_key(identity[u"model"]) != src[u"model_key"] or (
             src[u"model_checksum"] is not None and identity.get(u"checksum") is not None and
@@ -46834,7 +46837,9 @@ def prod_scope_compatible(pose, D, C, S, identity):
         if prod_pose_f32(s) != prod_pose_f32(st[u"scales"][u"boundaries"][top]):
             raise prod_scope_error(u"proportions", u"boundary scale of %s differs" % top)
     _, here = prod_scope_effective_inputs(D, C, S)
-    limit = prod_pose_f32(PROD_SCOPE_FK_POSITION_LIMIT)
+    if S[u"kind"] not in PROD_SCOPE_FK_POSITION_LIMIT:
+        raise prod_scope_error(u"structure-unsupported", u"no offset limit for scope %r" % (S[u"kind"],))
+    limit = prod_pose_f32(PROD_SCOPE_FK_POSITION_LIMIT[S[u"kind"]])
     far = []
     for name, value in sorted(here.items()):
         if name == S[u"root"]:
@@ -46844,7 +46849,7 @@ def prod_scope_compatible(pose, D, C, S, identity):
         if not (d == 0.0 or prod_pose_f32(d) <= limit):
             far.append((name, d))
     if far:
-        raise prod_scope_error(u"fk-position", u"offsets differ beyond %r: %s" % (limit, far[:8]))
+        raise prod_scope_error(u"fk-position", u"%s offsets differ beyond %r: %s" % (S[u"kind"], limit, far[:8]))
     # R3 3.1: a carried constant's local orientation is body state, not an input: it must match the saved evidence.
     turned = [n for n, role in sorted(S[u"ledger"].items()) if role == u"carried-constant" and prod_pose_angle_deg(
         D[u"bones"][n][u"local_orientation"], pose[u"oracle"][u"bones"][n][u"local_orientation"]) >
