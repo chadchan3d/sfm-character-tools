@@ -1,6 +1,9 @@
 # F-01 EF-1 repeat (run 2) after R3 Amendments 01 and 02: plan (2026-11-11)
 
-**Status (2026-11-11):** the kit changes are built and tested offline (`PROCEDURE_CONTINUATION.md`); not run.
+**Status (2026-11-12):** executed as run 2; **PASS**, accepted by the Owner (`F01_EF1_RESULTS.md`). The plan below
+is kept as written.
+
+**Earlier status (2026-11-11):** the kit changes are built and tested offline (`PROCEDURE_CONTINUATION.md`); not run.
 
 **Original status:** plan only. Nothing is built, installed or run. Execution needs the Owner's separate authorization. The
 kit changes below also need it, as a reviewed kit commit.

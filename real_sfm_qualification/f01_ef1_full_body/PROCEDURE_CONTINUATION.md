@@ -1,6 +1,8 @@
 # F-01 EF-1 continuation (run 2): Process B on run 1's fixtures (operator procedure)
 
-**Status:** prepared offline, **not run**. Running it needs the Owner's separate execution approval.
+**Status:** run 2 executed 2026-11-12 under the Owner's authorization: **PASS** (128/128), accepted by the Owner
+(`cpm/qualification/F01_EF1_RESULTS.md`). Any further run needs the Owner's separate execution approval. Steps 5 and
+12 carry the operator-instruction corrections from run 2.
 
 **What it is:** run 1 (`E:\SFM_U0B_Scratch\f01-ef1-full-body`) stopped at B2 and B3, refused before any write under
 the former offset limit (`evidence\EF1_STOPPED.json`). After R3 Amendments 01 and 02, this run repeats **Process B
@@ -64,7 +66,7 @@ Stop at any STOP condition below: exit SFM **without saving** and report. Never 
    ```
    EF1_STEP = "B2"; execfile(EF1_REPO + r"\real_sfm_qualification\f01_ef1_full_body\observer\F01_EF1_Observe.py")
    ```
-5. Click **Apply Pose**. Wait until the status leaves `Checking the applied pose...`, and note the time and whether SFM froze. Expected: `Pose applied: EF1 Body.`; Edit > Undo names `Apply Pose EF1 Body`; the saved body pose in the destination's own spot and facing, still smiling. Observe:
+5. Click **Apply Pose**. Wait until the status leaves `Checking the applied pose...`, and note the time and whether SFM froze. Expected: `Pose applied: EF1 Body.`; Edit > Undo names `Apply Pose EF1 Body`; the saved body pose, still smiling; the model placement keeps its spot and facing. The body root takes the saved translation in the model frame, so the visible character can move a long way (run 2: 78.60 units, mostly downward; design issue `F01-DI-01`). That movement alone is not a STOP. Observe:
    ```
    EF1_STEP = "B3"; execfile(EF1_REPO + r"\real_sfm_qualification\f01_ef1_full_body\observer\F01_EF1_Observe.py")
    ```
@@ -92,7 +94,7 @@ Stop at any STOP condition below: exit SFM **without saving** and report. Never 
     ```
     EF1_STEP = "B9"; execfile(EF1_REPO + r"\real_sfm_qualification\f01_ef1_full_body\observer\F01_EF1_Observe.py")
     ```
-12. Press **Ctrl+Z** once. Expected: the destination pose returns. Observe:
+12. Undo back to and including the Apply. The editor switches at steps 9 and 11 make SFM add its own `Change Recording State` entries above the Apply; they change no animation. Open **Edit**: while Edit > Undo names `Change Recording State`, press **Ctrl+Z**; when it names `Apply Pose EF1 Body`, press **Ctrl+Z** once more and stop. Never undo past the Apply. Note the number of presses. Expected: Edit > Redo names `Apply Pose EF1 Body`, and the destination pose returns. (Run 2 took three presses: two recording-state entries, then the Apply.) Observe:
     ```
     EF1_STEP = "B10"; execfile(EF1_REPO + r"\real_sfm_qualification\f01_ef1_full_body\observer\F01_EF1_Observe.py")
     ```

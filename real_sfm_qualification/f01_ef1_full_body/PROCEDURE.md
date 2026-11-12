@@ -1,7 +1,9 @@
 # F-01 EF-1: TF2 Engineer generic version 3 Full body, bounded native qualification (operator procedure)
 
-**Status:** prepared offline, **not run**. Running it, and every installation change below, needs the Owner's separate
-execution approval.
+**Status:** run 1 (2026-11-10/11) STOPPED at B2/B3; Process B was then completed by the continuation
+(`PROCEDURE_CONTINUATION.md`, run 2, 2026-11-12: **PASS**, `cpm/qualification/F01_EF1_RESULTS.md`). Any further run
+needs the Owner's separate execution approval, as does every installation change below. The B3 and B10 rows carry
+the operator-instruction corrections from run 2.
 
 **Scene writes:**
 - the Owner's preparation (step 0: one Engineer added and posed, with the published CPM installed and CPM not opened);
@@ -200,14 +202,14 @@ The source session is never opened in this process.
 | B0 | Start SFM. Open `<Q>\sessions\ef1_destination.dmx`. **Motion Editor**. Playhead frame **0**. Open CPM, Refresh Models, the Engineer, **Poses**. Submit the setup line. | `EF1 Body` listed, loaded from disk. The Engineer stands in the destination pose, placed and turned differently, smiling. |
 | B1 | Observe (baseline). Select `EF1 Body`; UI capture `UI-B`. | `EF1 UI-B: … OK`. |
 | B2 | Script Editor: `import sys; sys.modules["chadchan3d_cpm_app"].PROD_POSE_QUAL_FAULT[0] = "after-writes"`. With `EF1 Body` selected, **Apply Pose**. Observe. | `The pose couldn't be applied. Nothing was changed.` The Engineer is unchanged. Edit > Undo names the same entry as at B1. |
-| B3 | **Apply Pose** (`EF1 Body`). Wait until the status leaves `Checking the applied pose...`. Note the time. Screenshot `APPLY_BODY.png`. Observe. | `Pose applied: EF1 Body.` Edit > Undo names `Apply Pose EF1 Body`. The Engineer takes the saved body pose **where the destination placed him**: same spot and facing as before the Apply; pelvis raised and forward as saved; still smiling. |
+| B3 | **Apply Pose** (`EF1 Body`). Wait until the status leaves `Checking the applied pose...`. Note the time. Screenshot `APPLY_BODY.png`. Observe. | `Pose applied: EF1 Body.` Edit > Undo names `Apply Pose EF1 Body`. The Engineer takes the saved body pose; the model placement (`rootTransform`) keeps its spot and facing; still smiling. The body root (`bip_pelvis`) takes the saved translation in the model frame, so the visible character can move a long way even though the placement is unchanged (run 2: 78.60 units, mostly downward; design issue `F01-DI-01`). That movement alone is not a STOP. |
 | B4 | Click the viewport, **Ctrl+Z** once. Observe. | The destination pose returns. |
 | B5 | **Ctrl+Y** once. Observe. | The saved pose again. |
 | B6 | **Apply Pose** again (`EF1 Body`). Observe. | `Already matches this pose.` No new Undo entry. |
 | B7 | Switch the timeline to the **Clip Editor** without moving the playhead. Observe. | |
 | B8 | **Apply Pose** (`EF1 Body`). Observe. | Refused: `Switch to the Motion Editor to apply a pose. Nothing was changed.` |
 | B9 | Switch to the **Motion Editor** (playhead unchanged). Observe. | Nothing changed. |
-| B10 | **Ctrl+Z** once. Observe. | The destination pose returns (the baseline). |
+| B10 | Undo back to and including the Apply: open **Edit**; while Edit > Undo names SFM's `Change Recording State` (the editor switches at B7 and B9 add these; they change no animation), press **Ctrl+Z**; when Edit > Undo names `Apply Pose EF1 Body`, press **Ctrl+Z** once more and stop. Never undo past the Apply. Note the number of presses. Observe. | Edit > Redo names `Apply Pose EF1 Body`. The destination pose returns (the baseline). Run 2 took three presses (two recording-state entries, then the Apply). |
 | B11 | Exit SFM **without saving**. Note a clean close. Confirm no `sfm.exe` remains. | |
 
 ## R: evidence, restoration and verdict (SFM closed; always)
