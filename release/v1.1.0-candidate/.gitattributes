@@ -1,0 +1,3 @@
+# Release candidate evidence: the spec is hash-pinned by the PS-2 kit; keep exact LF bytes.
+*.json text eol=lf
+*.md text eol=lf

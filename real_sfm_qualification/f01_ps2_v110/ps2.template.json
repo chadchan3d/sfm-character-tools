@@ -1,0 +1,67 @@
+{
+ "format": "F01-PS2-config-v1",
+ "description": "F-01 PS-2: v1.1.0 production candidate package, native smoke, rollback to v1.0.0 and restoration. Copy to <Q>/ps2.json and replace every <...> path. Change no pin.",
+ "paths": {
+  "Q": "<RUN_DIR>",
+  "REPO": "<REPO>",
+  "GAME": "<SFM game folder>",
+  "LIBRARY": "%USERPROFILE%/Documents/SFM Character Preset Manager",
+  "SESSIONS": "<SFM sessions folder>",
+  "SCRIPTS_ROOT": "{GAME}/usermod/scripts",
+  "CFG_ROOT": "{GAME}/usermod/cfg",
+  "LOG_DIR": "C:/Users/Public/Documents/SFM Character Preset Manager Logs",
+  "V100_ZIP": "<published v1.0.0 ZIP>/SFM.Character.Tools.v1.0.0.zip",
+  "EF1_SOURCE": "<EF-1 run 1>/sessions/ef1_source.dmx",
+  "EF1_DESTINATION": "<EF-1 run 1>/sessions/ef1_destination.dmx",
+  "R2_FIXTURE": "<R2 fixture folder>/F01_R2_DISPOSABLE_testscripts_promovid.dmx",
+  "LEGACY_POSE": "<Stage D NQ-1 run 2>/evidence/library_poses/krystal2020--7d2aee52ef3a/NQ1 Pose B--f8fe642ca9ff.json"
+ },
+ "pins": {
+  "software_version": "1.1.0",
+  "v100_zip_sha256": "5323b1431a200c0bea3641e7dcb2f9fac45920d889f749ac9bf07972f5a89458",
+  "v100_zip_entries": 1006,
+  "v100_cpm_sha256": "ccbed9d794984643fc6f7d7d9c65ef90e5812eb27f85dc4a86855a17c2d3d8df",
+  "v100_inventory_sha256": "ad058c15b4b9838d0827a11d0b34e15ef447b3f8f3ef7579b0e0860afafd65dd",
+  "v100_signature_sha256": "344b9fb82df2ebf724cad359647ce911fb2159b8690dafdb672783e71654a5ce",
+  "spec_sha256": "3909f6a65b96cfbe5c2610898a2582ce27237772dcd9c38a8d54a0295afcc249",
+  "candidate_cpm_sha256": "84cd996c914f82bcc41414413958a5a9b536fca088081d862559f48a69144568",
+  "profile_sha256": "f445d5ef7fb183e6bcae3099b3812ffd2363213911605134231c2a1f708d6d00",
+  "body_profile_sha256": "22dcd1599c0556bcb71df0a9b9d14657684173b3bbf557250710a8104a6baa26",
+  "candidate_inventory_sha256": "036786e1ab619bb6231c59785575585ff493194cd50deb4bf971f26b92b24ffa",
+  "ef1_source_sha256": "cc3d2745e67cfb0cea247fcd5c6828e4bbce3ca1525a4bce19d10808793a76fc",
+  "ef1_destination_sha256": "de31257bd014373118c20e9eeac6c783db35a4197ddeb94e6e8ed50aeb22cc89",
+  "r2_fixture_sha256": "259ea8a614bc9e43e5bde15afdf38e1a1295dffb50b14cf75692df4221a05a2c",
+  "legacy_pose_sha256": "87e61f60f32c0ffd2436f1fd72ca872918c73c6db39af755b581cde851a385eb"
+ },
+ "session_pins": {
+  "PS2_ENGINEER_SOURCE.dmx": "cc3d2745e67cfb0cea247fcd5c6828e4bbce3ca1525a4bce19d10808793a76fc",
+  "PS2_ENGINEER_DESTINATION.dmx": "de31257bd014373118c20e9eeac6c783db35a4197ddeb94e6e8ed50aeb22cc89",
+  "PS2_KRYSTAL.dmx": "259ea8a614bc9e43e5bde15afdf38e1a1295dffb50b14cf75692df4221a05a2c",
+  "PS2_V100_KRYSTAL.dmx": "259ea8a614bc9e43e5bde15afdf38e1a1295dffb50b14cf75692df4221a05a2c"
+ },
+ "seed": {
+  "character_dir": "krystal2020--7d2aee52ef3a",
+  "legacy_pose_name": "NQ1 Pose B--f8fe642ca9ff.json"
+ },
+ "smoke": {
+  "engineer_pose": "PS2 Engineer Body",
+  "soldier_pose": "PS2 Soldier Body",
+  "krystal_pose": "PS2 Krystal grip"
+ },
+ "operator_expect": {
+  "engineer_save_summary": "Includes hip movement. Facial expressions and the character's rootTransform are not saved.",
+  "heavy_full_body_message": "Some bones of this character have no controls, and CPM can't confirm they stay fixed. Choose Selected parts to save a smaller pose.",
+  "krystal_full_body_message": "Full body can't be saved: parts of this character's body are driven by its rig. Choose Selected parts to save a smaller pose.",
+  "help_version_candidate": "Version: 1.1.0",
+  "v100_opened_without_error": true
+ },
+ "housekeeping": [
+  "cfg\\config.cfg",
+  "cfg\\ifm.txt",
+  "cfg\\server_blacklist.txt",
+  "demoheader.tmp",
+  "stats.txt",
+  "tf2_playerstats.dmx",
+  "voice_ban.dt"
+ ]
+}

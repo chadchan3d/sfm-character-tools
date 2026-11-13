@@ -45424,14 +45424,19 @@ def prod_body_verify_applied(pending):
 # animated (control -> channel -> bone) transforms without a per-character profile, the W/A/D/P sets, scope-aware
 # compatibility, parent-first skeletal composition with unselected bridges and cumulative uniform scale, and the
 # existing P1-P7 transaction primitives of stages D/E. Version 1 (left arm) and version 2 (registry full body) records
-# keep their own paths. Unqualified capabilities stay disabled: direct_fk_v1 is experimental (qualification build
-# only) and constant_channel_carried_v1 is unavailable until a native procedural-state guard is qualified.
+# keep their own paths. direct_fk_v1 revision 1 is qualified (v1.1.0 production candidate, below); unqualified
+# capabilities stay disabled: constant_channel_carried_v1 is unavailable until a native procedural-state guard is
+# qualified.
 # ===========================================================================
 
 PROD_SCOPE_POSE_VERSION = 3
 PROD_SCOPE_RULE = u"direct_fk_v1"
-# The engine supplies the rules; a file only names one. status: experimental = qualification build only.
-PROD_SCOPE_RULES = {u"direct_fk_v1": {u"revision": 1, u"status": u"experimental"}}
+# The engine supplies the rules; a file only names one. status: experimental = qualification build only; qualified =
+# production as well. direct_fk_v1 revision 1 is qualified natively: Full body by EF-1 (TF2 Engineer, run 2 PASS
+# 128/128 on 3da2b653..., cpm/qualification/F01_EF1_RESULTS.md) and Selected parts by SFP-1 NQ1 (Krystal, PASS
+# 134/134 on 2d791dec..., F01_SFP1_NQ1_NATIVE_RESULTS.md); generic availability under the fail-closed structural and
+# transaction safeguards (Owner, "F-01 - Authorize Offline v1.1.0 Production Candidate Preparation").
+PROD_SCOPE_RULES = {u"direct_fk_v1": {u"revision": 1, u"status": u"qualified"}}
 PROD_SCOPE_CARRIED_RULE = u"constant_channel_carried_v1"
 PROD_SCOPE_CARRIED_REVISION = 1
 # constant_channel_carried_v1 (R3 3.1): disabled. Its admission also needs a supported procedural-state guard

@@ -466,9 +466,22 @@ def section_rename_ui(window, tabs, env, boxes, QtGui):
               and not window.save_pose_button.isEnabled(), rows)
         g["prod_pose_load_registry"] = lambda: dict(BODY_REGISTRY)
         g["prod_pose_rig_class"] = lambda reg, model, checksum: None
+        # v1.1.0 production candidate: direct_fk_v1 is qualified, so a character without a registry rig class is
+        # supported through generic scoped poses (the engine refuses what it can't pose, at Save and Apply).
         window.refresh_pose_view()
         rows = [plist.item(i).text() for i in range(plist.count())]
-        check("N5 an unsupported character keeps its own message",
+        no_poses = g["PROD_POSE_MESSAGES"][u"no-poses"].split(u"%(character)s")[0]
+        check("N5 production: a character without a registry profile is supported by generic scoped poses",
+              len(rows) == 1 and rows[0].startswith(no_poses) and
+              rows[0] != g["PROD_POSE_MESSAGES"][u"unsupported-character"], rows)
+        usable = g["prod_scope_rule_usable"]
+        g["prod_scope_rule_usable"] = lambda *a, **k: False
+        try:
+            window.refresh_pose_view()
+            rows = [plist.item(i).text() for i in range(plist.count())]
+        finally:
+            g["prod_scope_rule_usable"] = usable
+        check("N5 an unsupported character keeps its own message (no registry profile and no usable scoped rule)",
               rows == [g["PROD_POSE_MESSAGES"][u"unsupported-character"]], rows)
     finally:
         QtGui.QMenu = real_menu

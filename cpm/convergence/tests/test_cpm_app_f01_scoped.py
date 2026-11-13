@@ -1328,17 +1328,26 @@ def section_window(app, ns, fx, root):
     lib = library(root, u"heavy")
     win = window(app, ns, reg, lib)
     mode = ns["PROD_POSE_REGISTRY_MODE"]
-    check("N.shipped_build_is_production_with_scoped_rules_experimental", mode == u"production" and
-          ns["PROD_SCOPE_RULES"] == {u"direct_fk_v1": {u"revision": 1, u"status": u"experimental"}} and
-          ns["PROD_SCOPE_CARRIED_ENABLED"] == [False] and ns["PROD_SCOPE_EXTRAPOLATION_QUALIFIED"] == [False])
-    win.prompts = [u"Heavy Pose"]
+    # v1.1.0 production candidate: direct_fk_v1 revision 1 is qualified (generic, fail-closed); nothing else changes.
+    check("N.shipped_build_is_production_with_direct_fk_v1_qualified_and_carried_disabled", mode == u"production" and
+          ns["PROD_SCOPE_RULES"] == {u"direct_fk_v1": {u"revision": 1, u"status": u"qualified"}} and
+          ns["PROD_SCOPE_CARRIED_ENABLED"] == [False] and ns["PROD_SCOPE_EXTRAPOLATION_QUALIFIED"] == [False] and
+          ns["PROD_POSE_QUAL_FAULT"] == [None] and
+          ns["prod_scope_rule_usable"](u"production") and not ns["prod_scope_rule_usable"](u"production", revision=2)
+          and not ns["prod_scope_rule_usable"](u"production", rule=u"constant_channel_carried_v1"))
+    check("N.production_authorization_admits_the_qualified_rule",
+          outcome(lambda: authorize(ns, u"Save Pose", mode=u"production"))[0] == u"ok")
+    # The unrigged Heavy's Full body (declared-procedural helpers) refuses in the production Save dialog: no record,
+    # no Poses folder, no scene write, no fallback.
+    win.scopes = [{u"name": u"Heavy body", u"kind": u"full_body"}]
     got = win.save_pose(None, (u"full_body",))
-    check("N.production_save_new_for_a_non_registry_character_is_unchanged",
-          got is None and not win.inventories and win.statuses[-1][2] == u"not-qualified" and
-          not os.path.isdir(os.path.join(lib[u"char_dir"], u"Poses")), win.statuses[-1])
-    refused("N.production_authorization_refuses_the_experimental_rule", outcome(lambda: authorize(
-        ns, u"Save Pose", mode=u"production")), u"not-qualified")
-    ns["PROD_POSE_REGISTRY_MODE"] = u"qualification"
+    check("N.production_unsupported_full_body_refuses_in_the_dialog_without_writing",
+          got is None and len(win.inventories) == 1 and win.inventories[-1][1] is False and
+          win.inventories[-1][0][u"full_body"][u"status"] == u"refused" and
+          win.inventories[-1][0][u"full_body"][u"code"] == u"carried-unsupported" and
+          not os.path.isdir(os.path.join(lib[u"char_dir"], u"Poses")) and not writes(src) and not src.dm.calls,
+          (win.inventories[-1][0][u"full_body"], win.statuses[-1:]))
+    # Everything below runs in the production build mode unless it says otherwise.
     try:
         left = lambda inv: {u"name": u"Heavy grip", u"kind": u"selected_parts", u"bones": [
             b for r in inv[u"view"] if r[u"path"][-1] == u"LeftFingers" for b in r[u"bones"]]}
@@ -1368,10 +1377,19 @@ def section_window(app, ns, fx, root):
         item = ns["prod_pose_reread"](lib, saved, reg)
         calls = {}
         real = dict((k, ns[k]) for k in (u"prod_scope_apply", u"prod_body_apply", u"prod_pose_apply"))
-        win.apply_pose(item)
+        # The qualification fault hook is armed but inert in production: the Apply commits normally.
+        ns["PROD_POSE_QUAL_FAULT"][0] = u"after-writes"
+        try:
+            win.apply_pose(item)
+        finally:
+            fault_left = ns["PROD_POSE_QUAL_FAULT"][0]
+            ns["PROD_POSE_QUAL_FAULT"][0] = None
         check("N.apply_pose_dispatches_v3_through_the_real_lifecycle", len(win.pending) == 1 and
               win.pending[0].get(u"scoped") and [c[0] for c in dst.dm.calls] == ["StartUndo", "FinishUndo"],
               win.statuses[-1:])
+        check("N.production_ignores_the_qualification_fault_hook", ns["PROD_POSE_REGISTRY_MODE"] == u"production" and
+              fault_left == u"after-writes" and len(win.pending) == 1 and
+              u"Abort" not in [c[0] for c in dst.dm.calls], (fault_left, [c[0] for c in dst.dm.calls]))
         verdict = ns["prod_pose_deferred_verify"](win.pending[0])
         check("N.deferred_turn_verifies_the_scoped_pose", verdict == {u"phase": u"committed-verified"}, verdict)
         check("N.status_parts_phrase_names_selected_parts",
@@ -1419,13 +1437,24 @@ def section_window(app, ns, fx, root):
               win.statuses[-1][2] == u"recovery-blocked", (blocked, win.statuses[-1]))
         ns["PROD_POSE_RECOVERY_BLOCK"][0] = None
         win.pose_recovery_blocked = False
-        # Krystal (registry character) in the qualification build: Full body keeps the v2 route, Selected parts v3.
+        # Krystal (registry character) in the PRODUCTION build: its version 2 Full body mapping stays experimental, so
+        # there is no v2 route; Full body reaches the v3 dialog and refuses there (rig-driven), with no fallback.
         k15 = fx[u"k15"]
         kw = FS.World(k15)
         use(ns, kw, k15)
         klib = library(root, u"krystal2020")
         kwin = window(app, ns, reg, klib)
         kwin.identity = dict(Pin.identity)
+        kwin.scopes = [{u"name": u"Krystal body", u"kind": u"full_body"}]
+        none = kwin.save_pose(None, (u"full_body",))
+        check("N.production_krystal_full_body_has_no_v2_route_and_refuses_without_fallback",
+              none is None and kwin.inventories[-1][1] is False and
+              kwin.inventories[-1][0][u"full_body"][u"status"] == u"refused" and
+              kwin.inventories[-1][0][u"full_body"][u"code"] == u"rig-driven" and
+              not os.path.isdir(os.path.join(klib[u"char_dir"], u"Poses")) and not writes(kw) and not kw.dm.calls,
+              kwin.inventories[-1][0][u"full_body"])
+        # Krystal in the qualification build: Full body keeps the v2 route, Selected parts v3.
+        ns["PROD_POSE_REGISTRY_MODE"] = u"qualification"
         kwin.scopes = [{u"name": u"Krystal body", u"kind": u"full_body"}]
         v2 = kwin.save_pose(None, (u"full_body",))
         check("N.krystal_full_body_keeps_its_version_2_route", v2 is not None and
@@ -1496,7 +1525,10 @@ def section_ui_state(ns):
     check("M.availability_needs_the_rule_in_this_build_and_the_same_model",
           ns["prod_scope_availability"](record, {"model": u"models/player/heavy.mdl"}, u"qualification") ==
           u"available" and ns["prod_scope_availability"](record, {"model": u"models/player/heavy.mdl"},
-                                                         u"production") == u"not-qualified" and
+                                                         u"production") == u"available" and
+          ns["prod_scope_availability"](dict(record, pose=dict(record[u"pose"], engine=dict(
+              record[u"pose"][u"engine"], revision=2))), {"model": u"models/player/heavy.mdl"},
+              u"production") == u"not-qualified" and
           ns["prod_scope_availability"](record, {"model": u"models/other.mdl"}, u"qualification") ==
           u"different-model")
     check("M.legacy_regions_are_not_required_by_v3", ns["prod_scope_parts"](record) == [u"selected_parts"])

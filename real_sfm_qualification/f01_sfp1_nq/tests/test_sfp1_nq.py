@@ -6,8 +6,9 @@
   step whose shot differs, and its step table equals the comparator's.
 - The UI capture against a fake CPM window (Python 2.7 and 3): read-only, records a version 3 Selected parts pose and
   its Pose Info rows, reports STOP otherwise, never repeats.
-- sfp1_tool (Python 3): build derives the pinned qualification CPM from the real candidate in exactly one line; a
-  wrong qualification pin or an unpinned candidate refuses; inspect pins the prepared sessions and refuses unprepared
+- sfp1_tool (Python 3): build derives the pinned qualification CPM from the real qualified candidate (read from its
+  pinned Git commit, since HEAD's CPM has moved on) in exactly one line; a wrong qualification pin or an unpinned
+  candidate refuses; inspect pins the prepared sessions and refuses unprepared
   or duplicated ones; the reused S3 tool carries this kit's identity.
 - sfp1_compare (Python 3): a complete synthetic run that meets every Expected result is PASS (with and without the
   optional prop process, prop applied or refused), and each counterexample is FAIL.
@@ -216,11 +217,43 @@ class UITests(unittest.TestCase):
 
 # --- sfp1_tool (Python 3) ------------------------------------------------------------------------------------------
 
+# SFP-1 NQ1 is closed and tied to its natively qualified candidate 2d791dec..., not to whatever CPM HEAD holds (the
+# CPM has moved on since). The kit's build is therefore tested on the exact qualified source, read as the raw Git blob
+# from the kit's own commit (7f62c62, whose CPM is 2d791dec...). The tool's own hash checks (candidate and derived
+# qualification build b58ae9ba...) are unchanged and still decide.
+QUALIFIED_CPM_COMMIT = "7f62c62722f388e45fa66c00bd00e4b958bde918"
+QUALIFIED_CPM_REL = "cpm/app/SFM_Character_Preset_Manager.py"
+_QUALIFIED = []
+
+
+def qualified_candidate():
+    """The qualified candidate's exact bytes from QUALIFIED_CPM_COMMIT, in a private temporary folder; raises unless
+    they hash to the template's candidate pin."""
+    if not _QUALIFIED:
+        import atexit
+        import subprocess
+        raw = subprocess.check_output(["git", "-C", REPO, "cat-file", "blob",
+                                       "%s:%s" % (QUALIFIED_CPM_COMMIT, QUALIFIED_CPM_REL)])
+        with open(os.path.join(ROOT, "sfp1.template.json"), "rb") as f:
+            pin = json.loads(f.read().decode("utf-8"))["pins"]["candidate_cpm_sha256"]
+        if sha_bytes(raw) != pin:
+            raise AssertionError("the CPM at %s is %s, not the qualified %s" % (QUALIFIED_CPM_COMMIT, sha_bytes(raw),
+                                                                                 pin))
+        where = tempfile.mkdtemp(prefix="sfp1qualcpm")
+        atexit.register(shutil.rmtree, where, True)
+        path = os.path.join(where, "SFM_Character_Preset_Manager.py")
+        with open(path, "wb") as f:
+            f.write(raw)
+        _QUALIFIED.append(path)
+    return _QUALIFIED[0]
+
+
 def config(folder, **paths):
     with open(os.path.join(ROOT, "sfp1.template.json"), "rb") as f:
         c = json.loads(f.read().decode("utf-8"))
     c["paths"].update(Q=os.path.join(folder, "Q"), REPO=REPO, GAME=folder, SESSIONS=folder, LIBRARY=folder,
-                      R2_FIXTURE=os.path.join(folder, "fixture.dmx"), LEGACY_POSE=os.path.join(folder, "fixture.dmx"))
+                      R2_FIXTURE=os.path.join(folder, "fixture.dmx"), LEGACY_POSE=os.path.join(folder, "fixture.dmx"),
+                      CANDIDATE=qualified_candidate())
     c["paths"].update(paths)
     path = os.path.join(folder, "sfp1.json")
     with open(path, "wb") as f:
@@ -256,7 +289,7 @@ if PY3:
             self.assertRaises(SystemExit, TOOL.cmd_build, TOOL.S.load(path))
             self.assertFalse(os.path.exists(os.path.join(self.dir, "Q", "staged")))
             cand = os.path.join(self.dir, "cand.py")
-            shutil.copyfile(os.path.join(REPO, "cpm", "app", "SFM_Character_Preset_Manager.py"), cand)
+            shutil.copyfile(qualified_candidate(), cand)
             with open(cand, "ab") as f:
                 f.write(b"\n# changed\n")
             path, c = config(self.dir, CANDIDATE=cand)
