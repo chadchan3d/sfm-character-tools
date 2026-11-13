@@ -47818,7 +47818,8 @@ def prod_scope_summary(kind, inventory, bones=None, include_highlighted=True, ro
             return u"The listed controls are left as they are on the character."
         if inventory[u"highlighted"]:
             return u"Includes the listed facial bones. Facial expressions are not saved."
-        return u"Facial expressions and the character's place in the scene are not saved."
+        # F01-DI-01 (RETAIN R3): hip movement is part of the pose; only the rootTransform stays as it is.
+        return u"Includes hip movement. Facial expressions and the character's rootTransform are not saved."
     bones = list(bones or [])
     if not bones:
         return PROD_SCOPE_MESSAGES[u"empty-selection"]
@@ -47869,7 +47870,7 @@ def prod_scope_dialog_state(inventory, choice):
 
 PROD_POSE_INFO_MONTHS = (u"January", u"February", u"March", u"April", u"May", u"June", u"July", u"August",
                          u"September", u"October", u"November", u"December")
-PROD_POSE_FULL_BODY_NOT_INCLUDED = {3: [u"facial expressions", u"scene placement"],
+PROD_POSE_FULL_BODY_NOT_INCLUDED = {3: [u"facial expressions", u"rootTransform"],
                                     2: [u"facial expressions", u"gaze", u"scene placement"]}
 
 
@@ -47893,7 +47894,7 @@ def prod_pose_info_view(record):
         sc = pose[u"scope"]
         not_included = [u"%s controls" % e[u"label"] for e in sc[u"exclusions"]]
         if sc[u"kind"] == u"full_body":
-            rows.append([u"Includes:", u"Full body", None])
+            rows.append([u"Includes:", u"Full body, including hip movement", None])
             not_included += PROD_POSE_FULL_BODY_NOT_INCLUDED[3]
         else:
             friendly = prod_scope_friendly_label(sc[u"label"])

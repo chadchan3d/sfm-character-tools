@@ -1,8 +1,9 @@
 # F01-DI-01: Apply in Place, anatomical pose translation versus character placement (2026-11-12)
 
-**Status: UNRESOLVED design issue.** Recorded by the Owner's decision "F-01 — EF-1 Closure Decisions" (2026-11-12).
-No behaviour is changed: pelvis translation stays in Full body, `rootTransform` stays untouched, and no new placement
-rule is implemented. This is not an EF-1 failure; EF-1 run 2 is PASS (`F01_EF1_RESULTS.md`).
+**Status: RESOLVED — RETAIN R3** (2026-11-12; "F-01 — Final F01-DI-01 Decision and Closure"). Astra's final ruling,
+"RETAIN WITH MINOR REFINEMENTS", accepted by the Owner after independent and adversarial reviews by Astra and Fable.
+The resolution is section 7. Sections 1–6 are the original record (opened by "F-01 — EF-1 Closure Decisions",
+2026-11-12), kept as written. This was never an EF-1 failure; EF-1 run 2 remains CLOSED/PASS (`F01_EF1_RESULTS.md`).
 
 ## 1. What happened
 
@@ -74,7 +75,7 @@ model up is 54° from world up. The same model-frame offset therefore points lar
 > 5. Which native evidence would qualify the answer (for example, EF-1's fixtures with the destination placement
 >    tilted, plus an upright destination and a crouch pose)?
 
-## 6. Constraints until decided
+## 6. Constraints until decided (as recorded while open)
 
 - No pose-engine, R3 or placement change. Pelvis translation stays in Full body; `rootTransform` is not altered.
 - Operator instructions note that a large body-root movement after Apply is expected under R3 and is not by itself a
@@ -82,3 +83,58 @@ model up is 54° from world up. The same model-frame offset therefore points lar
 - Evidence: run 2 folder `E:\SFM_U0B_Scratch\f01-ef1-full-body-r2`, observations `S0-04.json` (B1) `d22439a8…` and
   `S0-06.json` (B3) `8ef36b7d…`; record `0e0390e0…`; inherited run-1 `S0-01.json`/`S0-02.json` (source rest and
   posed).
+
+## 7. Resolution: RETAIN R3 (2026-11-12)
+
+**Ruling (Astra, final; accepted by the Owner): RETAIN WITH MINOR REFINEMENTS.** Generic v3 Full body Apply continues
+to:
+- preserve the destination's `rootTransform`;
+- apply the saved pelvis translation and rotation;
+- apply the other authorized skeletal pose controls;
+- preserve the destination's non-root structural offsets;
+- preserve unrelated animation and the existing transaction safeguards.
+
+**Artist-facing principle:** a Full body pose reproduces the saved skeletal arrangement, including pelvis movement,
+relative to the destination character's existing scene root. Pelvis translation is a legitimate part of crouching,
+sitting, jumping, leaning, lunging and weight-shift poses. This supersedes the provisional principle in section 4
+("A saved pose should normally apply to the character where the artist has placed it"), which is kept above as the
+original concern.
+
+**Superseded alternatives (rejected):**
+- *Preserve the destination pelvis position by default.* Astra's initial recommendation, withdrawn on
+  reconsideration: it sacrifices legitimate pelvis movement.
+- *Transfer saved pelvis height, keep the destination's horizontal pelvis position* (Fable). Rejected: horizontal
+  pelvis movement is also legitimate posing information, particularly for leaning, lunging and weight shifts.
+- Neither improves normal Full body posing enough to justify changing the qualified engine.
+
+**Interpretation of EF-1:** the 78.60-unit displacement came from transferring an unusually large saved pelvis
+translation (run 1's 73.1-unit Process A offset) into a tilted destination model frame. It was correct under R3. It
+shows a known limitation (CPM cannot infer whether an artist used pelvis translation for posing or for incidental
+placement); it does not establish a defect in the default Full body workflow. **EF-1 remains CLOSED/PASS; no
+qualification correction or retest.** EF-1's observations, verdict and native evidence are not rewritten.
+
+**Later option, not current scope:** optional pose matching (for example, a choice to keep the destination's pelvis
+position) may be considered later if actual artist workflows establish a recurring need. It is not part of the
+current F-01 implementation.
+
+**Minor refinement, wording only (Owner-accepted):** the version 3 Full body interface text said what is not saved as
+"the character's place in the scene" / "scene placement", which can be read as a promise that the visible body stays
+where it is. Corrected so that it names hip movement as included and the `rootTransform` as what stays:
+
+| Where | Before | After |
+|---|---|---|
+| Save Pose dialog, Full body summary (`prod_scope_summary`) | "Facial expressions and the character's place in the scene are not saved." | "Includes hip movement. Facial expressions and the character's rootTransform are not saved." |
+| Pose Info, Includes (v3 Full body) | "Full body" | "Full body, including hip movement" |
+| Pose Info, Not included (v3 Full body, `PROD_POSE_FULL_BODY_NOT_INCLUDED[3]`) | "Facial expressions, scene placement" | "Facial expressions, rootTransform" |
+
+Unchanged on purpose: the Apply messages ("Pose applied: …", "Already matches this pose.") make no placement claim;
+Selected parts' "The body root keeps its position." is accurate (Selected parts never transfers root translation);
+the legacy version 2 (registry) Full body wording belongs to a different, separately qualified route. No placement
+selector, warning, threshold, extra pane or recurring explanation was added.
+
+**CPM identity:** the wording successor is `bb70cce26a65b069b5e44cf3e89bfe01ae06acfe5dee99a577632d997ed8211d`, which
+differs from the natively qualified `3da2b6537d67bc4c55ae7952f24f86ec61ea4f51b2c6721078a3a159a466a35d` in those three
+string lines plus one comment, nothing else. **It is not the binary tested in EF-1;** EF-1 PASS stays tied to
+`3da2b653…` (qualification build `bb0433a9…`). The EF-1 kit's build test now reads that exact source from its pinned
+commit `19e8f68` and still requires both original hashes. Pose semantics, record versions, tolerances, write scope,
+Undo/Redo, Abort, P7 and the comparator are unchanged.

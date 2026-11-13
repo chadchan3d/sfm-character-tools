@@ -11,8 +11,8 @@
 - The UI capture, against a fake CPM window (Python 2.7 and 3): read-only; records a version 3 Full body pose; reports
   STOP otherwise; is never repeated.
 - ef1_tool (Python 3):
-  - build derives the pinned qualification CPM from the real candidate in exactly one line, and a wrong pin
-    refuses;
+  - build derives the pinned qualification CPM from the real qualified candidate (read from its pinned Git commit,
+    since HEAD's CPM has a wording-only successor) in exactly one line, and a wrong pin or a changed source refuses;
   - inspect pins two prepared character sessions, records autosaves, and refuses a starter, identical or unexpected
     file;
   - restore moves a new Engineer character folder's files into evidence and removes the emptied folder;
@@ -271,11 +271,42 @@ class UITests(unittest.TestCase):
 
 # --- ef1_tool (Python 3) -------------------------------------------------------------------------------------------
 
+# EF-1 is closed and tied to the natively qualified candidate 3da2b653..., not to whatever CPM HEAD holds (HEAD's CPM
+# has a wording-only successor, F01-DI-01). The kit's build is therefore tested on the exact qualified source, read
+# as the raw Git blob from the accepted continuation-kit commit that EF-1 run 2 ran. The tool's own hash checks
+# (candidate and derived qualification build) are unchanged and still decide.
+QUALIFIED_CPM_COMMIT = "19e8f68fe51482704b5e571fb556ba62c57aea9f"
+QUALIFIED_CPM_REL = "cpm/app/SFM_Character_Preset_Manager.py"
+_QUALIFIED = []
+
+
+def qualified_candidate():
+    """The qualified candidate's exact bytes from QUALIFIED_CPM_COMMIT, in a private temporary folder; raises unless
+    they hash to the template's candidate pin."""
+    if not _QUALIFIED:
+        import atexit
+        import subprocess
+        raw = subprocess.check_output(["git", "-C", REPO, "cat-file", "blob",
+                                       "%s:%s" % (QUALIFIED_CPM_COMMIT, QUALIFIED_CPM_REL)])
+        with open(os.path.join(ROOT, "ef1.template.json"), "rb") as f:
+            pin = json.loads(f.read().decode("utf-8"))["pins"]["candidate_cpm_sha256"]
+        if sha_bytes(raw) != pin:
+            raise AssertionError("the CPM at %s is %s, not the qualified %s" % (QUALIFIED_CPM_COMMIT, sha_bytes(raw),
+                                                                                 pin))
+        where = tempfile.mkdtemp(prefix="ef1qualcpm")
+        atexit.register(shutil.rmtree, where, True)
+        path = os.path.join(where, "SFM_Character_Preset_Manager.py")
+        with open(path, "wb") as f:
+            f.write(raw)
+        _QUALIFIED.append(path)
+    return _QUALIFIED[0]
+
+
 def config(folder, **paths):
     with open(os.path.join(ROOT, "ef1.template.json"), "rb") as f:
         c = json.loads(f.read().decode("utf-8"))
     c["paths"].update(Q=os.path.join(folder, "Q"), REPO=REPO, GAME=folder, SESSIONS=folder,
-                      LIBRARY=os.path.join(folder, "library"))
+                      LIBRARY=os.path.join(folder, "library"), CANDIDATE=qualified_candidate())
     c["paths"].update(paths)
     path = os.path.join(folder, "ef1.json")
     with open(path, "wb") as f:
@@ -321,6 +352,23 @@ if PY3:
                     f.write(json.dumps(c).encode("utf-8"))
                 self.assertRaises(SystemExit, lambda: capture(lambda: TOOL.cmd_build(TOOL.S.load(path))))
                 self.assertFalse(os.path.exists(os.path.join(self.dir, "Q", "staged")), cand)
+
+        def test_build_uses_the_historical_qualified_source_and_refuses_a_wording_only_successor(self):
+            # The source comes from its pinned commit with the pinned hash; a CPM differing only in its strings (as
+            # HEAD's wording successor does) is still refused, so the hash checks are not weakened.
+            self.assertEqual(TOOL.T.sha(qualified_candidate()),
+                             "3da2b6537d67bc4c55ae7952f24f86ec61ea4f51b2c6721078a3a159a466a35d")
+            with open(qualified_candidate(), "rb") as f:
+                raw = f.read()
+            old = b"Facial expressions and the character's place in the scene are not saved."
+            self.assertEqual(raw.count(old), 1)
+            successor = os.path.join(self.dir, "successor_cpm.py")
+            with open(successor, "wb") as f:
+                f.write(raw.replace(old, b"Includes hip movement. Facial expressions and the character's "
+                                         b"rootTransform are not saved."))
+            path, c = config(self.dir, CANDIDATE=successor)
+            self.assertRaises(SystemExit, lambda: capture(lambda: TOOL.cmd_build(TOOL.S.load(path))))
+            self.assertFalse(os.path.exists(os.path.join(self.dir, "Q", "staged")))
 
         def test_build_refuses_a_wrong_qualification_pin(self):
             path, c = config(self.dir)

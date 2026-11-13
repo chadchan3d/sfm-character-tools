@@ -2391,15 +2391,20 @@ def section_ui_copy(ns, fx, root):
                          [u"Saved:", u"November 8, 2026", None]] and v[u"effect"] is None, v)
     v = view(body_face[u"record"])
     check("UI.2_consequential_exclusions_remain_visible",
-          [u"Not included:", u"Face controls, facial expressions, scene placement", None] in v[u"rows"], v)
+          [u"Not included:", u"Face controls, facial expressions, rootTransform", None] in v[u"rows"], v)
     v = view(forearm[u"record"])
     check("UI.3_attached_part_movement_remains_visible_where_it_happens",
           v[u"effect"] == u"Unselected parts attached to these parts move with them.", v)
     v = view(body[u"record"])
     check("UI.4_full_body_shows_only_what_it_does_not_include",
-          v[u"rows"][:2] == [[u"Includes:", u"Full body", None],
-                             [u"Not included:", u"Facial expressions, scene placement", None]] and
+          v[u"rows"][:2] == [[u"Includes:", u"Full body, including hip movement", None],
+                             [u"Not included:", u"Facial expressions, rootTransform", None]] and
           v[u"effect"] is None, v)
+    # F01-DI-01 (RETAIN R3): v3 Full body wording must not imply the visible body stays where it is.
+    texts = u" ".join(r[1] for r in v[u"rows"]).lower()
+    check("UI.DI01_full_body_info_names_hip_movement_and_the_roottransform_only",
+          u"hip movement" in texts and u"roottransform" in texts and u"scene placement" not in texts and
+          u"place in the scene" not in texts and u"stays in place" not in texts, v)
     check("UI.5_spaced_and_camel_case_group_names",
           ns["prod_scope_friendly_label"](u"LeftFingers") == u"Left fingers" and
           ns["prod_scope_friendly_label"](u"Left Fingers") == u"Left Fingers" and
@@ -2444,7 +2449,7 @@ def section_ui_copy(ns, fx, root):
                                   u"its position.", summary([u"pelvis"]))
     full = ns["prod_scope_dialog_state"](arm_inventory_without_face(ns, inv), {u"kind": u"full_body"})[u"summary"]
     check("UI.save_full_body_states_what_is_not_saved_including_scene_placement",
-          full == u"Facial expressions and the character's place in the scene are not saved.", full)
+          full == u"Includes hip movement. Facial expressions and the character's rootTransform are not saved.", full)
     for bones in (FINGERS, [u"forearm"], [u"pelvis"], [u"finger1", u"finger3"]):
         s = summary(bones)
         check("UI.save_%s_never_promises_unchanged_parts_or_names_bones" % u"_".join(bones[:2]),
