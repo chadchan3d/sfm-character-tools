@@ -77,6 +77,38 @@ class Calls(object):
         self.log = []
 
 
+class Vec(object):
+    def __init__(self, x, y, z):
+        self.x, self.y, self.z = x, y, z
+
+
+class FakeAttribute(object):
+    def __init__(self, value):
+        self.value = value
+
+    def GetValue(self):
+        return self.value
+
+
+class FakeElement(object):
+    """A read-only DME element: name, handle and attributes; it offers no setter."""
+
+    def __init__(self, name, handle, attrs, calls=None):
+        self.name, self.handle, self.attrs = name, handle, attrs
+
+    def GetName(self):
+        return self.name
+
+    def GetHandle(self):
+        return self.handle
+
+    def HasAttribute(self, name):
+        return self.attrs.get(name) is not None
+
+    def GetAttribute(self, name):
+        return FakeAttribute(self.attrs[name])
+
+
 def fake_environment(calls, version=3):
     dm = types.SimpleNamespace() if PY3 else type("DM", (), {})()
     dm.CanUndo = lambda: calls.log.append("CanUndo") or True
@@ -87,7 +119,14 @@ def fake_environment(calls, version=3):
     vs = types.ModuleType("vs")
     vs.g_pDataModel = dm
     sfm = types.ModuleType("sfmApp")
-    shot = type("Shot", (), {"GetName": lambda self: u"shot1"})()
+    shot = FakeElement(u"shot1", 1, {"animationSets": [
+        FakeElement(u"Krystal", 10, {"controls": [FakeElement(u"bodyFat", 11, {"value": 0.25}),
+                                                 FakeElement(u"rootTransform", 12, {"valuePosition": Vec(1.0, 2.0, 3.0)})],
+                                    "gameModel": FakeElement(u"m", 13, {
+                                        "modelName": u"models/k.mdl", "bones": [FakeElement(u"bone 0", 14, {
+                                            "position": Vec(0.0, 0.0, 1.0), "scale": Vec(1.0, 1.0, 1.0)})],
+                                        "globalFlexControllers": [FakeElement(u"smile", 15, {"flexWeight": 0.5})]})}),
+        FakeElement(u"Krystal1", 20, {"controls": [], "gameModel": None})]}, calls)
     root = type("Root", (), {"GetFileId": lambda self: 7})()
     sfm.GetTimelineMode = lambda: 2
     sfm.GetNameForTimelineMode = lambda m: u"Motion Editor"
@@ -177,6 +216,11 @@ class StateCaptureTests(unittest.TestCase):
         self.assertEqual(d["pose_info"]["rows"][0][1], u"Full body, including hip movement")
         self.assertEqual(d["session"]["undo"]["undo_desc"], u"Apply Pose PS2 Engineer Body")
         self.assertEqual(sorted(set(calls.log)), ["CanRedo", "CanUndo"])
+        sets = d["animation_sets"]
+        self.assertEqual([(s["name"], s["model"], s["controls"], s["bones"]) for s in sets],
+                         [(u"Krystal", u"models/k.mdl", 2, 1), (u"Krystal1", None, 0, 0)])
+        self.assertEqual(len(sets[0]["state_sha256"]), 64)
+        self.assertNotEqual(sets[0]["state_sha256"], sets[1]["state_sha256"])
 
     def test_refuses_unknown_and_repeated_steps(self):
         calls = Calls()
@@ -446,7 +490,18 @@ def log_text(build, pid, ops):
 VER = ["SCOPE-P1", "SCOPE-P7-verified"]
 
 
-def synthetic_run(q, soldier=True):
+KMODEL = "models/fursonas/starfox/krystal/bodies/krystal2020.mdl"
+
+
+def dup_sets(a, b, other=True):
+    rows = [{"name": "Krystal", "handle": 1, "model": KMODEL.replace("/", "\\"), "state_sha256": a},
+            {"name": "krystal2020", "handle": 2, "model": KMODEL, "state_sha256": b}]
+    if other:
+        rows.append({"name": "engineer1", "handle": 3, "model": "models/player/engineer.mdl", "state_sha256": "e"})
+    return {"animation_sets": rows}
+
+
+def synthetic_run(q, soldier=True, dup="ok", ui="ACCEPTED"):
     names = {"engineer_pose": "PS2 Engineer Body", "soldier_pose": "PS2 Soldier Body", "krystal_pose": "PS2 Krystal grip"}
     with open(os.path.join(ROOT, "ps2.template.json"), "rb") as f:
         c = json.loads(f.read().decode("utf-8"))
@@ -467,7 +522,10 @@ def synthetic_run(q, soldier=True):
     logs = [(CAND, 101, [("Save Pose", "engineer1", "verified", [])]), (CAND, 102, p2),
             (CAND, 103, [("Save Pose", "Krystal", "verified", []), ("Apply Pose", "Krystal", "verified", VER),
                          ("Apply Pose", "Krystal", "verified", []), ("Apply Body Preset", "Krystal", "verified", []),
-                         ("Apply Expression", "Krystal", "verified", [])]),
+                         ("Apply Expression", "Krystal", "verified", []),
+                         ("Save Current Body", "krystal2020", "verified", []),
+                         ("Apply Body Preset", "krystal2020" if dup == "wrong_target" else "Krystal",
+                          "failed-precommit" if dup == "refused" else "verified", [])]),
             (V100, 104, [("Apply Body Preset", "Krystal", "verified", []), ("Apply Expression", "Krystal", "verified",
                                                                              [])])]
     for i, (b, pid, ops) in enumerate(logs):
@@ -514,11 +572,21 @@ def synthetic_run(q, soldier=True):
               "S-HEAVY": {"character": {"model": "models/player/heavy.mdl"}}, "S-K-GRIP": {},
               "S-K-GRIP-APPLY": undo(k), "S-K-UNDO": undo("x", "Redo " + k), "S-K-REDO": undo(k),
               "S-K-LEGACY": dict(undo("Apply Pose NQ1 Pose B"), selected_pose={"version": 1, "regions": ["left_arm"]}),
-              "S-K-PRESETS": {"release_version": "1.1.0"}, "S-V100": {"cpm_build_sha256": V100}}
+              "S-K-PRESETS": {"release_version": "1.1.0"}, "S-V100": {"cpm_build_sha256": V100},
+              # A0/B0 before; B1 after editing B and saving from it; A1 after the Apply onto A; Undo back to A0.
+              "S-K-DUP-BEFORE": dup_sets("A0", "B0"), "S-K-DUP-SAVED": dup_sets("A0", "B1"),
+              "S-K-DUP-APPLY": dup_sets("A0" if dup == "refused" else "A1",
+                                        "B2" if dup == "peer" else "B1"),
+              "S-K-DUP-UNDO": dup_sets("A0", "B2" if dup == "peer" else "B1")}
     for step, d in states.items():
         jdump(os.path.join(q, "observations", step + ".json"), d)
     report = dict(c["operator_expect"])
     report["clean_closes"] = 4
+    if ui:
+        report["selected_parts_ui"] = {"verdict": ui, "observations": dict(
+            (k, "observed") for k in C.UI_OBSERVATIONS)}
+        for i in range(1, 7):
+            write(os.path.join(q, "screenshots", "SP-%d.png" % i), b"png")
     jdump(os.path.join(q, "evidence", "OPERATOR_REPORT.json"), report)
     return c
 
@@ -542,6 +610,32 @@ if PY3:
         def test_complete_run_passes(self):
             v = self.verdict(synthetic_run(self.dir))
             self.assertEqual((v["verdict"], v["failed"]), ("PASS", []), [x for x in v["checks"] if x["result"] != "PASS"])
+
+        def test_duplicate_model_target_identity_and_peer_isolation(self):
+            v = self.verdict(synthetic_run(self.dir))
+            names = [x["check"] for x in v["checks"] if x["check"].startswith("duplicate.")]
+            self.assertIn("duplicate.peer_isolation_second_instance_unchanged", names)
+            self.assertIn("duplicate.apply_targets_the_selected_original", names)
+            shutil.rmtree(self.dir)
+            v = self.verdict(synthetic_run(self.dir, dup="wrong_target"))
+            self.assertIn("duplicate.apply_targets_the_selected_original", v["failed"])
+            shutil.rmtree(self.dir)
+            v = self.verdict(synthetic_run(self.dir, dup="peer"))
+            self.assertIn("duplicate.peer_isolation_second_instance_unchanged", v["failed"])
+            shutil.rmtree(self.dir)
+            v = self.verdict(synthetic_run(self.dir, dup="refused"))
+            self.assertEqual(v["verdict"], "PASS WITH FINDINGS")
+            self.assertTrue(any("refused safely" in f for f in v["findings"]))
+
+        def test_ui_acceptance_is_the_owners_and_separate(self):
+            v = self.verdict(synthetic_run(self.dir))
+            self.assertEqual(v["selected_parts_ui"]["acceptance"], "ACCEPTED")
+            shutil.rmtree(self.dir)
+            v = self.verdict(synthetic_run(self.dir, ui=None))
+            self.assertEqual((v["verdict"], v["selected_parts_ui"]["acceptance"]), ("PASS", "NOT ACCEPTED"))
+            shutil.rmtree(self.dir)
+            v = self.verdict(synthetic_run(self.dir, ui="NOT ACCEPTED"))
+            self.assertEqual(v["selected_parts_ui"]["acceptance"], "NOT ACCEPTED")
 
         def test_soldier_refusal_is_a_finding_not_a_pass(self):
             v = self.verdict(synthetic_run(self.dir, soldier=False))

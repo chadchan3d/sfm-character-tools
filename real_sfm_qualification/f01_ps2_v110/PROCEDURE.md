@@ -21,6 +21,11 @@ Editor refusal, key preservation) and SFP-1 NQ1 (Krystal Selected parts) and doe
 **Never:** save any session, open the Updater or **Update Animation Groups Master**, use Delete or Rename, or touch
 any preset other than the ones named. The Updater would refuse the unsigned candidate inventory by design.
 
+**Amendment 1 (2026-11-13, Owner):** adds the Selected parts UI acceptance (step 17a–e, 19) and the duplicate-model
+Body preset check (21a–d) inside Process 3; the four-process structure is unchanged. Distribution order (Owner):
+manual ZIP (SFMLab, website, GitHub) first, then an update of the existing Workshop installer; Workshop readiness is
+not a prerequisite of this qualification. Krystal v2 Full body stays experimental.
+
 ## Preparation (Claude; SFM closed)
 
 | # | Command | Expected |
@@ -88,16 +93,46 @@ Each capture prints `PS2 <step>: CPM … | written`. Note every status message e
     PS-1 (t_doc 2083). Open CPM, Refresh Models, `Krystal`, **Poses** (`NQ1 Pose B` listed). Submit the setup line.
 17. **Save New**. Expected: **Full body** shows `Full body can't be saved: parts of this character's body are driven
     by its rig. Choose Selected parts to save a smaller pose.` (the version 2 route stays unavailable in production).
-    Note it. Choose **Selected parts**, tick the left fingers group, name it `PS2 Krystal grip`, **Save**. Expected:
-    `Pose saved: PS2 Krystal grip.` Select it, capture **S-K-GRIP**.
+    Note it. Screenshot **SP-1** (the dialog with that Full body message).
+
+    **Selected parts UI acceptance (the Owner's judgement, recorded; not inferred from automated tests).** In the same
+    dialog, before saving:
+    - a. Choose **Selected parts**. Note how the grouped bone picker presents the groups (labels, nesting, unavailable
+      groups) and the **visible list size** (how many rows show without scrolling; whether the dialog size is
+      workable). Screenshot **SP-2**.
+    - b. **Scroll** the picker to the bottom and back. Note whether scrolling is smooth and nothing is cut off.
+      Screenshot **SP-3** (scrolled).
+    - c. **Select and deselect**: tick a whole group, untick it, tick two single bones, untick one; note whether group
+      tri-state, single ticks and the **scope summary** line follow correctly. Note the summary texts exactly.
+    - d. End with the left fingers group ticked. Screenshot **SP-4** (picker with the selection and its summary).
+    - e. Name it `PS2 Krystal grip`, **Save**. Expected: `Pose saved: PS2 Krystal grip.` Select it, open **Pose
+      Info**; note the rows exactly; screenshot **SP-5**; close it. Capture **S-K-GRIP**.
 18. Rotate one left index finger bone visibly. **Apply Pose** `PS2 Krystal grip`. Expected: `Pose applied: PS2
-    Krystal grip.` Capture **S-K-GRIP-APPLY**.
+    Krystal grip.` Screenshot **SP-6** (after the Apply). Capture **S-K-GRIP-APPLY**.
 19. **Ctrl+Z** until **Edit > Redo** names `Apply Pose PS2 Krystal grip`. Capture **S-K-UNDO**. **Ctrl+Y** once.
-    Capture **S-K-REDO**.
+    Capture **S-K-REDO**. Then give your **Selected parts UI verdict**: `ACCEPTED`, `ACCEPTED WITH NOTES` or `NOT
+    ACCEPTED`, with one observation each for: the Save dialog, the picker groups, the list size, scrolling, select
+    and deselect, the scope summary, Pose Info, and the Apply workflow. A `NOT ACCEPTED` UI is not a STOP: continue.
 20. Select `NQ1 Pose B` (version 1, left arm), **Apply Pose**. Expected: `Pose applied: NQ1 Pose B (Left arm).`
     Capture **S-K-LEGACY**.
 21. **Body Presets**: select `Body`, **Apply**. Expected: applied, no error. **Expressions**: select `Happy`,
     **Apply**. Expected: applied. Open **Help**, note the version text, close it. Capture **S-K-PRESETS**.
+
+    **Duplicate-model Body preset check** (two instances of the same model; prompted by a user report, not a confirmed
+    diagnosis). Stay in shot15, Motion Editor:
+    - 21a. In the Animation Set Editor, **Create Animation Set for New Model**
+      `models/fursonas/starfox/krystal/bodies/krystal2020.mdl` (the same model as `Krystal`). Note the new animation
+      set's name (instance **B**; the original `Krystal` is instance **A**). In CPM, **Refresh Models**: note how the
+      two instances are listed. Select **A** (`Krystal`). Capture **S-K-DUP-BEFORE** (expected: `… | N animation
+      sets | written`, never `UNREADABLE`).
+    - 21b. Select **B** in CPM. In the Animation Set Editor change one of **B**'s body sliders visibly (a body shape
+      slider, not the face). **Body Presets > Save New**, name it `PS2 Dup Body`. Expected: `Body Preset saved.` and
+      only B changed on screen. Capture **S-K-DUP-SAVED**.
+    - 21c. Select **A** (`Krystal`) in CPM, **Body Presets**, select `PS2 Dup Body`, **Apply**. Expected: A takes B's
+      body shape; **B does not change**. Either it applies, or CPM refuses with a message and nothing changes on
+      either instance (note the message exactly). Capture **S-K-DUP-APPLY**. Screenshot **DUP-1** (both instances).
+    - 21d. If it applied: click the viewport, **Ctrl+Z** until A's body returns (note each Edit > Undo name). B must
+      not change. Capture **S-K-DUP-UNDO**. If it was refused: capture **S-K-DUP-UNDO** without pressing anything.
 22. Exit SFM **without saving**. (Logs are collected once, after Process 4.)
 
 ### Rollback and the v1.0.0 check
@@ -110,7 +145,18 @@ Each capture prints `PS2 <step>: CPM … | written`. Note every status message e
     **S-V100**. Exit SFM **without saving**.
 25. Claude: `library V100`, `collect-logs`, `cleanup` (expected `RESTORED`), `check` (`"installation": "v1.0.0"`),
     then transcribe the Owner's report into `<Q>\evidence\OPERATOR_REPORT.json` (keys of `operator_expect`, the
-    texts exactly as reported, plus `clean_closes`), then `compare`.
+    texts exactly as reported, `clean_closes`, and `selected_parts_ui`: `{verdict, observations: {save_dialog,
+    picker_groups, list_size, scrolling, select_deselect, scope_summary, pose_info, apply_workflow}, notes}`), copy
+    the Owner's screenshots into `<Q>\screenshots\` (`SP-1.png` … `SP-6.png`, `DUP-1.png`), then `compare`.
+
+**Screenshots:** save them anywhere outside the SFM and library folders (for example the Desktop) with the names
+above; Claude copies them into the run folder. They are evidence only.
+
+**Verdicts:** the functional verdict (PASS, PASS WITH FINDINGS, FAIL) and the **Selected parts UI acceptance** are
+reported separately. The UI acceptance is exactly the Owner's verdict; an incomplete report (a missing verdict,
+observation or fewer than five SP screenshots) is NOT ACCEPTED. The duplicate-model check passes when the save is
+attributed to B, the Apply to A, A changes, B's state digest is unchanged and Undo restores A; a refusal that changes
+neither instance is a FINDING; any change to B, or any change after a refusal, FAILS.
 
 ## STOP conditions
 
@@ -118,6 +164,8 @@ Exit SFM **without saving**, report, and let Claude run `rollback` then `cleanup
 - a capture prints anything other than `production` and `1.1.0` in Processes 1–3, or a capture refuses;
 - any Pose Apply is refused or ends with "Pose changes are paused…" / "CPM couldn't confirm…";
 - a Save, Apply or Undo changes a different character, or anything outside the posed body (Undo must restore it);
+- in the duplicate-model check: instance B changes when the preset is applied to A, the preset applies to B instead
+  of A, or Undo does not restore A (stop after capturing **S-K-DUP-APPLY** / **S-K-DUP-UNDO**; the logs are kept);
 - the Heavy's or Krystal's Full body can be saved (a refusal is expected), or Krystal's Full body saves a version 2
   pose;
 - SFM misbehaves: a crash, an autosave recovery prompt, or a hang longer than a minute;

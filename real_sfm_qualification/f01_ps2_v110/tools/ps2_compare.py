@@ -19,7 +19,10 @@ import re
 
 STATE_STEPS = ("S-PROD", "S-E-INFO", "S-E-APPLY", "S-E-UNDO", "S-E-REDO", "S-SOLDIER-SAVED", "S-SOLDIER-APPLY",
                "S-SOLDIER-UNDO", "S-HEAVY", "S-K-GRIP", "S-K-GRIP-APPLY", "S-K-UNDO", "S-K-REDO", "S-K-LEGACY",
-               "S-K-PRESETS", "S-V100")
+               "S-K-PRESETS", "S-K-DUP-BEFORE", "S-K-DUP-SAVED", "S-K-DUP-APPLY", "S-K-DUP-UNDO", "S-V100")
+UI_OBSERVATIONS = ("save_dialog", "picker_groups", "list_size", "scrolling", "select_deselect", "scope_summary",
+                   "pose_info", "apply_workflow")
+UI_VERDICTS = ("ACCEPTED", "ACCEPTED WITH NOTES", "NOT ACCEPTED")
 RESPONSIVE_MS, LIMIT_MS = 5000, 30000
 BAD_LOG = ("recovery-unverified", "committed-unverified", "abort-failed", "undo-uncertain", "ownership-uncertain",
            "Traceback (most recent call last)")
@@ -239,6 +242,7 @@ def compare(c):
           ops_of(p3, "Apply Body Preset", None, "verified") and ops_of(p3, "Apply Expression", None, "verified"),
           [(o["kind"], o["outcome"]) for o in p3["ops"] if o["kind"].startswith("Apply ") and "Pose" not in o["kind"]])
     R.chk("presets.help_reports_1_1_0", (st["S-K-PRESETS"] or {}).get("release_version") == pins["software_version"])
+    duplicate_model_body_preset(R, c, st, p3)
     # --- rollback to v1.0.0 -----------------------------------------------------------------------------------
     rb = opt_json(os.path.join(q, "evidence", "rollback.json")) or {}
     R.chk("rollback.v100_restored_exactly_and_library_untouched", rb.get("rolled_back") is True and
@@ -278,6 +282,79 @@ def compare(c):
     return R
 
 
+def duplicate_model_body_preset(R, c, st, p3):
+    """Two instances of the same model in one shot: a Body preset saved from the new instance (B) and applied to the
+    original (A). Target identity from the CPM log; peer isolation and Undo from the state digests. A refusal that
+    changes neither instance is a FINDING (safe); a change to the wrong instance, or any change after a refusal, FAILS."""
+    d = c["duplicate"]
+
+    def sets(step):
+        rows = (st[step] or {}).get("animation_sets")
+        return dict((r["name"], r) for r in rows) if isinstance(rows, list) else None
+    before, saved, applied, undone = (sets(s) for s in ("S-K-DUP-BEFORE", "S-K-DUP-SAVED", "S-K-DUP-APPLY",
+                                                         "S-K-DUP-UNDO"))
+    if None in (before, saved, applied, undone):
+        R.chk("duplicate.animation_set_state_readable", False, "a duplicate-check capture has no readable sets")
+        return
+    def norm(m):
+        return (m or "").replace("\\", "/").lower()
+    same = sorted(n for n, r in before.items() if norm(r.get("model")) == norm(d["model"]))
+    a = d["original"]
+    others = [n for n in same if n != a]
+    R.chk("duplicate.two_instances_of_the_same_model", len(same) == 2 and a in same and len(others) == 1 and
+          before[a]["handle"] != before[others[0]]["handle"], same)
+    if not (len(same) == 2 and a in same and len(others) == 1):
+        return
+    b = others[0]
+
+    def h(step_sets, name):
+        r = step_sets.get(name) or {}
+        return r.get("state_sha256")
+    R.chk("duplicate.saving_from_b_leaves_a_unchanged", h(saved, a) == h(before, a), (h(before, a), h(saved, a)))
+    save = [o for o in p3["ops"] if o["kind"] in ("Save Current Body", "Save New Body Preset")]
+    apply_ = [o for o in p3["ops"] if o["kind"] == "Apply Body Preset"]
+    saved_ok = bool(save) and save[-1]["outcome"] == "verified"
+    if not saved_ok:
+        if h(saved, b) is not None and h(saved, a) == h(before, a):
+            R.finding("duplicate.body_preset_save_on_the_second_instance", "refused or not verified (%s); nothing "
+                      "changed on the original" % (save[-1]["outcome"] if save else "no Save operation"))
+        else:
+            R.chk("duplicate.body_preset_save_on_the_second_instance", False, save[-1:] if save else None)
+        return
+    R.chk("duplicate.save_targets_the_selected_second_instance", save[-1]["animset"] == b, save[-1]["animset"])
+    last = apply_[-1] if apply_ else None
+    if last is None or last["outcome"] != "verified":
+        unchanged = h(applied, a) == h(saved, a) and h(applied, b) == h(saved, b)
+        if unchanged:
+            R.finding("duplicate.body_preset_apply_onto_the_original", "refused safely (%s); neither instance changed"
+                      % (last["outcome"] if last else "no Apply operation"))
+        else:
+            R.chk("duplicate.refusal_changes_nothing", False, {"a": [h(saved, a), h(applied, a)],
+                                                                "b": [h(saved, b), h(applied, b)]})
+        return
+    R.chk("duplicate.apply_targets_the_selected_original", last["animset"] == a, last["animset"])
+    R.chk("duplicate.apply_changes_the_original", h(applied, a) != h(saved, a))
+    R.chk("duplicate.peer_isolation_second_instance_unchanged", h(applied, b) == h(saved, b),
+          (h(saved, b), h(applied, b)))
+    R.chk("duplicate.undo_restores_the_original_and_leaves_the_peer", h(undone, a) == h(saved, a) and
+          h(undone, b) == h(saved, b), {"a": [h(saved, a), h(undone, a)], "b": [h(saved, b), h(undone, b)]})
+
+
+def ui_acceptance(q):
+    """The Owner's Selected parts UI acceptance, from OPERATOR_REPORT.json and the screenshots. Never inferred from
+    automated tests: a missing or incomplete report is NOT ACCEPTED."""
+    op = opt_json(os.path.join(q, "evidence", "OPERATOR_REPORT.json")) or {}
+    ui = op.get("selected_parts_ui") or {}
+    obs = ui.get("observations") or {}
+    missing = [k for k in UI_OBSERVATIONS if not (isinstance(obs.get(k), str) and obs.get(k).strip())]
+    shots = sorted(os.path.basename(p) for p in glob.glob(os.path.join(q, "screenshots", "SP-*.png")))
+    verdict = ui.get("verdict")
+    if verdict not in UI_VERDICTS or missing or len(shots) < 5:
+        return {"acceptance": "NOT ACCEPTED", "reason": "incomplete Owner report", "missing": missing,
+                "screenshots": shots, "verdict_reported": verdict}
+    return {"acceptance": verdict, "observations": obs, "screenshots": shots, "notes": ui.get("notes")}
+
+
 def sha(path):
     import hashlib
     h = hashlib.sha256()
@@ -293,8 +370,9 @@ def main(c):
     failed = [x["check"] for x in R.checks if x["result"] == "FAIL"]
     verdict = "FAIL" if failed else "PASS WITH FINDINGS" if R.findings else "PASS"
     perf = getattr(R, "performance", {"class": "unmeasured"})
+    ui = ui_acceptance(q)
     out = {"format": "F01-PS2-verdict-v1", "verdict": verdict, "failed": failed, "findings": R.findings,
-           "performance": perf, "checks": R.checks}
+           "performance": perf, "selected_parts_ui": ui, "checks": R.checks}
     with open(os.path.join(q, "evidence", "PS2_VERDICT.json"), "wb") as f:
         f.write(json.dumps(out, indent=1, sort_keys=True).encode("utf-8"))
     lines = ["# F-01 PS-2 v1.1.0 production candidate smoke verdict: %s" % verdict, "",
@@ -305,7 +383,9 @@ def main(c):
         d = "" if x["result"] == "PASS" else json.dumps(x["detail"], sort_keys=True, default=str)[:300]
         lines.append("| `%s` | %s | %s |" % (x["check"], x["result"], d.replace("|", "\\|")))
     lines += ["", "Performance: **%s** (worst %s ms)." % (perf.get("class"), perf.get("worst_ms")), "",
-              "Findings: %s" % ("; ".join(R.findings) or "none")]
+              "Findings: %s" % ("; ".join(R.findings) or "none"), "",
+              "Selected parts UI (Owner acceptance, separate from the functional verdict; never inferred from tests): "
+              "**%s**%s" % (ui["acceptance"], (" (%s)" % ui.get("reason")) if ui.get("reason") else "")]
     with open(os.path.join(q, "evidence", "PS2_VERDICT.md"), "wb") as f:
         f.write(("\n".join(lines) + "\n").encode("utf-8"))
     print("\n".join(lines))

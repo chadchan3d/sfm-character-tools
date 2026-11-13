@@ -10,7 +10,10 @@ It records, from the running SFM and the open CPM window:
 - the Pose Library registries as CPM loads them, and the production mappings they enable;
 - the selected character, the selected pose (version, scope, part count) with the Poses page state and the Pose Info
   rows CPM shows for it (pure functions of the record);
-- the session: document, shot, timeline mode and the Undo/Redo descriptions.
+- the session: document, shot, timeline mode and the Undo/Redo descriptions;
+- every animation set in the current shot: name, handle, model and digests of its control values and its game
+  model's bone transforms (position, orientation, scale) and flex weights (target identity and peer isolation for
+  the duplicate-model Body preset check).
 
 It clicks nothing, selects nothing, opens no dialog and never touches the scene or the library. Its only write is
 <PS2_DIR>\\observations\\<PS2_STEP>.json (exclusive create). On the v1.0.0 CPM (after rollback) the Pose Library
@@ -23,7 +26,85 @@ import sys
 
 STEPS = ("S-PROD", "S-E-INFO", "S-E-APPLY", "S-E-UNDO", "S-E-REDO", "S-SOLDIER-SAVED", "S-SOLDIER-APPLY",
          "S-SOLDIER-UNDO", "S-HEAVY", "S-K-GRIP", "S-K-GRIP-APPLY", "S-K-UNDO", "S-K-REDO", "S-K-LEGACY",
-         "S-K-PRESETS", "S-V100")
+         "S-K-PRESETS", "S-K-DUP-BEFORE", "S-K-DUP-SAVED", "S-K-DUP-APPLY", "S-K-DUP-UNDO", "S-V100")
+MAX_ITEMS = 4096
+
+
+def _attr(obj, name):
+    """An attribute's value through the element's own attribute accessor, or None when absent."""
+    if obj is None or not obj.HasAttribute(name):
+        return None
+    a = obj.GetAttribute(name)
+    for method in ("GetValue", "GetValueUntyped"):
+        try:
+            return getattr(a, method)()
+        except Exception:
+            pass
+    return None
+
+
+def _seq(value):
+    n = len(value) if value is not None else 0
+    if n > MAX_ITEMS:
+        raise RuntimeError("collection exceeds its bound (%d)" % n)
+    return [value[i] for i in range(n)]
+
+
+def _plain(v):
+    """A JSON form of a native scalar or vector; element references by name only; anything else by repr."""
+    if v is None or isinstance(v, (bool, int, float)):
+        return v
+    if hasattr(v, "GetHandle") and hasattr(v, "GetName"):
+        return "@" + _text(v.GetName())
+    for keys in (("x", "y", "z", "w"), ("x", "y", "z")):
+        if all(hasattr(v, k) for k in keys):
+            return [round(float(getattr(v, k)), 6) for k in keys]
+    if isinstance(v, float):
+        return round(v, 6)
+    return _text(v)
+
+
+def _controls_state(animset):
+    """{control name: {attribute: value}} for every control's value attributes (read only)."""
+    out = {}
+    for c in _seq(_attr(animset, "controls")):
+        row = {}
+        for name in ("value", "leftValue", "rightValue", "valuePosition", "valueOrientation"):
+            v = _attr(c, name)
+            if v is not None:
+                row[name] = _plain(v)
+        out[_text(c.GetName())] = row
+    return out
+
+
+def _model_state(animset):
+    """The game model's bone transforms (position, orientation, scale) and global flex weights (read only)."""
+    gm = _attr(animset, "gameModel")
+    if gm is None:
+        return {"model": None}
+    bones = []
+    for t in _seq(_attr(gm, "bones")):
+        bones.append([_text(t.GetName())] + [_plain(_attr(t, k)) for k in ("position", "orientation", "scale")])
+    flexes = [[_text(f.GetName()), _plain(_attr(f, "flexWeight"))] for f in _seq(_attr(gm, "globalFlexControllers"))]
+    return {"model": _text(_attr(gm, "modelName")), "bones": bones, "flexes": flexes}
+
+
+def _digest(obj):
+    return hashlib.sha256(json.dumps(obj, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def shot_animation_sets(sfmApp):
+    """Every animation set in the current shot: its name, handle, model, and digests of its control values and of its
+    game model's bones and flexes, so target identity and peer isolation are visible without any write."""
+    shot = sfmApp.GetShotAtCurrentTime()
+    rows = []
+    for a in _seq(_attr(shot, "animationSets")):
+        controls, model = _controls_state(a), _model_state(a)
+        rows.append({"name": _text(a.GetName()), "handle": int(a.GetHandle()), "model": model.get("model"),
+                     "controls": len(controls), "controls_sha256": _digest(controls),
+                     "bones": len(model.get("bones") or []), "model_sha256": _digest(model),
+                     "state_sha256": _digest([controls, model])})
+    return rows
 
 
 def _text(v):
@@ -102,15 +183,18 @@ def ps2_state(g):
     session["shot"] = _try(lambda: _text(sfmApp.GetShotAtCurrentTime().GetName()))
     session["document"] = _try(lambda: _text(dm.GetFileName(sfmApp.GetDocumentRoot().GetFileId())))
     data["session"] = session
+    data["animation_sets"] = _try(lambda: shot_animation_sets(sfmApp))
     payload = json.dumps(data, indent=1, sort_keys=True, default=repr).encode("utf-8")
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0))
     with os.fdopen(fd, "wb") as f:
         f.write(payload)
     sel = data.get("selected_pose") or {}
     undo = (session.get("undo") or {})
-    line = "PS2 %s: CPM %s mode %r version %r | pose %r v%r %r (%r parts) | undo %r redo %r | written" % (
+    sets = data["animation_sets"]
+    sets_text = ("%d animation sets" % len(sets)) if isinstance(sets, list) else "animation sets UNREADABLE - STOP"
+    line = "PS2 %s: CPM %s mode %r version %r | pose %r v%r %r (%r parts) | undo %r redo %r | %s | written" % (
         label, (build or "?")[:8], data["registry_mode"], data["release_version"], sel.get("name"), sel.get("version"),
-        sel.get("scope_kind"), sel.get("posed"), undo.get("undo_desc"), undo.get("redo_desc"))
+        sel.get("scope_kind"), sel.get("posed"), undo.get("undo_desc"), undo.get("redo_desc"), sets_text)
     print(line.encode("ascii", "replace") if sys.version_info[0] == 2 else line)
 
 

@@ -48,6 +48,11 @@
   "soldier_pose": "PS2 Soldier Body",
   "krystal_pose": "PS2 Krystal grip"
  },
+ "duplicate": {
+  "original": "Krystal",
+  "model": "models/fursonas/starfox/krystal/bodies/krystal2020.mdl",
+  "preset": "PS2 Dup Body"
+ },
  "operator_expect": {
   "engineer_save_summary": "Includes hip movement. Facial expressions and the character's rootTransform are not saved.",
   "heavy_full_body_message": "Some bones of this character have no controls, and CPM can't confirm they stay fixed. Choose Selected parts to save a smaller pose.",
