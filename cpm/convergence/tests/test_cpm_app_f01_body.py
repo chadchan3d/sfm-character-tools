@@ -866,9 +866,14 @@ class FakeWindow(object):
 
     def prompt_pose_scope(self, inventory, body_route):
         # SFP-1 harness adaptation: the qualification build's Save dialog, answered with the queued name and the
-        # default scope, Full body (the version 2 route of this registry character).
+        # default scope, Full body (the version 2 route of this registry character). K1: records what reached the
+        # dialog; `scope_kind` "selected_parts" answers with Selected parts instead.
+        getattr(self, "dialogs", []).append((inventory, body_route))
         if not self.prompts:
             return None
+        if getattr(self, "scope_kind", None) == u"selected_parts":
+            return {u"name": self.prompts.pop(0), u"kind": u"selected_parts",
+                    u"request": {u"kind": u"selected_parts", u"bones": [u"bip_index_1_l"], u"exclusions": []}}
         return {u"name": self.prompts.pop(0), u"kind": u"full_body", u"request": None}
 
     def operation_revalidate(self):
@@ -1003,6 +1008,115 @@ def section_window(app, ns, reg, fx, root):
     finally:
         ns["PROD_POSE_REGISTRY_MODE"] = mode
 
+
+# ---------------------------------------------------------------------------
+# K1 (R4 section 5): Krystal's version 2 Full body through the current Save dialog and dispatch
+# ---------------------------------------------------------------------------
+
+def section_k1(app, ns, reg, fx, root):
+    profile = profile_of(ns, reg)
+    WRITTEN_HANDLES.update(profile[u"written_handle_channels"])
+    os.makedirs(root)
+    lib = {u"character_key": u"krystal2020", u"char_dir": os.path.join(root, u"Characters", u"krystal2020"),
+           u"library_root": root, u"model_ref": MODEL, u"checksum": 1234}
+    src = FB.World(fx[u"shot15"])
+    use_world(ns, src)
+    win = window(app, ns, reg, lib)
+    win.dialogs = []
+    mode = ns["PROD_POSE_REGISTRY_MODE"]
+    real = dict((k, ns[k]) for k in (u"prod_scope_current_time", u"prod_scope_inventory", u"prod_body_capture"))
+
+    def pose_dir_files():
+        d = os.path.join(lib[u"char_dir"], u"Poses")
+        return sorted(os.listdir(d)) if os.path.isdir(d) else []
+
+    def refuse_generic(*a, **k):
+        raise ns["ProdPoseError"](u"structure-unsupported", u"generic inventory refused")
+    try:
+        # Production (the shipped build): the version 2 mapping stays experimental, so there is no body route; a
+        # generic refusal before the dialog still refuses Save as before (K1 changes nothing here).
+        ns["prod_scope_inventory"] = refuse_generic
+        win.prompts = [u"Prod"]
+        got = win.save_pose(None, (u"full_body",))
+        check("K1.production_has_no_v2_route_and_a_generic_refusal_still_refuses",
+              got is None and not win.dialogs and win.statuses[-1][2] == u"structure-unsupported" and
+              not pose_dir_files(), win.statuses[-1])
+        ns["prod_scope_inventory"] = real[u"prod_scope_inventory"]
+        ns["PROD_POSE_REGISTRY_MODE"] = u"qualification"                    # the K1 qualification candidate
+        # 1. The v2 route captures against its own S3-qualified body pin, not the generic v3 pin: a v3 pin that
+        #    disagrees with the scene must not make the v2 capture stale.
+        seen = []
+        ns["prod_scope_current_time"] = lambda ident, auth: dict(real[u"prod_scope_current_time"](ident, auth),
+                                                                 t_chan=-1)
+        ns["prod_body_capture"] = lambda *a, **k: seen.append(k.get(u"pinned_time")) or real[u"prod_body_capture"](
+            *a, **k)
+        win.prompts = [u"K1 Body"]
+        saved = win.save_pose(None, (u"full_body",))
+        check("K1.dialog_route_v2_save_uses_the_body_time_pin", saved is not None and
+              saved[u"record"][u"pose"][u"version"] == 2 and bool(seen) and seen[-1][u"t_chan"] != -1 and
+              win.dialogs[-1][1] is True, (win.statuses[-1:], seen))
+        ns["prod_scope_current_time"] = real[u"prod_scope_current_time"]
+        ns["prod_body_capture"] = real[u"prod_body_capture"]
+        check("K1.v2_save_writes_nothing_to_the_scene", not scene_writes(src) and not src.dm.calls)
+        # 2. A generic inventory refusal no longer blocks the supported v2 route: the dialog opens with Selected
+        #    parts unavailable (with the refusal's reason) and Full body saves a version 2 pose.
+        ns["prod_scope_inventory"] = refuse_generic
+        win.prompts = [u"K1 Body Generic"]
+        saved2 = win.save_pose(None, (u"full_body",))
+        inv, route = win.dialogs[-1]
+        check("K1.generic_refusal_does_not_block_the_v2_route",
+              saved2 is not None and saved2[u"record"][u"pose"][u"version"] == 2 and route is True and
+              inv.get(u"selected_parts_unavailable") == u"generic inventory refused", win.statuses[-1:])
+        win.scope_kind = u"selected_parts"
+        win.prompts = [u"K1 Parts"]
+        before = pose_dir_files()
+        got = win.save_pose(None, (u"full_body",))
+        check("K1.selected_parts_without_a_generic_inventory_refuses_with_its_reason_and_saves_nothing",
+              got is None and win.statuses[-1][2] == u"structure-unsupported" and
+              win.statuses[-1][3] == u"generic inventory refused" and pose_dir_files() == before, win.statuses[-1])
+        win.scope_kind = None
+        ns["prod_scope_inventory"] = real[u"prod_scope_inventory"]
+        # 3. Record loading, Apply (the real v2 transaction), deferred verification and Update of the saved record.
+        dst = FB.World(fx[u"shot13"])
+        pose_differently(dst)
+        use_world(ns, dst)
+        item = ns["prod_pose_reread"](lib, saved2, reg)
+        check("K1.saved_v2_record_reloads", item[u"record"][u"pose"][u"version"] == 2 and
+              sorted(item[u"record"][u"pose"][u"regions"]) == [u"full_body"])
+        win.pending = []
+        win.apply_pose(item)
+        check("K1.apply_dispatches_the_v2_transaction", len(win.pending) == 1 and bool(win.pending[0].get(u"body"))
+              and [c[0] for c in dst.dm.calls] == ["StartUndo", "FinishUndo"], win.statuses[-1:])
+        verdict = ns["prod_pose_deferred_verify"](win.pending[0])
+        check("K1.deferred_verification_verifies_the_v2_pose", verdict.get(u"phase") == u"committed-verified",
+              verdict)
+        use_world(ns, src)
+        layer = src.channels[u"Hip_o"].attrs["log"].layer
+        for k in layer.keys:
+            k[1] = FB.native(rotate(FB.plain(k[1]), [0.0, 1.0, 0.0], 12.0), "quat")
+        src.evaluate()
+        win.confirm = True
+        updated = win.update_pose(ns["prod_pose_reread"](lib, saved2, reg))
+        check("K1.update_recaptures_the_v2_record_in_place", updated is not None and
+              updated[u"preset_id"] == saved2[u"preset_id"] and updated[u"record"][u"pose"][u"version"] == 2 and
+              updated[u"record"][u"pose"][u"regions"][u"full_body"][u"orientations"][u"Hip_o"] !=
+              saved2[u"record"][u"pose"][u"regions"][u"full_body"][u"orientations"][u"Hip_o"], win.statuses[-1])
+        # 4. The other routes are unaffected: v1 Apply keeps the left-arm path; v2 keeps the body path.
+        legacy = ns["prod_pose_save_new"](lib, u"K1 Legacy Arm", legacy_pose(ns), u"20261114-150000-000000", reg)
+        calls = []
+        keep = dict((k, ns[k]) for k in (u"prod_pose_apply", u"prod_body_apply", u"prod_scope_apply"))
+        for k in keep:
+            ns[k] = (lambda k: lambda *a, **kw: calls.append((k, a[2][u"record"][u"pose"][u"version"])) or {
+                u"phase": u"no-op"})(k)
+        try:
+            win.apply_pose(ns["prod_pose_reread"](lib, legacy, reg))
+            win.apply_pose(ns["prod_pose_reread"](lib, updated, reg))
+        finally:
+            ns.update(keep)
+        check("K1.v1_and_v2_dispatch_unchanged", calls == [(u"prod_pose_apply", 1), (u"prod_body_apply", 2)], calls)
+    finally:
+        ns.update(real)
+        ns["PROD_POSE_REGISTRY_MODE"] = mode
 
 
 # ---------------------------------------------------------------------------
@@ -1691,6 +1805,7 @@ def main():
                 run("final_undo", lambda: section_final_undo(app, ns, lived[0], fx, lived[1], live_lib))
                 run("apply_messages", lambda: section_apply_messages(app, ns, lived[0], fx, lived[1], live_lib))
             run("window", lambda: section_window(app, ns, reg, fx, os.path.join(root, u"window")))
+            run("k1", lambda: section_k1(app, ns, reg, fx, os.path.join(root, u"k1")))
             run("revised_a1", lambda: section_revised_a1(ns, reg, fx, os.path.join(root, u"revised_a1")))
     finally:
         shutil.rmtree(root, True)

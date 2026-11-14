@@ -36019,22 +36019,42 @@ class ProdWindow(QtGui.QDialog):
                     and prod_body_usable(reg, legacy)
                 )
 
-            if interactive:
-                scoped = prod_scope_authorize(
-                    self.operation["context"],
+            body_pinned = None
+            if interactive and body_route:
+                # K1 (R4 section 5): the version 2 route keeps its S3-qualified time pin, taken over the profile's
+                # written handle channels when the dialog opens, and uses it for its capture.
+                body_pinned = prod_body_current_time(
                     ident,
+                    legacy,
                     reg,
-                    mode,
-                    u"Save Pose",
                 )
-                pinned = prod_scope_current_time(
-                    ident,
-                    scoped,
-                )
-                inventory = prod_scope_inventory(
-                    ident,
-                    scoped,
-                )
+
+            if interactive:
+                try:
+                    scoped = prod_scope_authorize(
+                        self.operation["context"],
+                        ident,
+                        reg,
+                        mode,
+                        u"Save Pose",
+                    )
+                    pinned = prod_scope_current_time(
+                        ident,
+                        scoped,
+                    )
+                    inventory = prod_scope_inventory(
+                        ident,
+                        scoped,
+                    )
+                except (ProdPoseError, ProdPoseIntegrationError) as exc:
+                    # K1 (R4 section 5): generic inventory construction must not prevent an otherwise supported
+                    # version 2 route from reaching the dialog. Without a v2 route the refusal stands as before.
+                    if not body_route:
+                        raise
+                    prod_pose_log(u"K1-generic-inventory-unavailable", {u"code": getattr(exc, "code", None),
+                                                                       u"error": u"%s" % exc})
+                    pinned = None
+                    inventory = prod_scope_selected_parts_unavailable(u"%s" % exc)
                 choice = self.prompt_pose_scope(
                     inventory,
                     body_route,
@@ -36052,8 +36072,13 @@ class ProdWindow(QtGui.QDialog):
                 pose_name = choice[u"name"]
 
                 if not (choice[u"kind"] == u"full_body" and body_route):
+                    if inventory.get(u"selected_parts_unavailable"):
+                        raise ProdPoseIntegrationError(u"structure-unsupported",
+                                                       inventory[u"selected_parts_unavailable"])
                     request = choice[u"request"]
                     signature = inventory[u"signature"]
+                else:
+                    pinned = body_pinned
 
             if request is not None:
                 scoped = prod_scope_authorize(
@@ -36250,6 +36275,10 @@ class ProdWindow(QtGui.QDialog):
                 "Selected parts"
             )
             full.setChecked(True)
+            if inventory.get(u"selected_parts_unavailable"):
+                # K1: only the version 2 Full body route is usable here; Selected parts says why it isn't.
+                parts.setEnabled(False)
+                parts.setToolTip(u(inventory[u"selected_parts_unavailable"]))
             kinds.addWidget(full)
             kinds.addWidget(parts)
             kinds.addStretch(1)
@@ -47870,6 +47899,16 @@ def prod_scope_summary(kind, inventory, bones=None, include_highlighted=True, ro
         parents = dict(parents)
         parents[root] = None
     return prod_scope_selection_effect(bones, parents)
+
+
+def prod_scope_selected_parts_unavailable(reason):
+    """K1 (R4 section 5): the Save dialog's inventory when the generic scoped inventory could not be built for a
+    character whose version 2 Full body route is usable. Full body keeps that route; Selected parts is offered as
+    unavailable with the generic refusal's own reason and can't be saved."""
+    return {u"view": [], u"highlighted": [], u"signature": None, u"time": None, u"root": None, u"carried": [],
+            u"classes": {}, u"parents": {}, u"selected_parts_unavailable": u(reason),
+            u"full_body": {u"status": u"refused", u"code": u"structure-unsupported", u"message": u(reason),
+                           u"review": []}}
 
 
 def prod_scope_dialog_state(inventory, choice):

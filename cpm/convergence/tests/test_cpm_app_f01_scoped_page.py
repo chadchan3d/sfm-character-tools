@@ -202,6 +202,21 @@ def main():
     print("D8 measured (minimum, row, groups, shown): %r" % (seen[u"rows"],))
     check("D8 the picker shows about eleven rows with only three groups (PS-2 UI corrections)",
           groups == 3 and row > 0 and minimum >= 11 * row and shown >= 11 * row, seen[u"rows"])
+
+    def v2_only(dialog, seen, save):
+        parts_radio = [r for r in dialog.findChildren(QtGui.QRadioButton) if r.text() == u"Selected parts"][0]
+        seen[u"parts"] = (parts_radio.isEnabled(), parts_radio.toolTip())
+        seen[u"summary"] = summary_of(dialog, QtGui)
+        seen[u"save"] = save.isEnabled()
+        return True
+    unavailable = window.render.im_func.func_globals["prod_scope_selected_parts_unavailable"](u"generic refusal")
+    got, seen = drive(window, QtGui, QtCore, unavailable, True, v2_only)
+    check("D9 K1: without a generic inventory, Full body keeps the version 2 route and Selected parts says why "
+          "it is unavailable",
+          got == {u"name": u"Pose", u"kind": u"full_body", u"request": None} and seen[u"save"] and
+          seen[u"parts"] == (False, u"generic refusal") and
+          seen[u"summary"] == u"Facial expressions, gaze and the character's place in the scene are not saved.",
+          (got, seen))
     try:
         window.close()
     except Exception:
