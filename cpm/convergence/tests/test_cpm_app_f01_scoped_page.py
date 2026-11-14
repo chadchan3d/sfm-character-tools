@@ -176,6 +176,32 @@ def main():
     got, seen = drive(window, QtGui, QtCore, inventory(full=refused, highlighted=()), False, route)
     check("D6 an unsupported full body cannot be saved and points to Selected parts",
           got is None and not seen[u"save"] and u"Choose Selected parts" in seen[u"summary"], (got, seen))
+
+    def refused_with_face(dialog, seen, save):
+        box = [g for g in dialog.findChildren(QtGui.QGroupBox) if g.title() == u"Review scope"][0]
+        leave_box = [c for c in dialog.findChildren(QtGui.QCheckBox) if c.text() == u"Leave these controls unchanged"]
+        seen[u"review_visible"] = box.isVisible()
+        seen[u"leave_visible"] = bool(leave_box) and leave_box[0].isVisible()
+        seen[u"summary"] = summary_of(dialog, QtGui)
+        seen[u"save"] = save.isEnabled()
+        return True
+    got, seen = drive(window, QtGui, QtCore, inventory(full=dict(refused, review=[u"jaw"])), False, refused_with_face)
+    check("D7 a refusal the review can't resolve shows its reason only: no review checklist (PS-2 UI corrections)",
+          got is None and not seen[u"review_visible"] and not seen[u"leave_visible"] and not seen[u"save"] and
+          seen[u"summary"] == refused[u"message"], (got, seen))
+
+    def picker_height(dialog, seen, save):
+        tree = dialog.findChild(QtGui.QTreeWidget, "pose_scope_picker")
+        [r for r in dialog.findChildren(QtGui.QRadioButton) if r.text() == u"Selected parts"][0].setChecked(True)
+        SETTLE[0]()
+        row = tree.sizeHintForRow(0)
+        seen[u"rows"] = (tree.minimumHeight(), row, tree.topLevelItemCount(), tree.height())
+        return False
+    got, seen = drive(window, QtGui, QtCore, inventory(), False, picker_height)
+    minimum, row, groups, shown = seen[u"rows"]
+    print("D8 measured (minimum, row, groups, shown): %r" % (seen[u"rows"],))
+    check("D8 the picker shows about eleven rows with only three groups (PS-2 UI corrections)",
+          groups == 3 and row > 0 and minimum >= 11 * row and shown >= 11 * row, seen[u"rows"])
     try:
         window.close()
     except Exception:

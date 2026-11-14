@@ -36386,6 +36386,16 @@ class ProdWindow(QtGui.QDialog):
             save_button.setDefault(True)
             tool_apply_visual_theme(dialog)
             tool_apply_dialog_font(dialog)
+            # PS-2 UI corrections: the picker shows about eleven rows whatever the number of groups, limited to half
+            # the available screen height; scrolling, nesting and check states are unchanged.
+            row_height = tree.sizeHintForRow(0) if tree.topLevelItemCount() else 0
+            if row_height <= 0:
+                row_height = tree.fontMetrics().height() + 6
+            try:
+                available = QtGui.QApplication.desktop().availableGeometry(self).height()
+            except Exception:
+                available = 0
+            tree.setMinimumHeight(prod_pose_picker_height(row_height, available, 2 * tree.frameWidth() + 4))
             refresh()
             edit.setFocus()
 
@@ -36913,10 +36923,12 @@ class ProdWindow(QtGui.QDialog):
     def open_pose_info(
         self,
     ):
-        """Read-only details of the selected pose (Astra UI adjudication 2026-11-08): what it includes and any
-        consequential exclusion, the source model it was saved from, when it was saved, what applying it does, and a
-        note only when it can't be applied to the selected character. Everything shown about the pose comes from the
-        saved record (prod_pose_info_view), never from the current selection."""
+        """Read-only details of the selected pose (PS-2 UI corrections, 2026-11-14; Expression Preset Info is the
+        reference): a Pose box (name, type, model and model path, dates, what it includes and excludes, the hips for
+        a Full body), a consequential selection effect, a note only when it can't be applied to the selected
+        character, and a Saved Values tree with every saved bone or control and its saved values. Everything shown
+        about the pose comes from the saved record (prod_pose_info_view, prod_pose_info_values), never from the
+        current selection."""
         item = self.selected_pose()
 
         if item is None:
@@ -36938,17 +36950,17 @@ class ProdWindow(QtGui.QDialog):
             dialog = QtGui.QDialog(self)
             dialog.setWindowTitle("Pose Info")
             outer = QtGui.QVBoxLayout(dialog)
+            summary_box = QtGui.QGroupBox("Pose")
+            form = QtGui.QFormLayout(summary_box)
             name_label = QtGui.QLabel(u(view[u"name"]))
             name_label.setTextFormat(QtCore.Qt.PlainText)
-            bold = name_label.font()
-            bold.setBold(True)
-            name_label.setFont(bold)
             name_label.setObjectName("pose_info_name")
             name_label.setWordWrap(True)
-            outer.addWidget(name_label)
-            form = QtGui.QFormLayout()
+            name_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+            form.addRow(u"Name:", name_label)
             for label, text, tooltip in view[u"rows"]:
                 value = QtGui.QLabel(u(text))
+                value.setTextFormat(QtCore.Qt.PlainText)
                 value.setWordWrap(True)
                 value.setTextInteractionFlags(
                     QtCore.Qt.TextSelectableByMouse
@@ -36956,7 +36968,7 @@ class ProdWindow(QtGui.QDialog):
                 if tooltip:
                     value.setToolTip(u(tooltip))
                 form.addRow(u(label), value)
-            outer.addLayout(form)
+            outer.addWidget(summary_box)
             if view[u"effect"]:
                 effect = QtGui.QLabel(u(view[u"effect"]))
                 effect.setObjectName("pose_info_effect")
@@ -36988,7 +37000,26 @@ class ProdWindow(QtGui.QDialog):
                 note.setObjectName("pose_info_limitation")
                 note.setWordWrap(True)
                 outer.addWidget(note)
-            outer.addStretch(1)
+            values_box = QtGui.QGroupBox("Saved Values")
+            values_layout = QtGui.QVBoxLayout(values_box)
+            tree = tool_make_value_tree(values_box, "Bone / Control")
+            tree.setObjectName("pose_info_values")
+
+            def add_nodes(parent_item, nodes):
+                for node in nodes:
+                    item = QtGui.QTreeWidgetItem([u(node[u"name"]), u(node[u"value"])])
+                    if node.get(u"tooltip"):
+                        item.setToolTip(1, u(node[u"tooltip"]))
+                    parent_item.addChild(item)
+                    add_nodes(item, node[u"children"])
+
+            for group in prod_pose_info_values(record):
+                group_item = QtGui.QTreeWidgetItem([u(group[u"title"]), u""])
+                tree.addTopLevelItem(group_item)
+                add_nodes(group_item, group[u"nodes"])
+            tree.expandAll()
+            values_layout.addWidget(tree, 1)
+            outer.addWidget(values_box, 1)
             buttons = QtGui.QDialogButtonBox(
                 QtGui.QDialogButtonBox.Close
             )
@@ -36998,7 +37029,11 @@ class ProdWindow(QtGui.QDialog):
             outer.addWidget(buttons)
             tool_apply_visual_theme(dialog)
             tool_apply_dialog_font(dialog)
-            dialog.resize(420, dialog.sizeHint().height())
+            try:
+                available = QtGui.QApplication.desktop().availableGeometry(self)
+                dialog.resize(min(700, available.width()), min(560, int(available.height() * 0.9)))
+            except Exception:
+                dialog.resize(700, 560)
             try:
                 dialog.exec_()
             finally:
@@ -47803,7 +47838,8 @@ def prod_scope_selection_effect(chosen, parents):
                 pending.append(c)
     text = []
     if below - chosen:
-        text.append(u"Unselected parts attached to these parts move with them.")
+        # Only when the selection has unselected descendants (PS-2 UI corrections: shorter wording, same trigger).
+        text.append(u"Moving a selected bone can also move its children.")
     if any(parents.get(b) is None for b in chosen):
         text.append(u"The body root keeps its position.")
     return u" ".join(text)
@@ -47823,8 +47859,9 @@ def prod_scope_summary(kind, inventory, bones=None, include_highlighted=True, ro
             return u"The listed controls are left as they are on the character."
         if inventory[u"highlighted"]:
             return u"Includes the listed facial bones. Facial expressions are not saved."
-        # F01-DI-01 (RETAIN R3): hip movement is part of the pose; only the rootTransform stays as it is.
-        return u"Includes hip movement. Facial expressions and the character's rootTransform are not saved."
+        # PS-2 UI corrections: only the meaningful exclusions. "rootTransform" (not "scene placement") so it never
+        # implies the visible body can't move; the hip explanation is in Pose Info (F01-DI-01, RETAIN R3).
+        return u"Facial expressions and the rootTransform are not saved."
     bones = list(bones or [])
     if not bones:
         return PROD_SCOPE_MESSAGES[u"empty-selection"]
@@ -47855,10 +47892,12 @@ def prod_scope_dialog_state(inventory, choice):
     full = inventory[u"full_body"]
     highlighted = inventory[u"highlighted"]
     exclude = bool(choice.get(u"exclude_highlighted"))
-    out[u"review"] = list(full[u"review"] or highlighted)
     if full[u"status"] == u"refused":
+        # PS-2 UI corrections: a refusal the review can't resolve shows only its reason (which points to Selected
+        # parts), never the review checklist.
         out[u"summary"] = full[u"message"]
         return out
+    out[u"review"] = list(full[u"review"] or highlighted)
     if full[u"status"] == u"review-required" and not exclude:
         out[u"summary"] = full[u"message"]
         return out
@@ -47888,41 +47927,175 @@ def prod_pose_info_date(stamp):
 
 
 def prod_pose_info_view(record):
-    """What Pose Info shows for any saved pose (versions 1-3), from the record alone: what it includes; what it does
-    not include when that is consequential (recorded exclusions; for a full body, what is never saved); the source
-    model file it was saved from (full path as a tooltip); the latest saved date; and a sentence only for a
-    consequential effect (unselected attached parts that move, a selected body root). An ordinary pose has no
-    explanation (Astra UI review). Returns {name, rows: [[label, text, tooltip]], effect}."""
+    """What Pose Info shows about any saved pose (versions 1-3), from the record alone (PS-2 UI corrections,
+    2026-11-14; Expression Preset Info is the reference): its type; the model file and path it was saved from;
+    the saved and updated dates; what it includes (how many bones, and the group for a selection); what it does not
+    include when that is consequential (recorded exclusions; for a full body, what is never saved); for a version 3
+    Full body, what happens to the hips; and a sentence only for a consequential selection effect. The saved
+    bones and values are prod_pose_info_values. Records hold no source project or session file, so none is shown.
+    Returns {name, rows: [[label, text, tooltip]], effect}."""
     pose = record[u"pose"]
-    rows, effect, not_included = [], None, []
+    rows, effect, not_included, extra = [], None, [], []
     if prod_scope_is_record(record):
         sc = pose[u"scope"]
         not_included = [u"%s controls" % e[u"label"] for e in sc[u"exclusions"]]
+        count = len(sc[u"posed"])
         if sc[u"kind"] == u"full_body":
-            rows.append([u"Includes:", u"Full body, including hip movement", None])
+            kind = u"Full body"
+            includes = u"%d bones" % count
             not_included += PROD_POSE_FULL_BODY_NOT_INCLUDED[3]
+            if sc.get(u"root_translation") == u"included":
+                extra.append([u"Hip position:", u"Saved. Applying it moves the hips; the rootTransform stays where "
+                                                u"it is.", None])
         else:
+            kind = u"Selected parts"
             friendly = prod_scope_friendly_label(sc[u"label"])
-            rows.append([u"Includes:", friendly or prod_scope_list_phrase(sc[u"posed"]),
-                         None if friendly else prod_scope_list_phrase(sc[u"posed"], 64)])
+            includes = (u"%s (%d bones)" % (friendly, count)) if friendly else (
+                u"%d bone%s" % (count, u"" if count == 1 else u"s"))
             parents = dict((b[u"id"], b[u"parent"]) for b in pose[u"structure"][u"bones"])
             effect = prod_scope_selection_effect(sc[u"posed"], parents) or None
     else:
         regions = [r for r in PROD_POSE_REGIONS + (u"full_body",) if r in pose[u"regions"]]
-        rows.append([u"Includes:", u", ".join(PROD_POSE_PART_NAMES[r] for r in regions), None])
+        kind = u", ".join(PROD_POSE_PART_NAMES[r] for r in regions)
+        includes = None
         if u"full_body" in regions:
             not_included += PROD_POSE_FULL_BODY_NOT_INCLUDED[2]
-    if not_included:
-        text = u", ".join(not_included)
-        rows.append([u"Not included:", text[:1].upper() + text[1:], None])
+    rows.append([u"Type:", kind, None])
     model = u(pose[u"source"].get(u"model_ref") or u"").replace(u"\\", u"/")
-    rows.append([u"Saved from:", model.rsplit(u"/", 1)[-1] or u"Unknown", model or None])
+    rows.append([u"Model:", model.rsplit(u"/", 1)[-1] or u"Unknown", None])
+    rows.append([u"Model path:", model or u"Unknown", None])
+    rows.append([u"Saved:", prod_pose_info_date(record.get(u"created_at")), None])
     updated = record.get(u"updated_at")
     if updated and updated != record.get(u"created_at"):
         rows.append([u"Updated:", prod_pose_info_date(updated), None])
-    else:
-        rows.append([u"Saved:", prod_pose_info_date(record.get(u"created_at")), None])
+    if includes:
+        rows.append([u"Includes:", includes, None])
+    if not_included:
+        text = u", ".join(not_included)
+        rows.append([u"Not included:", text[:1].upper() + text[1:], None])
+    rows += extra
     return {u"name": u(record[u"name"]), u"rows": rows, u"effect": effect}
+
+
+def prod_pose_info_number(value, places=2):
+    text = (u"%%.%df" % places) % float(value)
+    text = text.rstrip(u"0").rstrip(u".") if u"." in text else text
+    return u"0" if text in (u"-0", u"") else text
+
+
+def prod_pose_info_rotation(q):
+    """A saved rotation quaternion (x, y, z, w) as X/Y/Z angles in degrees (roll about X, pitch about Y, yaw about Z,
+    composed Z-Y-X) for reading; the exact quaternion stays available as the tooltip."""
+    x, y, z, w = (float(c) for c in q)
+    roll = math.degrees(math.atan2(2.0 * (w * x + y * z), 1.0 - 2.0 * (x * x + y * y)))
+    s = max(-1.0, min(1.0, 2.0 * (w * y - z * x)))
+    pitch = math.degrees(math.asin(s))
+    yaw = math.degrees(math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z)))
+    return u"Rotation X %s\u00b0, Y %s\u00b0, Z %s\u00b0" % tuple(
+        prod_pose_info_number(a, 1) for a in (roll, pitch, yaw))
+
+
+def prod_pose_info_position(p):
+    return u"Position %s" % u", ".join(prod_pose_info_number(c) for c in p)
+
+
+def prod_pose_info_quat_tip(q):
+    return u"Quaternion (x, y, z, w): %s" % u", ".join(u"%.6f" % float(c) for c in q)
+
+
+def prod_pose_info_values(record):
+    """The saved bones or controls of a pose with their saved values, from the record alone, as tree groups:
+    [{title, nodes: [{name, value, tooltip, children}]}].
+    - Version 3: every saved bone, nested under its nearest saved ancestor in the saved skeleton, with its local
+      rotation; a Full body's body root also shows its saved position. Recorded exclusions are listed by name.
+    - Version 2 (registry full body): every saved control with its rotation and position.
+    - Version 1 (left arm): the saved arm goals (elbow position; hand position and rotation), relative to the arm's
+      anchor. Values are shown as saved; nothing is re-evaluated against the scene."""
+    pose = record[u"pose"]
+    groups = []
+    if prod_scope_is_record(record):
+        sc = pose[u"scope"]
+        posed = list(sc[u"posed"])
+        chosen = set(posed)
+        parent = dict((b[u"id"], b[u"parent"]) for b in pose[u"structure"][u"bones"])
+        order = dict((b[u"id"], i) for i, b in enumerate(pose[u"structure"][u"bones"]))
+        orient = pose[u"values"][u"orientations"]
+        root = pose[u"structure"].get(u"root")
+        translation = pose[u"values"].get(u"root_translation")
+        nodes = {}
+        for bone in posed:
+            q = orient.get(bone)
+            value = prod_pose_info_rotation(q) if q is not None else u""
+            if bone == root and translation is not None and sc[u"kind"] == u"full_body":
+                value = u"%s; %s" % (prod_pose_info_position(translation), value)
+            nodes[bone] = {u"name": bone, u"value": value,
+                           u"tooltip": prod_pose_info_quat_tip(q) if q is not None else None, u"children": []}
+        top = []
+        for bone in sorted(posed, key=lambda b: order.get(b, 1 << 30)):
+            up = parent.get(bone)
+            seen = set()
+            while up is not None and up not in chosen and up not in seen:
+                seen.add(up)
+                up = parent.get(up)
+            (nodes[up][u"children"] if up in chosen and up != bone else top).append(nodes[bone])
+        groups.append({u"title": u"Saved bones (%d)" % len(posed), u"nodes": top})
+        for e in sc[u"exclusions"]:
+            names = sorted(e.get(u"bones") or [])
+            groups.append({u"title": u"Left unchanged: %s (%d)" % (u(e.get(u"label") or u"excluded"), len(names)),
+                           u"nodes": [{u"name": n, u"value": u"", u"tooltip": None, u"children": []} for n in names]})
+        return groups
+    regions = pose[u"regions"]
+    if u"full_body" in regions:
+        body = regions[u"full_body"]
+        orientations, positions = body.get(u"orientations") or {}, body.get(u"positions") or {}
+        controls = sorted(set(k[:-2] for k in list(orientations) + list(positions) if k[-2:] in (u"_o", u"_p")),
+                          key=lambda n: n.lower())
+        nodes = []
+        for c in controls:
+            parts, tip = [], None
+            if c + u"_p" in positions:
+                parts.append(prod_pose_info_position(positions[c + u"_p"]))
+            if c + u"_o" in orientations:
+                parts.append(prod_pose_info_rotation(orientations[c + u"_o"]))
+                tip = prod_pose_info_quat_tip(orientations[c + u"_o"])
+            nodes.append({u"name": c, u"value": u"; ".join(parts), u"tooltip": tip, u"children": []})
+        groups.append({u"title": u"Saved controls (%d)" % len(nodes), u"nodes": nodes})
+    for region in PROD_POSE_REGIONS:
+        if region not in regions:
+            continue
+        r = regions[region]
+        goals = r.get(u"goals") or {}
+        nodes = []
+        for goal in sorted(goals):
+            g = goals[goal]
+            parts = []
+            if g.get(u"position") is not None:
+                parts.append(prod_pose_info_position(g[u"position"]))
+            if g.get(u"orientation") is not None:
+                parts.append(prod_pose_info_rotation(g[u"orientation"]))
+            nodes.append({u"name": goal[:1].upper() + goal[1:], u"value": u"; ".join(parts),
+                          u"tooltip": prod_pose_info_quat_tip(g[u"orientation"]) if g.get(u"orientation") else None,
+                          u"children": []})
+        anchor = r.get(u"anchor")
+        groups.append({u"title": u"%s goals%s (%d)" % (PROD_POSE_PART_NAMES[region],
+                                                        (u", relative to %s" % u(anchor)) if anchor else u"",
+                                                        len(nodes)), u"nodes": nodes})
+    return groups
+
+
+PROD_POSE_PICKER_ROWS = 11          # rows visible in the Selected parts picker (PS-2 UI corrections: 10-12)
+PROD_POSE_PICKER_SCREEN_SHARE = 0.5  # never taller than half the available screen height
+
+
+def prod_pose_picker_height(row_height, available_height, frame=4, rows=PROD_POSE_PICKER_ROWS):
+    """The picker's minimum height in pixels: `rows` rows whatever the number of groups, limited to a share of the
+    available screen height (and never below four rows) so the dialog stays usable on small displays."""
+    row_height = max(int(row_height), 1)
+    want = rows * row_height + frame
+    floor = 4 * row_height + frame
+    if available_height and available_height > 0:
+        want = min(want, max(int(available_height * PROD_POSE_PICKER_SCREEN_SHARE), floor))
+    return want
 
 
 def prod_scope_group_labels(view):

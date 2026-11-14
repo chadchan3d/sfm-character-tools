@@ -1613,7 +1613,7 @@ def section_semantics(ns, app, fx, root, lib, grip):
           any(i[u"preset_id"] == grip[u"preset_id"] for i in found[u"items"]), found[u"unusable"])
     os.remove(damaged)
     info = ns["prod_scope_info"](item[u"record"])
-    check("E.pose_info_lists_the_scope_and_its_rule", info[u"rows"][0] == (u"Includes:", u"Fingers")
+    check("E.pose_info_lists_the_scope_and_its_rule", (u"Includes:", u"Fingers (4 bones)") in info[u"rows"]
           and info[u"engine"] == u"direct_fk_v1 revision 1" and sorted(info[u"bones"]) == sorted(FINGERS), info)
 
 
@@ -2406,36 +2406,43 @@ def section_ui_copy(ns, fx, root):
              u"policy_revision": None, u"label": u"Face"}]
     body_face = save(ns, lib, ns["prod_scope_request"](u"full_body", [], excl), u"Body only")
     view = ns["prod_pose_info_view"]
+    values = ns["prod_pose_info_values"]
+    # PS-2 UI corrections (Owner, 2026-11-14): Pose Info follows Expression Preset Info: type, model and model path,
+    # dates, what is included and excluded, and every saved bone with its saved values. No invented metadata.
     banned = (u"Applies the saved", u"character's rig", u"chosen when saving", u"from supported metadata",
-              u"Saves the bends", u"position and orientation", u"revision", u"direct_fk", u"controls (articulation",
-              u"Unselected parts unchanged")
+              u"Saves the bends", u"revision", u"direct_fk", u"controls (articulation", u"Unselected parts unchanged",
+              u"Saved from", u"Project", u"Session")
+    fields = set([u"Type:", u"Model:", u"Model path:", u"Saved:", u"Updated:", u"Includes:", u"Not included:",
+                  u"Hip position:"])
     for name, rec in ((u"grip", grip), (u"mixed", mixed), (u"single", single), (u"forearm", forearm), (u"body", body),
                       (u"body_face", body_face)):
         v = view(rec[u"record"])
-        texts = u" ".join(r[1] for r in v[u"rows"]) + u" " + (v[u"effect"] or u"")
-        check("UI.pose_info_%s_has_no_redundant_phrase_and_only_its_fields" % name,
-              set(r[0] for r in v[u"rows"]) <= set([u"Includes:", u"Not included:", u"Saved from:", u"Saved:",
-                                                    u"Updated:"]) and not any(b in texts for b in banned), v)
+        texts = u" ".join(r[0] + u" " + r[1] for r in v[u"rows"]) + u" " + (v[u"effect"] or u"")
+        check("UI.pose_info_%s_has_only_its_fields_and_no_internal_or_invented_text" % name,
+              set(r[0] for r in v[u"rows"]) <= fields and not any(b in texts for b in banned), v)
     v = view(grip[u"record"])
-    check("UI.1_ordinary_grip_has_exactly_includes_source_model_and_date_and_no_explanation",
-          v[u"rows"] == [[u"Includes:", u"Fingers", None],
-                         [u"Saved from:", u"analytic.mdl", u"models/synthetic/analytic.mdl"],
-                         [u"Saved:", u"November 8, 2026", None]] and v[u"effect"] is None, v)
+    check("UI.1_selected_parts_info_type_model_path_date_and_includes",
+          v[u"rows"] == [[u"Type:", u"Selected parts", None], [u"Model:", u"analytic.mdl", None],
+                         [u"Model path:", u"models/synthetic/analytic.mdl", None],
+                         [u"Saved:", u"November 8, 2026", None], [u"Includes:", u"Fingers (4 bones)", None]]
+          and v[u"effect"] is None, v)
     v = view(body_face[u"record"])
     check("UI.2_consequential_exclusions_remain_visible",
           [u"Not included:", u"Face controls, facial expressions, rootTransform", None] in v[u"rows"], v)
     v = view(forearm[u"record"])
-    check("UI.3_attached_part_movement_remains_visible_where_it_happens",
-          v[u"effect"] == u"Unselected parts attached to these parts move with them.", v)
+    check("UI.3_child_movement_notice_where_it_happens",
+          v[u"effect"] == u"Moving a selected bone can also move its children.", v)
     v = view(body[u"record"])
-    check("UI.4_full_body_shows_only_what_it_does_not_include",
-          v[u"rows"][:2] == [[u"Includes:", u"Full body, including hip movement", None],
-                             [u"Not included:", u"Facial expressions, rootTransform", None]] and
-          v[u"effect"] is None, v)
-    # F01-DI-01 (RETAIN R3): v3 Full body wording must not imply the visible body stays where it is.
+    check("UI.4_full_body_info_type_count_exclusions_and_hips",
+          v[u"rows"][0] == [u"Type:", u"Full body", None] and
+          [u"Includes:", u"%d bones" % len(body[u"record"][u"pose"][u"scope"][u"posed"]), None] in v[u"rows"] and
+          [u"Not included:", u"Facial expressions, rootTransform", None] in v[u"rows"] and
+          [u"Hip position:", u"Saved. Applying it moves the hips; the rootTransform stays where it is.", None]
+          in v[u"rows"] and v[u"effect"] is None, v)
+    # F01-DI-01 (RETAIN R3): Full body info must not imply the visible body stays where it is.
     texts = u" ".join(r[1] for r in v[u"rows"]).lower()
-    check("UI.DI01_full_body_info_names_hip_movement_and_the_roottransform_only",
-          u"hip movement" in texts and u"roottransform" in texts and u"scene placement" not in texts and
+    check("UI.DI01_full_body_info_names_the_hips_and_the_roottransform_only",
+          u"moves the hips" in texts and u"roottransform" in texts and u"scene placement" not in texts and
           u"place in the scene" not in texts and u"stays in place" not in texts, v)
     check("UI.5_spaced_and_camel_case_group_names",
           ns["prod_scope_friendly_label"](u"LeftFingers") == u"Left fingers" and
@@ -2446,21 +2453,66 @@ def section_ui_copy(ns, fx, root):
           ns["prod_scope_friendly_label"](u"bip_hand_l") is None and
           ns["prod_scope_friendly_label"](u"Left  fingers") is None)
     v, w = view(mixed[u"record"]), view(single[u"record"])
-    check("UI.6_individual_and_mixed_selections_name_their_recorded_controls",
-          v[u"rows"][0] == [u"Includes:", u"thumb1, finger1, finger3", u"thumb1, finger1, finger3"] and
-          w[u"rows"][0] == [u"Includes:", u"thumb1", u"thumb1"] and w[u"effect"] is None, (v, w))
+    check("UI.6_individual_and_mixed_selections_count_their_bones",
+          [u"Includes:", u"3 bones", None] in v[u"rows"] and [u"Includes:", u"1 bone", None] in w[u"rows"] and
+          w[u"effect"] is None, (v, w))
+
+    def flat(nodes, depth=0):
+        out = []
+        for n in nodes:
+            out.append((depth, n[u"name"], n[u"value"]))
+            out += flat(n[u"children"], depth + 1)
+        return out
+    g = values(grip[u"record"])
+    rows = flat(g[0][u"nodes"])
+    check("UI.values_selected_parts_list_every_saved_bone_with_its_rotation",
+          len(g) == 1 and g[0][u"title"] == u"Saved bones (4)" and sorted(r[1] for r in rows) == sorted(FINGERS) and
+          all(r[2].startswith(u"Rotation X ") and r[2].endswith(u"°") for r in rows), g)
+    m = flat(values(mixed[u"record"])[0][u"nodes"])
+    check("UI.values_nest_under_the_nearest_saved_ancestor",
+          (0, u"finger1") in [(d, n) for d, n, _ in m] and (1, u"finger3") in [(d, n) for d, n, _ in m], m)
+    b = values(body[u"record"])
+    pose = body[u"record"][u"pose"]
+    flat_b = flat(b[0][u"nodes"])
+    root_rows = [r for r in flat_b if r[1] == pose[u"structure"][u"root"]]
+    check("UI.values_full_body_lists_all_bones_and_the_root_position",
+          b[0][u"title"] == u"Saved bones (%d)" % len(pose[u"scope"][u"posed"]) and
+          sorted(r[1] for r in flat_b) == sorted(pose[u"scope"][u"posed"]) and len(root_rows) == 1 and
+          root_rows[0][0] == 0 and root_rows[0][2].startswith(u"Position "), b)
+    bf = values(body_face[u"record"])
+    check("UI.values_list_recorded_exclusions_by_name",
+          [x[u"title"] for x in bf][1:] == [u"Left unchanged: Face (1)"] and
+          [n[u"name"] for n in bf[1][u"nodes"]] == [u"jaw"], bf)
+    check("UI.values_rotation_reads_in_degrees",
+          ns["prod_pose_info_rotation"]([0.0, 0.0, 0.0, 1.0]) == u"Rotation X 0°, Y 0°, Z 0°" and
+          ns["prod_pose_info_rotation"]([0.0, 0.0, 0.7071068, 0.7071068]) == u"Rotation X 0°, Y 0°, Z 90°",
+          ns["prod_pose_info_rotation"]([0.0, 0.0, 0.7071068, 0.7071068]))
     v1 = {u"name": u"Arm", u"created_at": u"20261101-090000-000000", u"updated_at": u"20261102-101500-000000",
-          u"pose": {u"version": 1, u"regions": {u"left_arm": {}}, u"source": {u"model_ref": u"models\\a\\krystal2020.mdl"}}}
+          u"pose": {u"version": 1, u"regions": {u"left_arm": {u"anchor": u"CollarL", u"goals": {
+              u"elbow": {u"position": [3.0, 6.25, -14.5]},
+              u"hand": {u"position": [19.0, 8.5, -1.0], u"orientation": [0.0, 0.0, 0.0, 1.0]}}}},
+                    u"source": {u"model_ref": u"models\\a\\krystal2020.mdl"}}}
     v2 = {u"name": u"Body", u"created_at": u"20261103-080000-000000", u"updated_at": u"20261103-080000-000000",
-          u"pose": {u"version": 2, u"regions": {u"full_body": {}}, u"source": {u"model_ref": u"models/k.mdl"}}}
-    a, b = view(v1), view(v2)
+          u"pose": {u"version": 2, u"regions": {u"full_body": {u"orientations": {u"Hip_o": [0.0, 0.0, 0.0, 1.0]},
+                                                               u"positions": {u"Hip_p": [1.0, 2.0, 3.0]}}},
+                    u"source": {u"model_ref": u"models/k.mdl"}}}
+    a, bb = view(v1), view(v2)
     check("UI.7_legacy_records_remain_readable",
-          a[u"rows"] == [[u"Includes:", u"Left arm", None], [u"Saved from:", u"krystal2020.mdl", u"models/a/krystal2020.mdl"],
+          a[u"rows"] == [[u"Type:", u"Left arm", None], [u"Model:", u"krystal2020.mdl", None],
+                         [u"Model path:", u"models/a/krystal2020.mdl", None], [u"Saved:", u"November 1, 2026", None],
                          [u"Updated:", u"November 2, 2026", None]] and a[u"effect"] is None and
-          b[u"rows"] == [[u"Includes:", u"Full body", None],
-                         [u"Not included:", u"Facial expressions, gaze, scene placement", None],
-                         [u"Saved from:", u"k.mdl", u"models/k.mdl"], [u"Saved:", u"November 3, 2026", None]] and
-          b[u"effect"] is None, (a, b))
+          bb[u"rows"] == [[u"Type:", u"Full body", None], [u"Model:", u"k.mdl", None],
+                          [u"Model path:", u"models/k.mdl", None], [u"Saved:", u"November 3, 2026", None],
+                          [u"Not included:", u"Facial expressions, gaze, scene placement", None]] and
+          bb[u"effect"] is None, (a, bb))
+    lv1, lv2 = values(v1), values(v2)
+    check("UI.values_legacy_records_show_their_saved_goals_and_controls",
+          lv1[0][u"title"] == u"Left arm goals, relative to CollarL (2)" and
+          [(n[u"name"], n[u"value"]) for n in lv1[0][u"nodes"]] ==
+          [(u"Elbow", u"Position 3, 6.25, -14.5"),
+           (u"Hand", u"Position 19, 8.5, -1; Rotation X 0°, Y 0°, Z 0°")] and
+          lv2[0][u"title"] == u"Saved controls (1)" and
+          lv2[0][u"nodes"][0][u"value"] == u"Position 1, 2, 3; Rotation X 0°, Y 0°, Z 0°", (lv1, lv2))
     check("UI.dates_are_month_day_year_and_keep_unknown_text",
           ns["prod_pose_info_date"](u"20261108-193207-1") == u"November 8, 2026" and
           ns["prod_pose_info_date"](u"odd") == u"odd" and ns["prod_pose_info_date"](None) == u"Unknown")
@@ -2472,16 +2524,33 @@ def section_ui_copy(ns, fx, root):
         return ns["prod_scope_dialog_state"](inv, {u"kind": u"selected_parts", u"bones": bones})[u"summary"]
     check("UI.save_an_ordinary_finger_selection_shows_no_explanation", summary(FINGERS) == u"" and
           summary([u"thumb1"]) == u"", (summary(FINGERS), summary([u"thumb1"])))
-    check("UI.save_attached_unselected_parts_are_mentioned_without_bone_names",
-          summary([u"forearm"]) == u"Unselected parts attached to these parts move with them." and
-          summary([u"finger1", u"finger3"]) == u"Unselected parts attached to these parts move with them.",
+    check("UI.save_child_movement_notice_only_with_unselected_children",
+          summary([u"forearm"]) == u"Moving a selected bone can also move its children." and
+          summary([u"finger1", u"finger3"]) == u"Moving a selected bone can also move its children.",
           (summary([u"forearm"]), summary([u"finger1", u"finger3"])))
     check("UI.save_a_selected_body_root_keeps_its_position",
-          summary([u"pelvis"]) == u"Unselected parts attached to these parts move with them. The body root keeps "
+          summary([u"pelvis"]) == u"Moving a selected bone can also move its children. The body root keeps "
                                   u"its position.", summary([u"pelvis"]))
     full = ns["prod_scope_dialog_state"](arm_inventory_without_face(ns, inv), {u"kind": u"full_body"})[u"summary"]
-    check("UI.save_full_body_states_what_is_not_saved_including_scene_placement",
-          full == u"Includes hip movement. Facial expressions and the character's rootTransform are not saved.", full)
+    check("UI.save_full_body_states_only_the_meaningful_exclusions",
+          full == u"Facial expressions and the rootTransform are not saved." and u"hip" not in full.lower() and
+          u"scene placement" not in full and u"place in the scene" not in full, full)
+    refused_inv = dict(inv, highlighted=[u"jaw"], full_body={
+        u"status": u"refused", u"code": u"rig-driven", u"review": [u"jaw"],
+        u"message": ns["PROD_SCOPE_MESSAGES"][u"rig-driven"]})
+    st = ns["prod_scope_dialog_state"](refused_inv, {u"kind": u"full_body"})
+    check("UI.refused_full_body_shows_its_reason_and_no_review_checklist",
+          st[u"review"] == [] and not st[u"save_enabled"] and st[u"summary"] ==
+          ns["PROD_SCOPE_MESSAGES"][u"rig-driven"] and u"Choose Selected parts" in st[u"summary"], st)
+    review_inv = dict(inv, highlighted=[u"jaw"], full_body={
+        u"status": u"review-required", u"code": u"review", u"review": [u"jaw"], u"message": u"Review these."})
+    st = ns["prod_scope_dialog_state"](review_inv, {u"kind": u"full_body"})
+    check("UI.resolvable_review_still_shows_its_checklist", st[u"review"] == [u"jaw"] and not st[u"save_enabled"], st)
+    height = ns["prod_pose_picker_height"]
+    check("UI.picker_shows_eleven_rows_whatever_the_group_count_within_half_the_screen",
+          ns["PROD_POSE_PICKER_ROWS"] == 11 and height(20, 1040, 4) == 224 and height(20, 0, 4) == 224 and
+          height(20, 400, 4) == 200 and height(20, 100, 4) == 84 and height(24, 728, 4) == 268, [
+              height(20, 1040, 4), height(20, 400, 4), height(20, 100, 4), height(24, 728, 4)])
     for bones in (FINGERS, [u"forearm"], [u"pelvis"], [u"finger1", u"finger3"]):
         s = summary(bones)
         check("UI.save_%s_never_promises_unchanged_parts_or_names_bones" % u"_".join(bones[:2]),

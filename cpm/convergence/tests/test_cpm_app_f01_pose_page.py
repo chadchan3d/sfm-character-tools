@@ -253,11 +253,13 @@ def section_ui_pass(window, tabs, env, boxes, QtGui):
         window.refresh_pose_buttons()
         info = capture_dialog(QtGui, window.open_pose_info)
         d = info[0] if info else {"status": window.status.text()}
-        check("U8 Pose Info opens a read-only dialog: name, what it includes, the saved source model and date",
-              d.get("title") == u"Pose Info" and d.get("labels", [])[:3] == [u"Arms Up", u"Includes:", u"Left arm"]
-              and u"Saved from:" in d.get("labels", []) and u"krystal2020.mdl" in d.get("labels", [])
+        check("U8 Pose Info opens a read-only dialog: name, type, model and model path, date (PS-2 UI corrections)",
+              d.get("title") == u"Pose Info" and d.get("labels", [])[:6] == [u"Name:", u"Arms Up", u"Type:",
+                                                                               u"Left arm", u"Model:",
+                                                                               u"krystal2020.mdl"]
+              and u"Model path:" in d.get("labels", []) and u"Saved from:" not in d.get("labels", [])
               and not any(t in d.get("labels", []) for t in (u"Source shot:", u"shot10", u"Character:", u"Krystal",
-                                                              u"Model path:", u"Pose rule:", u"Body parts:"))
+                                                              u"Pose rule:", u"Body parts:", u"Project:"))
               and not any(u"From:" in t or u"Available:" in t for t in d.get("labels", []))
               and d.get("buttons") == [u"Close"], d)
         check("U8 Pose Info ended its operation", not window.busy and window.operation is None)
@@ -672,11 +674,15 @@ def section_polish(window, tabs, env, boxes, QtGui):
             def info_exec(self):
                 parts = self.findChildren(QtGui.QListWidget, "pose_info_parts")
                 note = self.findChildren(QtGui.QLabel, "pose_info_limitation")
+                trees = self.findChildren(QtGui.QTreeWidget, "pose_info_values")
                 seen.append({"labels": [w.text() for w in self.findChildren(QtGui.QLabel)],
                              "parts": [parts[0].item(i).text() for i in range(parts[0].count())] if parts else None,
                              "parts_height": parts[0].height() if parts else 0,
                              "note": note[0].text() if note else None,
-                             "groups": [w.title() for w in self.findChildren(QtGui.QGroupBox)]})
+                             "groups": [w.title() for w in self.findChildren(QtGui.QGroupBox)],
+                             "values": [trees[0].topLevelItem(i).text(0) for i in range(trees[0].topLevelItemCount())]
+                             if trees else None,
+                             "headers": [trees[0].headerItem().text(c) for c in range(2)] if trees else None})
                 return 0
             QtGui.QDialog.exec_ = info_exec
             try:
@@ -685,11 +691,14 @@ def section_polish(window, tabs, env, boxes, QtGui):
                 QtGui.QDialog.exec_ = real_exec
             return seen[0] if seen else {}
         one = info(u"p1")
-        check("V4 Pose Info, one part: the name, Includes, Saved from (file name), the latest date; no raw list, "
-              "no technical group, no note",
-              one.get("labels", [])[:5] == [u"Wave", u"Includes:", u"Left arm", u"Saved from:", u"krystal2020.mdl"]
-              and one.get("parts") is None and one.get("note") is None and one.get("groups") == []
-              and not any(t in one.get("labels", []) for t in (u"Character:", u"Source shot:", u"Model path:"))
+        check("V4 Pose Info, one part (PS-2 UI corrections): a Pose box (name, type, model, model path, dates) and a "
+              "Saved Values tree; no note",
+              one.get("labels", [])[:6] == [u"Name:", u"Wave", u"Type:", u"Left arm", u"Model:", u"krystal2020.mdl"]
+              and u"Model path:" in one.get("labels", []) and one.get("parts") is None and one.get("note") is None
+              and one.get("groups") == [u"Pose", u"Saved Values"]
+              and one.get("headers") == [u"Bone / Control", u"Value"] and len(one.get("values") or []) == 1
+              and one["values"][0].startswith(u"Left arm goals")
+              and not any(t in one.get("labels", []) for t in (u"Character:", u"Source shot:", u"Saved from:"))
               and not any(u"From:" in t or u"Available" in t for t in one.get("labels", [])), one)
         check("V4 Pose Info: Updated is shown when the pose was updated", u"Updated:" in one.get("labels", []), one)
         updated = info(u"p2")
