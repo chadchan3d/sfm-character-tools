@@ -11,13 +11,27 @@ animation, Undo/Redo, the CPM log) on this run's eight observations:
   B5  after the Owner's Hip rotation      B6  after Update Pose K2 Pose
 
 usage: python -I k2_compare.py K2.json      (or: k2_tool.py K2.json compare)
+       python -I k2_compare.py K2.json --replay-revised-a1
 Writes Q/evidence/K2_VERDICT.json and K2_VERDICT.md (exclusive create). Exit 0 only on "verdict": "PASS".
+--replay-revised-a1 re-evaluates an existing run's evidence and writes K2_VERDICT_REVISED_A1.json/.md instead
+(exclusive create), linked to the original verdict, which must exist and is never changed.
+
+Revised A1 (F01_FULL_BODY_S1_CHECKPOINT.md section 10; K2 correction 2026-11-14): Apply's planned value of every
+FK-position channel (the record descriptor's role "fk-written", attribute "position") is the destination's own value,
+read here from the B1 baseline observation; it must be within the profile's saved/destination limit (body_krystal_v1:
+0.00005 SFM units, Euclidean, compared as float32; every other profile exact) and is kept exactly. Every other written
+channel holds the record's saved value. The original K2 comparator compared every written channel with the saved
+value; that check (apply.written_channels_hold_the_record) is replaced by
+apply.written_channels_hold_the_planned_values and apply.pinned_fk_positions_within_the_revised_A1_limit.
 """
 from __future__ import print_function
 
+import hashlib
 import json
+import math
 import os
 import re
+import struct
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -29,6 +43,56 @@ STEPS = ("A1", "A2", "B1", "B2", "B3", "B4", "B5", "B6")
 LABELS = dict((s, S3.LABELS[s]) for s in STEPS)     # the S3 observer's fixed labels for these steps
 BAD_LOG = ("RECOVERY_BLOCKED", "undo-uncertain", "abort-unverified", "P7-unverified", "committed-unverified",
            "recovery-unverified", "abort-failed")
+# Revised A1 (S1 checkpoint section 10): the largest compatible saved/destination FK-position distance per profile.
+FK_POSITION_LIMIT = {u"body_krystal_v1": 0.00005}
+REVISED_NAMES = ("K2_VERDICT_REVISED_A1.json", "K2_VERDICT_REVISED_A1.md")
+
+
+def f32(x):
+    return struct.unpack("<f", struct.pack("<f", float(x)))[0]
+
+
+def pinned_fk_positions(region):
+    """The FK-position channels of a v2 record, from its own descriptor's channel classification."""
+    roles = (region.get("descriptor") or {}).get("channels") or {}
+    return sorted(n for n in region["positions"]
+                  if (roles.get(n) or {}).get("role") == "fk-written" and roles[n].get("attribute") == "position")
+
+
+def planned_region(R, region, base):
+    """(region with every FK position replaced by the destination baseline value, problems, differing detail).
+    The destination value is B1's observed value at the mapped tick, never CPM's report."""
+    problems, differing = [], {}
+    limit = f32(FK_POSITION_LIMIT.get(region.get("profile_id"), 0.0))
+    was = R.channels(base)
+    planned = dict(region, positions=dict(region["positions"]))
+    pinned = pinned_fk_positions(region)
+    for n in pinned:
+        saved = region["positions"][n]
+        dest = (was.get(n) or {}).get("value_at_mapped")
+        if not (isinstance(dest, list) and len(dest) == 3 and isinstance(saved, list) and len(saved) == 3 and
+                all(isinstance(v, (int, float)) and math.isfinite(v) and f32(v) == v for v in dest + saved)):
+            problems.append("%s destination or saved value unreadable" % n)
+            continue
+        distance = math.sqrt(sum((float(saved[i]) - float(dest[i])) ** 2 for i in range(3)))
+        if f32(distance) > limit:
+            problems.append("%s distance %.9g exceeds the limit %.9g" % (n, distance, limit))
+        planned["positions"][n] = list(dest)
+        if list(dest) != list(saved):
+            differing[n] = {"saved": saved, "destination": dest, "distance": distance}
+    return planned, pinned, problems, differing
+
+
+def planned_written_problems(R, after, base, region):
+    """Revised A1 written-channel check: the S3 written-channel rules (value at the mapped tick, one key there, other
+    keys and layers unchanged) against the planned values, plus each FK position kept exactly."""
+    planned, pinned, _, _ = planned_region(R, region, base)
+    out = R.written_problems(after, base, planned, False)
+    now = R.channels(after)
+    for n in pinned:
+        if (now.get(n) or {}).get("value_at_mapped") != planned["positions"][n]:
+            out.append("%s FK position not kept exactly" % n)
+    return out
 
 
 def operations(rows, pid, kind):
@@ -120,8 +184,11 @@ def evaluate(R):
 
     # Apply (B2), Undo (B3), Redo (B4): placement, posture, preservation
     b1 = o["B1"]
-    chk("apply.written_channels_hold_the_record", not R.written_problems(o["B2"], b1, reg_saved, False),
-        R.written_problems(o["B2"], b1, reg_saved, False)[:8])
+    wp = planned_written_problems(R, o["B2"], b1, reg_saved)
+    chk("apply.written_channels_hold_the_planned_values", not wp, wp[:8])
+    _, pinned, pin_problems, differing = planned_region(R, reg_saved, b1)
+    chk("apply.pinned_fk_positions_within_the_revised_A1_limit", pinned and not pin_problems,
+        {"pinned": len(pinned), "problems": pin_problems[:8], "differing_from_saved": differing})
     chk("apply.whole_body_posture_reproduced_with_placement_model_and_scales_unchanged",
         not R.applied_problems(o["B2"], b1, reg_saved), R.applied_problems(o["B2"], b1, reg_saved)[:8])
     chk("apply.other_channels_of_the_instance_unchanged", not R.channel_problems(b1, o["B2"], exclude=written),
@@ -181,9 +248,24 @@ def evaluate(R):
         and S3.s0_hash(os.path.join(R.q, "sessions", "K2_SOURCE.dmx")) == R.c["pins"]["r2_fixture_sha256"])
 
 
-def run(c):
+def sha256_file(path):
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+def run(c, replay=False):
     S3.LABELS = LABELS                                    # Run loads exactly these eight observations
     R = S3.Run(c)
+    ev = os.path.join(R.q, "evidence")
+    original = None
+    if replay:
+        paths = [os.path.join(ev, n) for n in ("K2_VERDICT.json", "K2_VERDICT.md")]
+        if not all(os.path.isfile(p) for p in paths):
+            print("REPLAY REFUSED: the original K2_VERDICT.json and K2_VERDICT.md must exist")
+            return 2
+        first = S3.read_json(paths[0])
+        original = {"files": dict((os.path.basename(p), sha256_file(p)) for p in paths),
+                    "verdict": first.get("verdict"), "failed": first.get("failed")}
     R.timing, R.findings = [], []
     evaluate(R)
     perf = S3.performance(R)
@@ -193,11 +275,26 @@ def run(c):
            "failed": [x["id"] for x in failed], "performance": perf, "timing": R.timing, "findings": R.findings,
            "reused_evidence": "S3 runs 1-5 (verified Abort, no-op, Clip Editor and proportions refusals, navigation, "
                               "v1 left arm) for the unchanged v2 engine; not repeated"}
-    ev = os.path.join(R.q, "evidence")
     md = S3.markdown(out).replace("# F-01 full-body S3 verdict", "# F-01 K2 Krystal v2 integration verdict", 1)
+    names = ("K2_VERDICT.json", "K2_VERDICT.md")
+    if replay:
+        out["format"] = "F01-K2-verdict-revised-A1-v1"
+        out["replay"] = {
+            "original": original, "comparator_sha256": sha256_file(os.path.abspath(__file__)),
+            "correction": "apply.written_channels_hold_the_record compared every written channel with the saved "
+                          "value; under the revised A1 contract (S1 checkpoint section 10) FK positions keep the "
+                          "destination's values. Replaced by apply.written_channels_hold_the_planned_values and "
+                          "apply.pinned_fk_positions_within_the_revised_A1_limit. All other checks unchanged. "
+                          "Re-evaluated from the same evidence; SFM was not run."}
+        md = md.replace("# F-01 K2 Krystal v2 integration verdict",
+                        "# F-01 K2 Krystal v2 integration verdict, revised A1 replay", 1)
+        md += ("\nReplay of the original verdict `K2_VERDICT.json` (%s, failed: %s; sha256 %s), which is unchanged. "
+               "%s\n" % (original["verdict"], ", ".join(original["failed"] or []),
+                         original["files"]["K2_VERDICT.json"], out["replay"]["correction"]))
+        names = REVISED_NAMES
     if R.findings:
         md += "\nFindings: %s\n" % "; ".join(R.findings)
-    for name, data in (("K2_VERDICT.json", json.dumps(out, indent=1, sort_keys=True)), ("K2_VERDICT.md", md)):
+    for name, data in ((names[0], json.dumps(out, indent=1, sort_keys=True)), (names[1], md)):
         fd = os.open(os.path.join(ev, name), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0))
         with os.fdopen(fd, "wb") as f:
             f.write(data.encode("utf-8"))
@@ -206,12 +303,12 @@ def run(c):
 
 
 def main(argv):
-    if len(argv) != 2:
+    if len(argv) not in (2, 3) or (len(argv) == 3 and argv[2] != "--replay-revised-a1"):
         print(__doc__)
         return 2
     sys.path.insert(0, HERE)
     import k2_tool
-    return run(k2_tool.S.load(argv[1]))
+    return run(k2_tool.S.load(argv[1]), replay=len(argv) == 3)
 
 
 if __name__ == "__main__":

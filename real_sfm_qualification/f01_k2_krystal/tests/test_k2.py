@@ -15,6 +15,7 @@ import io
 import json
 import os
 import shutil
+import struct
 import sys
 import tempfile
 import unittest
@@ -111,6 +112,22 @@ class ToolTests(unittest.TestCase):
 
 # --- the comparator on a synthetic run -------------------------------------------------------------------------------
 
+FK = ["w%03d_p" % i for i in range(124)]              # the record's fk-written positions (pinned under revised A1)
+HANDLE_P = ["w%03d_p" % i for i in range(124, 139)]
+# The two native K2 discrepancies (B1 destination vs A2 record, float32-exact values from run 1's observations).
+NATIVE = {"w001_p": ([4.631233215332031, -0.2219141721725464, -3.2890470027923584],
+                     [4.631217956542969, -0.221917986869812, -3.289045810699463]),
+          "w002_p": ([0.0, 3.0237770080566406, 0.0],
+                     [8.285045623779297e-06, 3.0237720012664795, -2.390146255493164e-05])}
+
+
+def descriptor():
+    roles = dict((n, {"role": "fk-written", "attribute": "position"}) for n in FK)
+    roles.update((n, {"role": "handle-written", "attribute": "position"}) for n in HANDLE_P)
+    roles.update((n, {"role": "fk-written", "attribute": "orientation"}) for n in S3T.WRITTEN if n.endswith("_o"))
+    return {"channels": roles}
+
+
 class K2Synthetic(object):
     def __init__(self, folder, faults=()):
         self.q, self.f = folder, set(faults)
@@ -153,13 +170,37 @@ class K2Synthetic(object):
         self.observe(src, "A1")
         self.observe(src, "A2")
         reg_saved = S3T.region_from(src, 1)
+        reg_saved["profile_id"] = "body_krystal_v1"
+        if "no-descriptor" not in f:
+            reg_saved["descriptor"] = descriptor()
         dest = S3T.Scene(100 if "no-restart" in f else 200, "e:/q/sessions/K2_DESTINATION.dmx", 35.0,
                          S3T.posture(1.0) if "destination-matches" in f else S3T.posture(-30.0))
         dest.cpm = QUAL
+        # Revised A1: the saved FK positions equal the destination's, except the two native float32-noise channels.
+        for n in FK:
+            reg_saved["positions"][n] = copy.deepcopy(dest.keys[n][0][1])
+        for n, (saved, there) in NATIVE.items():
+            reg_saved["positions"][n], dest.keys[n][0][1] = list(saved), list(there)
+        if "outside-limit" in f:                       # 0.0001 units: beyond body_krystal_v1's 0.00005
+            reg_saved["positions"]["w003_p"] = [K.f32(dest.keys["w003_p"][0][1][0] + 0.0001)] + \
+                dest.keys["w003_p"][0][1][1:]
         self.observe(dest, "B1")
         base = dest.snapshot()
         if "apply-moves-nothing" not in f:
-            dest.apply(reg_saved, "K2 Pose")
+            planned = copy.deepcopy(reg_saved)          # what CPM's revised A1 plan writes
+            for n in FK:
+                planned["positions"][n] = copy.deepcopy(dest.keys[n][0][1])
+            if "pinned-saved-transferred" in f:
+                planned["positions"]["w001_p"] = list(NATIVE["w001_p"][0])
+            if "wrong-authored-value" in f:
+                planned["orientations"]["w130_o"] = S3T.qz(77.0)
+            if "wrong-handle-position" in f:
+                planned["positions"]["w130_p"] = [9.0, 0.5, -0.25]
+            dest.apply(planned, "K2 Pose")
+            if "unexpected-write" in f:
+                dest.keys["jaw_o"].append([S3T.T_CHAN, S3T.qz(5.0)])
+            if "extra-key" in f:
+                dest.keys["w005_p"].append([S3T.T_CHAN + 1, [0.0, 0.5, -0.25]])
         else:
             dest.undo = {"can_undo": True, "can_redo": False, "undo_desc": "Apply Pose K2 Pose", "redo_desc": ""}
         self.observe(dest, "B2")
@@ -240,8 +281,57 @@ class CompareTests(unittest.TestCase):
         self.assertEqual(out["verdict"], "PASS")
         self.assertTrue(out["findings"])
 
+    def test_the_native_two_channel_revised_a1_case_passes(self):
+        out = self.verdict()
+        written = [x for x in out["checks"] if x["id"] == "apply.pinned_fk_positions_within_the_revised_A1_limit"][0]
+        self.assertEqual((written["pass"], written["detail"]["pinned"], sorted(written["detail"]["differing_from_saved"])),
+                         (True, 124, ["w001_p", "w002_p"]))
+        self.assertNotIn("apply.written_channels_hold_the_record", [x["id"] for x in out["checks"]])
+
+    def test_revised_a1_counterexamples_fail(self):
+        cases = {"pinned-saved-transferred": "apply.written_channels_hold_the_planned_values",
+                 "wrong-authored-value": "apply.written_channels_hold_the_planned_values",
+                 "wrong-handle-position": "apply.written_channels_hold_the_planned_values",
+                 "extra-key": "apply.written_channels_hold_the_planned_values",
+                 "unexpected-write": "apply.other_channels_of_the_instance_unchanged",
+                 "outside-limit": "apply.pinned_fk_positions_within_the_revised_A1_limit",
+                 "no-descriptor": "apply.pinned_fk_positions_within_the_revised_A1_limit"}
+        for fault, check in sorted(cases.items()):
+            out = self.verdict(fault)
+            self.assertEqual(out["verdict"], "FAIL", fault)
+            self.assertIn(check, out["failed"], (fault, out["failed"]))
+
+    def test_the_limit_is_inclusive_as_float32_and_the_next_float32_refuses(self):
+        class FakeRun(object):
+            @staticmethod
+            def channels(o):
+                return dict((n, {"value_at_mapped": v}) for n, v in o.items())
+        limit = K.f32(0.00005)
+        above = struct.unpack("<f", struct.pack("<I", struct.unpack("<I", struct.pack("<f", limit))[0] + 1))[0]
+        region = {"profile_id": "body_krystal_v1", "positions": {"p": [0.0, 0.0, 0.0]},
+                  "descriptor": {"channels": {"p": {"role": "fk-written", "attribute": "position"}}}}
+        self.assertEqual(K.planned_region(FakeRun, region, {"p": [limit, 0.0, 0.0]})[2], [])
+        self.assertEqual(len(K.planned_region(FakeRun, region, {"p": [above, 0.0, 0.0]})[2]), 1)
+        other = dict(region, profile_id="body_other_v1")      # every other profile stays exact
+        self.assertEqual(len(K.planned_region(FakeRun, other, {"p": [K.f32(1e-7), 0.0, 0.0]})[2]), 1)
+        self.assertEqual(len(K.planned_region(FakeRun, region, {"p": [float("nan"), 0.0, 0.0]})[2]), 1)
+        self.assertEqual(len(K.planned_region(FakeRun, region, {"p": [0.1, 0.0, 0.0]})[2]), 1)  # 0.1 isn't float32
+
+    def test_replay_writes_separate_files_and_leaves_the_original_unchanged(self):
+        q = os.path.join(self.dir, "R")
+        c = K2Synthetic(q, ("pinned-saved-transferred",)).build()
+        self.assertEqual(quiet(lambda: K.run(c, replay=True)), 2)      # refused: no original verdict yet
+        quiet(lambda: K.run(c))
+        ev = os.path.join(q, "evidence")
+        before = dict((n, K.sha256_file(os.path.join(ev, n))) for n in ("K2_VERDICT.json", "K2_VERDICT.md"))
+        quiet(lambda: K.run(c, replay=True))
+        out = load(os.path.join(ev, "K2_VERDICT_REVISED_A1.json"))
+        self.assertEqual(out["replay"]["original"]["files"], before)
+        self.assertEqual(dict((n, K.sha256_file(os.path.join(ev, n))) for n in before), before)
+        self.assertRaises(OSError, quiet, lambda: K.run(c, replay=True))  # never overwritten
+
     def test_counterexamples_fail_on_their_own_check(self):
-        cases = {"apply-moves-nothing": "apply.written_channels_hold_the_record",
+        cases = {"apply-moves-nothing": "apply.written_channels_hold_the_planned_values",
                  "destination-matches": "distinct.destination_visibly_different",
                  "incompatible": "precheck.compatible_and_distinct_before_apply",
                  "ui-disabled": "reopen.apply_enabled_for_the_v2_record",
