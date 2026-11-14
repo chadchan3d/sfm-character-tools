@@ -806,6 +806,156 @@ def section_library_buttons(ns, app, Window, reg):
     check("C11.other_poses_untouched", [i[u"name"] for i in own_items(ns, win, reg)] == [u"Both"])
 
 
+def section_source_project(ns, app, Window, reg):
+    """Source project (Owner-approved UI corrections after K2, 2026-11-14) through the real window operations and
+    the real store on the disposable library: Save New records the session's .dmx in the character's local sidecar
+    (never in the portable record); an unavailable project is "Not recorded"; Rename keeps it; Update records the
+    session its new values come from (or forgets it when unknown); Delete keeps it, so a pose restored from Trash
+    shows it again; a damaged sidecar never blocks Save and is never overwritten. Simulated boundary: the session
+    path read (prod_pose_session_project), checked separately against a fake sfmApp. Pose Info's display of the
+    project is checked in the scoped and Poses page suites."""
+    s = w1.twin_scene()
+    w1.fresh_library()
+    win = window(ns, Window, s, s.target)
+    win.library_meta = ns["prod_load_library_meta"](win.identity)
+    char = ns["prod_paths"](win.identity)["char"]
+    sidecar = os.path.join(char, u"pose_sources.json")
+    real_project = ns["prod_pose_session_project"]
+    real_time = ns["prod_pose_current_time"]
+    first, second, third = u"E:\\Projects\\Krystal Scene.dmx", u"E:\\Projects\\Second.dmx", u"D:/Shots/Third.dmx"
+    project = {"value": first}
+    ns["prod_pose_session_project"] = lambda: project["value"]
+    ns["prod_pose_current_time"] = lambda identity, authorization, reg_, regions: {u"t_doc": 1, u"t_shot": 1,
+                                                                                    u"t_chan": 1}
+    source = lambda pid: ns["prod_pose_source_project"](char, pid)
+
+    def fresh(pid):
+        return [i for i in own_items(ns, win, reg) if i[u"preset_id"] == pid][0]
+    try:
+        item = saved_item(ns, win, reg, name=u"Arms Up")
+        raw = core.read(item[u"path"])
+        check("SP1.save_records_the_session_project_in_the_local_sidecar",
+              source(item[u"preset_id"]) == first and os.path.isfile(sidecar)
+              and last_status(win)[1] == u"success" and ended(win), (source(item[u"preset_id"]), win.statuses[-1:]))
+        check("SP1.the_portable_pose_record_holds_no_project_path",
+              b"Krystal Scene" not in raw and b"Projects" not in raw and b"pose_sources" not in raw)
+        project["value"] = None
+        other = saved_item(ns, win, reg, name=u"Wave")
+        check("SP2.an_unavailable_project_is_not_recorded",
+              source(other[u"preset_id"]) is None and source(item[u"preset_id"]) == first)
+        win.pose_selection_for_action = lambda: item
+        win.prompt_rename = lambda current: u"Reach"
+        win.rename_selected_pose()
+        item = fresh(item[u"preset_id"])
+        check("SP3.rename_keeps_the_source_project", item[u"name"] == u"Reach" and source(item[u"preset_id"]) == first)
+        project["value"] = second
+        install_fakes(ns)
+        win.confirm_pose_update = lambda name, parts: True
+        win.update_pose(item)
+        item = fresh(item[u"preset_id"])
+        check("SP4.update_records_the_project_its_new_values_come_from",
+              source(item[u"preset_id"]) == second and last_status(win) == (u"Pose updated: Reach.", u"success")
+              and source(other[u"preset_id"]) is None, (source(item[u"preset_id"]), win.statuses[-1:]))
+        project["value"] = None
+        install_fakes(ns)
+        win.update_pose(item)
+        item = fresh(item[u"preset_id"])
+        check("SP4.update_from_an_unknown_project_forgets_the_old_one",
+              source(item[u"preset_id"]) is None and last_status(win)[1] == u"success", win.statuses[-1:])
+        project["value"] = third
+        install_fakes(ns)
+        win.update_pose(item)
+        item = fresh(item[u"preset_id"])
+        trash = os.path.join(w1.Library.root, u"Trash")
+        win.pose_selection_for_action = lambda: item
+        win.confirm_pose_trash = lambda name, path: True
+        stamp = ns["p03_now_stamp"]
+        ns["p03_now_stamp"] = lambda: u"20261114-120000-000000"
+        try:
+            win.delete_selected_pose()
+        finally:
+            ns["p03_now_stamp"] = stamp
+        moved = [os.path.join(trash, n) for n in os.listdir(trash)] if os.path.isdir(trash) else []
+        check("SP5.delete_moves_only_the_pose_and_keeps_its_source_entry",
+              len(moved) == 1 and not os.path.lexists(item[u"path"]) and source(item[u"preset_id"]) == third
+              and os.path.isfile(sidecar), moved)
+        os.rename(moved[0], item[u"path"])          # the artist restores it from Trash under its own file name
+        restored = fresh(item[u"preset_id"])
+        check("SP5.a_pose_restored_from_trash_shows_its_project_again",
+              source(restored[u"preset_id"]) == third, restored[u"path"])
+        with open(sidecar, "wb") as f:
+            f.write(b"{damaged")
+        damaged = core.read(sidecar)
+        project["value"] = first
+        third_item = saved_item(ns, win, reg, name=u"Third")
+        check("SP6.a_damaged_sidecar_never_blocks_save_and_is_never_overwritten",
+              third_item[u"name"] == u"Third" and core.read(sidecar) == damaged
+              and source(third_item[u"preset_id"]) is None, win.statuses[-1:])
+        strict = []
+        for entries in ({u"x": {u"project": u"E:/a.dmx"}}, {u"x": {u"project": u"E:/a.dmx", u"extra": 1}},
+                        {u"x": {u"project": u"a.dmx"}}, {u"x": u"E:/a.dmx"}):
+            with open(sidecar, "wb") as f:
+                f.write(json.dumps({u"schema_version": 1, u"record_kind": u"cpm-pose-sources",
+                                    u"entries": entries}).encode("utf-8"))
+            strict.append(source(u"x"))
+        check("SP6.the_sidecar_format_is_strict_and_unknown_content_is_not_recorded",
+              strict == [u"E:/a.dmx", None, None, None], strict)
+        with io.open(route.APP_PATH, "rb") as f:
+            text = f.read().decode("utf-8")
+        readers = []
+        for m in re.finditer(r"prod_pose_source_project\(|prod_pose_load_sources\(|prod_pose_sources_path\(", text):
+            head = text[:m.start()]
+            owner = max(head.rfind(u"\ndef "), head.rfind(u"\n    def "))
+            readers.append(re.match(r"\n\s*def (\w+)", text[owner:]).group(1))
+        check("SP6.only_pose_info_and_the_sidecar_store_read_the_source_project",
+              sorted(set(readers)) == [u"open_pose_info", u"prod_pose_load_sources", u"prod_pose_set_source",
+                                       u"prod_pose_source_project", u"prod_pose_sources_path"]
+              and text.count(u"prod_pose_source_project(") == 2, sorted(set(readers)))
+    finally:
+        ns["prod_pose_session_project"] = real_project
+        ns["prod_pose_current_time"] = real_time
+        restore_stubs(ns, app)
+
+    class Root(object):
+        def GetFileId(self):
+            return 7
+
+    class FakeApp(object):
+        def __init__(self, has):
+            self.has = has
+
+        def HasDocument(self):
+            return self.has
+
+        def GetDocumentRoot(self):
+            return Root()
+
+    class FakeModel(object):
+        def __init__(self, name):
+            self.name = name
+
+        def GetFileName(self, file_id):
+            if isinstance(self.name, Exception):
+                raise self.name
+            return self.name if file_id == 7 else None
+    real_app, real_dm = ns.get("sfmApp"), ns["dm"]
+    got = []
+    try:
+        for has, name in ((True, u"e:\\sfm\\sessions\\k2_destination.dmx"), (False, u"e:\\a.dmx"), (True, u""),
+                          (True, u"untitled"), (True, u"relative\\a.dmx"), (True, RuntimeError("x")),
+                          (True, u"e:\\bad\x07name.dmx"), (True, u"e:\\" + u"a" * 1100 + u".dmx")):
+            ns["sfmApp"] = FakeApp(has)
+            ns["dm"] = (lambda n: (lambda: FakeModel(n)))(name)
+            got.append(ns["prod_pose_session_project"]())
+    finally:
+        ns["sfmApp"], ns["dm"] = real_app, real_dm
+    check("SP7.session_project_is_the_open_documents_dmx_only_when_reliably_available",
+          got == [u"e:\\sfm\\sessions\\k2_destination.dmx"] + [None] * 7, got)
+    valid = ns["prod_pose_valid_project"]
+    check("SP7.valid_project_paths", valid(u"C:/x/y.DMX") and valid(u"\\\\server\\share\\a.dmx") and valid(u"/home/a.dmx")
+          and not valid(u"a.dmx") and not valid(u"C:/x/y.txt") and not valid(None) and not valid(5))
+
+
 def tree_bytes(root):
     out = {}
     for d, _, fs in os.walk(root):
@@ -1214,7 +1364,8 @@ def main():
                           ("foreign", lambda: section_foreign(ns, Window, reg)),
                           ("library_buttons", lambda: section_library_buttons(ns, app, Window, reg)),
                           ("rename_presets", lambda: section_rename_presets(ns, Window, reg)),
-                          ("rename_poses", lambda: section_rename_poses(ns, app, Window, reg))):
+                          ("rename_poses", lambda: section_rename_poses(ns, app, Window, reg)),
+                          ("source_project", lambda: section_source_project(ns, app, Window, reg))):
             run_section(label, fn)
     finally:
         shutil.rmtree(mainmenu, True)

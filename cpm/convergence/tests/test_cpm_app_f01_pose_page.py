@@ -253,14 +253,19 @@ def section_ui_pass(window, tabs, env, boxes, QtGui):
         window.refresh_pose_buttons()
         info = capture_dialog(QtGui, window.open_pose_info)
         d = info[0] if info else {"status": window.status.text()}
-        check("U8 Pose Info opens a read-only dialog: name, type, model and model path, date (PS-2 UI corrections)",
-              d.get("title") == u"Pose Info" and d.get("labels", [])[:6] == [u"Name:", u"Arms Up", u"Type:",
-                                                                               u"Left arm", u"Model:",
-                                                                               u"krystal2020.mdl"]
-              and u"Model path:" in d.get("labels", []) and u"Saved from:" not in d.get("labels", [])
-              and not any(t in d.get("labels", []) for t in (u"Source shot:", u"shot10", u"Character:", u"Krystal",
-                                                              u"Pose rule:", u"Body parts:", u"Project:"))
-              and not any(u"From:" in t or u"Available:" in t for t in d.get("labels", []))
+        labels = d.get("labels", [])
+        fields = [t for t in labels if t.endswith(u":")]
+        check("U8 Pose Info opens a read-only dialog in the Owner's order (after K2): name, type, model, model path, "
+              "source shot, source project (not recorded), saved",
+              d.get("title") == u"Pose Info" and labels[:6] == [u"Name:", u"Arms Up", u"Type:", u"Left arm", u"Model:",
+                                                                u"krystal2020.mdl"]
+              and fields[:7] == [u"Name:", u"Type:", u"Model:", u"Model path:", u"Source shot:", u"Source project:",
+                                 u"Saved:"]
+              and labels[labels.index(u"Source project:") + 1] == u"Not recorded"
+              and u"Saved from:" not in labels
+              and not any(t in labels for t in (u"Character:", u"Krystal", u"Pose rule:", u"Body parts:",
+                                                u"Project:"))
+              and not any(u"From:" in t or u"Available:" in t for t in labels)
               and d.get("buttons") == [u"Close"], d)
         check("U8 Pose Info ended its operation", not window.busy and window.operation is None)
         # The Update Pose and Delete Pose confirmations (shown, then cancelled: nothing is written).
@@ -273,10 +278,25 @@ def section_ui_pass(window, tabs, env, boxes, QtGui):
             answer = window.confirm_pose_update(u"Arms Up", u"Left arm")
         finally:
             QtGui.QMessageBox.exec_ = real_exec
-        check("U9 Update Pose asks before overwriting, with Cancel as the default",
-              answer is False and seen == [(u"Update Pose", u'Update "Arms Up" using the current pose?',
-                                            u"Replace this saved pose with the character's current pose.",
-                                            [u"Update Pose", u"Cancel"], u"Cancel")], seen)
+        check("U9 Update Pose asks one direct question (Owner pattern after K2), with Cancel as the default",
+              answer is False and seen == [(u"Character Preset Manager",
+                                            u'Replace the saved pose "Arms Up" with the character\'s current pose?',
+                                            u"", [u"Update Pose", u"Cancel"], u"Cancel")], seen)
+        # The same pattern for Update Preset (body and expression), through the window's own helper and wording.
+        del seen[:]
+        QtGui.QMessageBox.exec_ = lambda self: seen.append(
+            (self.windowTitle(), self.text(), self.informativeText(), [b.text() for b in self.buttons()],
+             self.defaultButton().text() if self.defaultButton() is not None else None)) or 0
+        try:
+            answer = g["tool_confirm_action"](window, u'Replace the saved body preset "<b>Lean</b>" with the '
+                                                      u"character's current body settings?", u"Update Preset")
+        finally:
+            QtGui.QMessageBox.exec_ = real_exec
+        check("U9 Update Preset uses the same pattern: title, one plain-text question, Update Preset and Cancel",
+              answer is False and seen == [(u"Character Preset Manager",
+                                            u'Replace the saved body preset "<b>Lean</b>" with the character\'s '
+                                            u"current body settings?", u"", [u"Update Preset", u"Cancel"],
+                                            u"Cancel")], seen)
         check("U9 Update Pose explains itself in its tooltip",
               window.update_pose_button.toolTip() == u"Replace this saved pose with the character's current pose.",
               window.update_pose_button.toolTip())
@@ -290,11 +310,33 @@ def section_ui_pass(window, tabs, env, boxes, QtGui):
             answer = window.confirm_pose_trash(u"<i>Arms</i> Up", u"C:/Library/Trash")
         finally:
             QtGui.QDialog.exec_ = real_dialog
-        check("U9 Delete Pose asks to move the pose to Trash, shows where to recover it, Cancel is the default",
-              answer is False and shown == [(u"Move pose to Trash?",
-                                             [u'<b>Move "&lt;i&gt;Arms&lt;/i&gt; Up" to Trash?</b>',
+        check("U9 Delete Pose asks to move the saved pose to Trash, shows where to recover it, Cancel is the default",
+              answer is False and shown == [(u"Character Preset Manager",
+                                             [u'<b>Move the saved pose "&lt;i&gt;Arms&lt;/i&gt; Up" to Trash?</b>',
                                               u"You can recover it from:", u"C:/Library/Trash"],
                                              [u"Cancel", u"Move to Trash"], [u"Cancel"])], shown)
+        path_flags = []
+        QtGui.QDialog.exec_ = lambda self: path_flags.append(
+            [int(w.textInteractionFlags()) for w in self.findChildren(QtGui.QLabel)
+             if w.text() == u"C:/Library/Trash"]) or 0
+        try:
+            g["tool_confirm_trash"](window, u"Move?", u"C:/Library/Trash")
+        finally:
+            QtGui.QDialog.exec_ = real_dialog
+        want = int(g["QtCore"].Qt.TextSelectableByMouse | g["QtCore"].Qt.TextSelectableByKeyboard)
+        check("U9 the recovery folder is selectable and copyable", path_flags == [[want]], path_flags)
+        # Body Presets and Expressions use the same helpers with the approved wording (static: the window code).
+        consts = lambda name: [c for c in getattr(window, name).im_func.func_code.co_consts
+                               if isinstance(c, basestring)] + sum(
+            [[k for k in c.co_consts if isinstance(k, basestring)] for c in getattr(window, name).im_func.func_code.co_consts
+             if hasattr(c, "co_consts")], [])
+        check("U9 Update Preset and Delete Preset use the Owner's wording for body presets and expressions",
+              u'Replace the saved body preset "%s" with the character\'s current body settings?' in consts("update_kind")
+              and u'Replace the saved expression "%s" with the character\'s current expression?' in consts("update_kind")
+              and u'Move the saved body preset "%s" to Trash?' in consts("delete_kind")
+              and u'Move the saved expression "%s" to Trash?' in consts("delete_kind")
+              and u"Update preset?" not in consts("update_kind") and u"Move preset to Trash?" not in consts("delete_kind"),
+              (consts("update_kind"), consts("delete_kind")))
         window.pose_list.setCurrentRow(-1)
         window.identity = None
         window.selection_token = None
@@ -698,7 +740,8 @@ def section_polish(window, tabs, env, boxes, QtGui):
               and one.get("groups") == [u"Pose", u"Saved Values"]
               and one.get("headers") == [u"Bone / Control", u"Value"] and len(one.get("values") or []) == 1
               and one["values"][0].startswith(u"Left arm goals")
-              and not any(t in one.get("labels", []) for t in (u"Character:", u"Source shot:", u"Saved from:"))
+              and u"Source shot:" in one.get("labels", []) and u"Source project:" in one.get("labels", [])
+              and not any(t in one.get("labels", []) for t in (u"Character:", u"Saved from:"))
               and not any(u"From:" in t or u"Available" in t for t in one.get("labels", [])), one)
         check("V4 Pose Info: Updated is shown when the pose was updated", u"Updated:" in one.get("labels", []), one)
         updated = info(u"p2")

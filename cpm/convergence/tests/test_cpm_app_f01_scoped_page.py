@@ -168,7 +168,7 @@ def main():
     got, seen = drive(window, QtGui, QtCore, inventory(highlighted=()), True, route)
     check("D5 a registry character's full body keeps its version 2 route",
           got == {u"name": u"Pose", u"kind": u"full_body", u"request": None} and seen[u"save"] and
-          seen[u"summary"] == u"Facial expressions, gaze and the character's place in the scene are not saved.",
+          seen[u"summary"] == u"Facial expressions and the rootTransform are not saved.",
           (got, seen))
     refused = {u"status": u"refused", u"code": u"rig-driven", u"review": [],
                u"message": u"Full body can't be saved: parts of this character's body are driven by its rig. Choose "
@@ -215,7 +215,7 @@ def main():
           "it is unavailable",
           got == {u"name": u"Pose", u"kind": u"full_body", u"request": None} and seen[u"save"] and
           seen[u"parts"] == (False, u"generic refusal") and
-          seen[u"summary"] == u"Facial expressions, gaze and the character's place in the scene are not saved.",
+          seen[u"summary"] == u"Facial expressions and the rootTransform are not saved.",
           (got, seen))
     try:
         window.close()

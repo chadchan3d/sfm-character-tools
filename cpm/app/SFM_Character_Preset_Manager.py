@@ -13082,6 +13082,133 @@ def tool_warning_message(
         box.deleteLater()
 
 
+PROD_CONFIRM_TITLE = u"Character Preset Manager"
+
+
+def tool_confirm_action(
+    parent,
+    question,
+    action,
+):
+    """The Owner's confirmation pattern (2026-11-14, after K2): window title Character Preset Manager, one direct
+    question as plain text, the specific action button and Cancel, with Cancel the default. True only when the
+    action button was clicked."""
+    box = QtGui.QMessageBox(
+        parent
+    )
+    tool_keep_modal_dialog_in_front(
+        box
+    )
+
+    try:
+        box.setWindowTitle(
+            PROD_CONFIRM_TITLE
+        )
+        box.setTextFormat(
+            QtCore.Qt.PlainText
+        )
+        box.setText(
+            u(question)
+        )
+        action_button = box.addButton(
+            u(action),
+            QtGui.QMessageBox.AcceptRole,
+        )
+        cancel_button = box.addButton(
+            "Cancel",
+            QtGui.QMessageBox.RejectRole,
+        )
+        box.setDefaultButton(
+            cancel_button
+        )
+        tool_apply_dialog_font(
+            box
+        )
+        box.exec_()
+        return box.clickedButton() is action_button
+    finally:
+        box.deleteLater()
+
+
+def tool_confirm_trash(
+    parent,
+    question,
+    trash_path,
+):
+    """The Trash confirmation in the same pattern: the question, then where the item can be recovered (the Trash
+    folder, selectable and copyable), Move to Trash and Cancel, with Cancel the default."""
+    box = QtGui.QDialog(
+        parent
+    )
+
+    try:
+        box.setWindowTitle(
+            PROD_CONFIRM_TITLE
+        )
+        box.setMinimumWidth(590)
+        box.setMaximumWidth(620)
+
+        layout = QtGui.QVBoxLayout(box)
+        layout.setContentsMargins(
+            12,
+            12,
+            12,
+            12,
+        )
+        layout.setSpacing(8)
+
+        shown = u(question).replace(u"&", u"&amp;").replace(u"<", u"&lt;").replace(u">", u"&gt;")
+        prompt = QtGui.QLabel(
+            u"<b>%s</b>"
+            % shown
+        )
+        prompt.setWordWrap(True)
+        layout.addWidget(prompt)
+
+        layout.addWidget(
+            QtGui.QLabel(
+                "You can recover it from:"
+            )
+        )
+
+        path_label = QtGui.QLabel(
+            u(trash_path)
+        )
+        path_label.setTextFormat(
+            QtCore.Qt.PlainText
+        )
+        path_label.setWordWrap(False)
+        path_label.setTextInteractionFlags(
+            QtCore.Qt.TextSelectableByMouse
+            | QtCore.Qt.TextSelectableByKeyboard
+        )
+        layout.addWidget(path_label)
+
+        buttons = QtGui.QDialogButtonBox()
+        trash_button = buttons.addButton(
+            "Move to Trash",
+            QtGui.QDialogButtonBox.AcceptRole,
+        )
+        cancel_button = buttons.addButton(
+            "Cancel",
+            QtGui.QDialogButtonBox.RejectRole,
+        )
+        trash_button.clicked.connect(
+            box.accept
+        )
+        cancel_button.clicked.connect(
+            box.reject
+        )
+        cancel_button.setDefault(True)
+        layout.addWidget(buttons)
+
+        tool_apply_visual_theme(box)
+        tool_apply_dialog_font(box)
+        return box.exec_() == QtGui.QDialog.Accepted
+    finally:
+        box.deleteLater()
+
+
 def tool_model_relative_path(
     model_path,
 ):
@@ -34816,58 +34943,16 @@ class ProdWindow(QtGui.QDialog):
                 item
             )
 
-            box = QtGui.QMessageBox(
-                self
-            )
-            tool_keep_modal_dialog_in_front(
-                box
-            )
-
-            try:
-                box.setWindowTitle(
-                    "Update preset?"
-                )
-
-                state_text = (
-                    "body flexes and bone scaling"
+            confirmed = tool_confirm_action(
+                self,
+                (
+                    u'Replace the saved body preset "%s" with the character\'s current body settings?'
                     if kind == P03_KIND_BODY
-                    else "facial flexes"
+                    else u'Replace the saved expression "%s" with the character\'s current expression?'
                 )
-
-                box.setText(
-                    u'Copy the current %s into "%s"?'
-                    % (
-                        state_text,
-                        display_name,
-                    )
-                )
-                box.setInformativeText(
-                    "The preset's current values will be overwritten."
-                )
-
-                update_button = box.addButton(
-                    "Update Preset",
-                    QtGui.QMessageBox.AcceptRole,
-                )
-                cancel_button = box.addButton(
-                    "Cancel",
-                    QtGui.QMessageBox.RejectRole,
-                )
-                box.setDefaultButton(
-                    cancel_button
-                )
-
-                tool_apply_dialog_font(
-                    box
-                )
-                box.exec_()
-                confirmed = (
-                    box.clickedButton()
-                    is update_button
-                )
-
-            finally:
-                box.deleteLater()
+                % display_name,
+                "Update Preset",
+            )
 
             if not confirmed:
                 prod_log_outcome(
@@ -35090,74 +35175,16 @@ class ProdWindow(QtGui.QDialog):
                 P03_TRASH_DIRNAME,
             )
 
-            box = QtGui.QDialog(
-                self
+            confirmed = tool_confirm_trash(
+                self,
+                (
+                    u'Move the saved body preset "%s" to Trash?'
+                    if kind == P03_KIND_BODY
+                    else u'Move the saved expression "%s" to Trash?'
+                )
+                % display_name,
+                trash_path,
             )
-
-            try:
-                box.setWindowTitle(
-                    "Move preset to Trash?"
-                )
-                box.setMinimumWidth(590)
-                box.setMaximumWidth(620)
-
-                layout = QtGui.QVBoxLayout(box)
-                layout.setContentsMargins(
-                    12,
-                    12,
-                    12,
-                    12,
-                )
-                layout.setSpacing(8)
-
-                question = QtGui.QLabel(
-                    u'<b>Move "%s" to Trash?</b>'
-                    % display_name
-                )
-                question.setWordWrap(True)
-                layout.addWidget(question)
-
-                recovery = QtGui.QLabel(
-                    "You can recover it from:"
-                )
-                layout.addWidget(recovery)
-
-                path_label = QtGui.QLabel(
-                    u(trash_path)
-                )
-                path_label.setWordWrap(False)
-                path_label.setTextInteractionFlags(
-                    QtCore.Qt.TextSelectableByMouse
-                )
-                layout.addWidget(path_label)
-
-                buttons = QtGui.QDialogButtonBox()
-                delete_button = buttons.addButton(
-                    "Move to Trash",
-                    QtGui.QDialogButtonBox.AcceptRole,
-                )
-                cancel_button = buttons.addButton(
-                    "Cancel",
-                    QtGui.QDialogButtonBox.RejectRole,
-                )
-                delete_button.clicked.connect(
-                    box.accept
-                )
-                cancel_button.clicked.connect(
-                    box.reject
-                )
-                cancel_button.setDefault(True)
-                layout.addWidget(buttons)
-
-                tool_apply_visual_theme(box)
-                tool_apply_dialog_font(box)
-                confirmed = (
-                    box.exec_()
-                    == QtGui.QDialog.Accepted
-                )
-
-            finally:
-                box.deleteLater()
 
             if not confirmed:
                 prod_log_outcome(
@@ -36203,6 +36230,12 @@ class ProdWindow(QtGui.QDialog):
                 u"verified",
                 detail,
             )
+            # Pose Info's Source project: local sidecar only, never in the record; never fails the Save.
+            prod_pose_record_source(
+                selected,
+                saved[u"preset_id"],
+                prod_pose_session_project(),
+            )
             self.set_status(
                 PROD_POSE_MESSAGES[u"saved"]
                 % {
@@ -36390,8 +36423,8 @@ class ProdWindow(QtGui.QDialog):
                 kind = u"selected_parts" if parts.isChecked() else u"full_body"
                 choice = {u"kind": kind, u"bones": chosen_bones(), u"exclude_highlighted": leave.isChecked()}
                 if kind == u"full_body" and body_route:
-                    state = {u"save_enabled": True, u"summary": u"Facial expressions, gaze and the character's "
-                                                                  u"place in the scene are not saved.",
+                    state = {u"save_enabled": True, u"summary": u"Facial expressions and the rootTransform are not "
+                                                                  u"saved.",
                              u"review": [], u"picker_enabled": False, u"request": None}
                 else:
                     state = prod_scope_dialog_state(inventory, choice)
@@ -36953,8 +36986,9 @@ class ProdWindow(QtGui.QDialog):
         self,
     ):
         """Read-only details of the selected pose (PS-2 UI corrections, 2026-11-14; Expression Preset Info is the
-        reference): a Pose box (name, type, model and model path, dates, what it includes and excludes, the hips for
-        a Full body), a consequential selection effect, a note only when it can't be applied to the selected
+        reference): a Pose box (name, type, model and model path, source shot and project (the project from the
+        library's local sidecar), dates, what it includes and excludes, the hips for a Full body), a consequential
+        selection effect, a note only when it can't be applied to the selected
         character, and a Saved Values tree with every saved bone or control and its saved values. Everything shown
         about the pose comes from the saved record (prod_pose_info_view, prod_pose_info_values), never from the
         current selection."""
@@ -36975,7 +37009,16 @@ class ProdWindow(QtGui.QDialog):
                 if scoped_record
                 else [r for r in PROD_POSE_REGIONS + (u"full_body",) if r in pose[u"regions"]]
             )
-            view = prod_pose_info_view(record)
+            # Source project: the pose's own library's local sidecar (<char>/Poses/<file> -> <char>), read only.
+            project = (
+                prod_pose_source_project(
+                    os.path.dirname(os.path.dirname(u(item[u"path"]))),
+                    record[u"preset_id"],
+                )
+                if item.get(u"path") and record.get(u"preset_id")
+                else None
+            )
+            view = prod_pose_info_view(record, project)
             dialog = QtGui.QDialog(self)
             dialog.setWindowTitle("Pose Info")
             outer = QtGui.QVBoxLayout(dialog)
@@ -37115,43 +37158,14 @@ class ProdWindow(QtGui.QDialog):
         name,
         parts,
     ):
-        """The Update Pose overwrite confirmation (as Update Preset's): Cancel is the default."""
-        box = QtGui.QMessageBox(
-            self
+        """The Update Pose overwrite confirmation (the Owner's confirmation pattern, as Update Preset's): Cancel is
+        the default."""
+        return tool_confirm_action(
+            self,
+            u'Replace the saved pose "%s" with the character\'s current pose?'
+            % u(name),
+            "Update Pose",
         )
-        tool_keep_modal_dialog_in_front(
-            box
-        )
-
-        try:
-            box.setWindowTitle(
-                "Update Pose"
-            )
-            box.setText(
-                u'Update "%s" using the current pose?'
-                % u(name)
-            )
-            box.setInformativeText(
-                "Replace this saved pose with the character's current pose."
-            )
-            update_button = box.addButton(
-                "Update Pose",
-                QtGui.QMessageBox.AcceptRole,
-            )
-            cancel_button = box.addButton(
-                "Cancel",
-                QtGui.QMessageBox.RejectRole,
-            )
-            box.setDefaultButton(
-                cancel_button
-            )
-            tool_apply_dialog_font(
-                box
-            )
-            box.exec_()
-            return box.clickedButton() is update_button
-        finally:
-            box.deleteLater()
 
     def update_pose(
         self,
@@ -37352,6 +37366,12 @@ class ProdWindow(QtGui.QDialog):
                 u"verified",
                 detail,
             )
+            # The updated values come from this session: Source project follows them, as Source shot does.
+            prod_pose_record_source(
+                selected,
+                updated[u"preset_id"],
+                prod_pose_session_project(),
+            )
             self.set_status(
                 u"Pose updated: %s."
                 % tool_status_name(
@@ -37451,73 +37471,14 @@ class ProdWindow(QtGui.QDialog):
         name,
         trash_path,
     ):
-        """The Delete Pose confirmation (as Delete Preset's): Move to Trash, with Cancel as the default."""
-        box = QtGui.QDialog(
-            self
+        """The Delete Pose confirmation (the Owner's Trash pattern, as Delete Preset's): the question, the Trash
+        folder it can be recovered from, Move to Trash and Cancel, with Cancel the default."""
+        return tool_confirm_trash(
+            self,
+            u'Move the saved pose "%s" to Trash?'
+            % u(name),
+            trash_path,
         )
-
-        try:
-            box.setWindowTitle(
-                "Move pose to Trash?"
-            )
-            box.setMinimumWidth(590)
-            box.setMaximumWidth(620)
-
-            layout = QtGui.QVBoxLayout(box)
-            layout.setContentsMargins(
-                12,
-                12,
-                12,
-                12,
-            )
-            layout.setSpacing(8)
-
-            shown = u(name).replace(u"&", u"&amp;").replace(u"<", u"&lt;").replace(u">", u"&gt;")
-            question = QtGui.QLabel(
-                u'<b>Move "%s" to Trash?</b>'
-                % shown
-            )
-            question.setWordWrap(True)
-            layout.addWidget(question)
-
-            layout.addWidget(
-                QtGui.QLabel(
-                    "You can recover it from:"
-                )
-            )
-
-            path_label = QtGui.QLabel(
-                u(trash_path)
-            )
-            path_label.setWordWrap(False)
-            path_label.setTextInteractionFlags(
-                QtCore.Qt.TextSelectableByMouse
-            )
-            layout.addWidget(path_label)
-
-            buttons = QtGui.QDialogButtonBox()
-            delete_button = buttons.addButton(
-                "Move to Trash",
-                QtGui.QDialogButtonBox.AcceptRole,
-            )
-            cancel_button = buttons.addButton(
-                "Cancel",
-                QtGui.QDialogButtonBox.RejectRole,
-            )
-            delete_button.clicked.connect(
-                box.accept
-            )
-            cancel_button.clicked.connect(
-                box.reject
-            )
-            cancel_button.setDefault(True)
-            layout.addWidget(buttons)
-
-            tool_apply_visual_theme(box)
-            tool_apply_dialog_font(box)
-            return box.exec_() == QtGui.QDialog.Accepted
-        finally:
-            box.deleteLater()
 
     def delete_selected_pose(
         self,
@@ -42160,6 +42121,83 @@ def prod_pose_set_foreign_favorite(selected, foreign, target, favorite, reg):
     p02_safe_write_json(prod_pose_library_paths(selected[u"char_dir"])[u"foreign_favorites"], record)
     return entry in prod_pose_load_foreign_favorites(selected[u"char_dir"])[u"entries"]
 
+
+# --- Source project (Owner-approved UI corrections after K2, 2026-11-14) ---------------------------------------------
+# Pose records are portable and their formats are strict and closed, so the SFM project a pose was saved from is not
+# stored in the record. It is kept in an optional per-character sidecar, pose_sources.json, beside library.json,
+# keyed by the pose identity (preset_id): local information only, never part of a pose file that is shared. Pose
+# discovery never reads it (it is outside the Poses folder). Rename changes neither the identity nor the entry; Update
+# records the project its new values come from (or removes the entry when that is unknown, so Source shot and Source
+# project always describe the same capture); Delete moves only the pose file to Trash, so the entry is kept and a pose
+# restored from Trash shows its project again. It is informational only: Apply and every compatibility check ignore
+# it, and a missing, unreadable or damaged sidecar shows "Not recorded" and never blocks a pose operation.
+PROD_POSE_SOURCES = u"pose_sources.json"
+PROD_POSE_SOURCES_KIND = u"cpm-pose-sources"
+PROD_POSE_SOURCE_PROJECT_MAX = 1024
+PROD_POSE_NOT_RECORDED = u"Not recorded"
+
+
+def prod_pose_sources_path(char_dir):
+    return os.path.join(char_dir, PROD_POSE_SOURCES)
+
+
+def prod_pose_valid_project(path):
+    """A source project path worth recording: an absolute Windows (drive or UNC) or POSIX .dmx path, no control
+    characters."""
+    if not isinstance(path, prod_pose_text_types()):
+        return False
+    drive = len(path) > 2 and path[0].isalpha() and ord(path[0]) < 128 and path[1] == u":" and path[2] in u"\\/"
+    return (0 < len(path) <= PROD_POSE_SOURCE_PROJECT_MAX and path.lower().endswith(u".dmx") and
+            not any(ord(c) < 32 for c in path) and (drive or path.startswith(u"\\\\") or path.startswith(u"/")))
+
+
+def prod_pose_load_sources(char_dir):
+    """The character's source-project sidecar: {preset_id: project}. Absent: empty. Anything else refuses."""
+    path = prod_pose_sources_path(char_dir)
+    if not os.path.isfile(path):
+        return {}
+    record = prod_pose_strict_json_file(path, 1 << 22)
+    ok = isinstance(record, dict) and sorted(record) == [u"entries", u"record_kind", u"schema_version"] and \
+        record[u"schema_version"] == 1 and record[u"record_kind"] == PROD_POSE_SOURCES_KIND and \
+        isinstance(record[u"entries"], dict)
+    if ok:
+        for key, entry in record[u"entries"].items():
+            if not isinstance(entry, dict) or sorted(entry) != [u"project"] or \
+                    not prod_pose_valid_project(entry[u"project"]):
+                ok = False
+    if not ok:
+        raise ProdPoseLibraryError(u"metadata", u"Pose source information is unsupported.")
+    return dict((k, e[u"project"]) for k, e in record[u"entries"].items())
+
+
+def prod_pose_source_project(char_dir, preset_id):
+    """The recorded source project of one pose, or None (not recorded, or the sidecar can't be read)."""
+    try:
+        return prod_pose_load_sources(char_dir).get(preset_id)
+    except Exception:
+        return None
+
+
+def prod_pose_set_source(selected, preset_id, project):
+    """Record (or, with project None, forget) one pose's source project in the selected character's sidecar. Every
+    other entry is kept; the write is contained and read back. A damaged sidecar is never overwritten (refuses)."""
+    if project is not None and not prod_pose_valid_project(project):
+        project = None
+    entries = prod_pose_load_sources(selected[u"char_dir"])
+    if project is None:
+        if preset_id not in entries:
+            return None
+        entries.pop(preset_id)
+    else:
+        entries[preset_id] = project
+    path = prod_pose_sources_path(selected[u"char_dir"])
+    prod_pose_assert_contained(selected, path)
+    p02_safe_write_json(path, {u"schema_version": 1, u"record_kind": PROD_POSE_SOURCES_KIND,
+                               u"entries": dict((k, {u"project": v}) for k, v in entries.items())})
+    if prod_pose_load_sources(selected[u"char_dir"]).get(preset_id) != project:
+        raise ProdPoseLibraryError(u"write-verify", u"The pose source information did not read back exactly.")
+    return project
+
 # === end of F-01 stage B block ===
 
 
@@ -42195,6 +42233,37 @@ class ProdPoseIntegrationError(RuntimeError):
     def __init__(self, code, message):
         RuntimeError.__init__(self, message)
         self.code = code
+
+
+# Source project (Owner-approved UI corrections after K2): the session read and the never-failing record step
+# that Save New and Update Pose call after the pose itself is durable (the store is the stage B sidecar).
+def prod_pose_session_project():
+    """The open SFM session's .dmx file, read only (the S0 observer's natively proven call), or None when it isn't
+    reliably available (no document, an unsaved session, an unreadable or unusual name)."""
+    try:
+        if not sfmApp.HasDocument():
+            return None
+        name = dm().GetFileName(sfmApp.GetDocumentRoot().GetFileId())
+    except Exception:
+        return None
+    try:
+        name = u(name)
+    except Exception:
+        return None
+    return name if prod_pose_valid_project(name) else None
+
+
+def prod_pose_record_source(selected, preset_id, project):
+    """Record a saved or updated pose's source project after the pose itself is durable. Informational only: any
+    failure is logged without the path and never fails the Save or Update."""
+    try:
+        prod_pose_set_source(selected, preset_id, project)
+        prod_pose_log(u"SOURCE-recorded" if project else u"SOURCE-not-recorded", {u"preset_id": preset_id})
+    except Exception as exc:
+        try:
+            prod_pose_log(u"SOURCE-unrecorded", {u"preset_id": preset_id, u"error": type(exc).__name__})
+        except Exception:
+            pass
 
 
 def prod_pose_registry_path():
@@ -47954,7 +48023,7 @@ def prod_scope_dialog_state(inventory, choice):
 PROD_POSE_INFO_MONTHS = (u"January", u"February", u"March", u"April", u"May", u"June", u"July", u"August",
                          u"September", u"October", u"November", u"December")
 PROD_POSE_FULL_BODY_NOT_INCLUDED = {3: [u"facial expressions", u"rootTransform"],
-                                    2: [u"facial expressions", u"gaze", u"scene placement"]}
+                                    2: [u"facial expressions", u"rootTransform"]}
 
 
 def prod_pose_info_date(stamp):
@@ -47965,13 +48034,16 @@ def prod_pose_info_date(stamp):
     return u"%s %d, %s" % (PROD_POSE_INFO_MONTHS[int(m.group(2)) - 1], int(m.group(3)), m.group(1))
 
 
-def prod_pose_info_view(record):
+def prod_pose_info_view(record, source_project=None):
     """What Pose Info shows about any saved pose (versions 1-3), from the record alone (PS-2 UI corrections,
     2026-11-14; Expression Preset Info is the reference): its type; the model file and path it was saved from;
     the saved and updated dates; what it includes (how many bones, and the group for a selection); what it does not
     include when that is consequential (recorded exclusions; for a full body, what is never saved); for a version 3
     Full body, what happens to the hips; and a sentence only for a consequential selection effect. The saved
-    bones and values are prod_pose_info_values. Records hold no source project or session file, so none is shown.
+    bones and values are prod_pose_info_values. Rows after the name (the dialog's first row), in the Owner's order
+    (2026-11-14, after K2): Type, Model, Model path, Source shot (the record's own pose.source.shot_name, every
+    version), Source project (`source_project`, from the local sidecar, never from the record or the current
+    session; "Not recorded" when unknown), Saved, Updated, then Includes, Not included and the hips note.
     Returns {name, rows: [[label, text, tooltip]], effect}."""
     pose = record[u"pose"]
     rows, effect, not_included, extra = [], None, [], []
@@ -48003,6 +48075,11 @@ def prod_pose_info_view(record):
     model = u(pose[u"source"].get(u"model_ref") or u"").replace(u"\\", u"/")
     rows.append([u"Model:", model.rsplit(u"/", 1)[-1] or u"Unknown", None])
     rows.append([u"Model path:", model or u"Unknown", None])
+    shot = pose[u"source"].get(u"shot_name")
+    rows.append([u"Source shot:", u(shot) if isinstance(shot, prod_pose_text_types()) and shot else
+                 PROD_POSE_NOT_RECORDED, None])
+    rows.append([u"Source project:", u(source_project) if prod_pose_valid_project(source_project) else
+                 PROD_POSE_NOT_RECORDED, None])
     rows.append([u"Saved:", prod_pose_info_date(record.get(u"created_at")), None])
     updated = record.get(u"updated_at")
     if updated and updated != record.get(u"created_at"):

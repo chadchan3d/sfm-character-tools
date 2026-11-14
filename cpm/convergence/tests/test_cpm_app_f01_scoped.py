@@ -2412,8 +2412,8 @@ def section_ui_copy(ns, fx, root):
     banned = (u"Applies the saved", u"character's rig", u"chosen when saving", u"from supported metadata",
               u"Saves the bends", u"revision", u"direct_fk", u"controls (articulation", u"Unselected parts unchanged",
               u"Saved from", u"Project", u"Session")
-    fields = set([u"Type:", u"Model:", u"Model path:", u"Saved:", u"Updated:", u"Includes:", u"Not included:",
-                  u"Hip position:"])
+    fields = set([u"Type:", u"Model:", u"Model path:", u"Source shot:", u"Source project:", u"Saved:", u"Updated:",
+                  u"Includes:", u"Not included:", u"Hip position:"])
     for name, rec in ((u"grip", grip), (u"mixed", mixed), (u"single", single), (u"forearm", forearm), (u"body", body),
                       (u"body_face", body_face)):
         v = view(rec[u"record"])
@@ -2424,8 +2424,20 @@ def section_ui_copy(ns, fx, root):
     check("UI.1_selected_parts_info_type_model_path_date_and_includes",
           v[u"rows"] == [[u"Type:", u"Selected parts", None], [u"Model:", u"analytic.mdl", None],
                          [u"Model path:", u"models/synthetic/analytic.mdl", None],
+                         [u"Source shot:", grip[u"record"][u"pose"][u"source"][u"shot_name"], None],
+                         [u"Source project:", u"Not recorded", None],
                          [u"Saved:", u"November 8, 2026", None], [u"Includes:", u"Fingers (4 bones)", None]]
           and v[u"effect"] is None, v)
+    # Owner order after K2 (2026-11-14): Name (the dialog's first row), Type, Model, Model path, Source shot, Source
+    # project, Saved, Updated, then Includes / Not included / hips. The project comes only from the caller (the
+    # local sidecar), never from the record.
+    v = view(body[u"record"], u"E:/Projects/Scene.dmx")
+    labels = [r[0] for r in v[u"rows"]]
+    check("UI.1b_full_body_info_field_order_and_the_recorded_source_project",
+          labels[:6] == [u"Type:", u"Model:", u"Model path:", u"Source shot:", u"Source project:", u"Saved:"] and
+          v[u"rows"][4] == [u"Source project:", u"E:/Projects/Scene.dmx", None] and
+          labels.index(u"Not included:") > labels.index(u"Saved:") and
+          view(body[u"record"], u"relative.dmx")[u"rows"][4] == [u"Source project:", u"Not recorded", None], v)
     v = view(body_face[u"record"])
     check("UI.2_consequential_exclusions_remain_visible",
           [u"Not included:", u"Face controls, facial expressions, rootTransform", None] in v[u"rows"], v)
@@ -2491,7 +2503,7 @@ def section_ui_copy(ns, fx, root):
           u"pose": {u"version": 1, u"regions": {u"left_arm": {u"anchor": u"CollarL", u"goals": {
               u"elbow": {u"position": [3.0, 6.25, -14.5]},
               u"hand": {u"position": [19.0, 8.5, -1.0], u"orientation": [0.0, 0.0, 0.0, 1.0]}}}},
-                    u"source": {u"model_ref": u"models\\a\\krystal2020.mdl"}}}
+                    u"source": {u"model_ref": u"models\\a\\krystal2020.mdl", u"shot_name": u"shot10"}}}
     v2 = {u"name": u"Body", u"created_at": u"20261103-080000-000000", u"updated_at": u"20261103-080000-000000",
           u"pose": {u"version": 2, u"regions": {u"full_body": {u"orientations": {u"Hip_o": [0.0, 0.0, 0.0, 1.0]},
                                                                u"positions": {u"Hip_p": [1.0, 2.0, 3.0]}}},
@@ -2499,11 +2511,15 @@ def section_ui_copy(ns, fx, root):
     a, bb = view(v1), view(v2)
     check("UI.7_legacy_records_remain_readable",
           a[u"rows"] == [[u"Type:", u"Left arm", None], [u"Model:", u"krystal2020.mdl", None],
-                         [u"Model path:", u"models/a/krystal2020.mdl", None], [u"Saved:", u"November 1, 2026", None],
+                         [u"Model path:", u"models/a/krystal2020.mdl", None],
+                         [u"Source shot:", u"shot10", None], [u"Source project:", u"Not recorded", None],
+                         [u"Saved:", u"November 1, 2026", None],
                          [u"Updated:", u"November 2, 2026", None]] and a[u"effect"] is None and
           bb[u"rows"] == [[u"Type:", u"Full body", None], [u"Model:", u"k.mdl", None],
-                          [u"Model path:", u"models/k.mdl", None], [u"Saved:", u"November 3, 2026", None],
-                          [u"Not included:", u"Facial expressions, gaze, scene placement", None]] and
+                          [u"Model path:", u"models/k.mdl", None],
+                          [u"Source shot:", u"Not recorded", None], [u"Source project:", u"Not recorded", None],
+                          [u"Saved:", u"November 3, 2026", None],
+                          [u"Not included:", u"Facial expressions, rootTransform", None]] and
           bb[u"effect"] is None, (a, bb))
     lv1, lv2 = values(v1), values(v2)
     check("UI.values_legacy_records_show_their_saved_goals_and_controls",

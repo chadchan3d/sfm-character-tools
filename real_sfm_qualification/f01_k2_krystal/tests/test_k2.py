@@ -47,6 +47,37 @@ def quiet(fn):
         sys.stdout = saved
 
 
+# The K2 kit derives its qualification build from the exact K1 candidate it ran (3984e1e1...). Later presentation
+# changes to the working-tree CPM (the Owner-approved UI corrections after K2) must not alter what is tested, so the
+# candidate is read as the raw Git blob from the K2 kit commit (as the EF-1 kit test does). The tool's own hash checks
+# (candidate and derived qualification build) are unchanged and still decide.
+QUALIFIED_CPM_COMMIT = "128f9f1"
+QUALIFIED_CPM_REL = "cpm/app/SFM_Character_Preset_Manager.py"
+_QUALIFIED = []
+
+
+def qualified_candidate():
+    """The K1 candidate's exact bytes from QUALIFIED_CPM_COMMIT, in a private temporary folder; raises unless they hash
+    to the template's candidate pin."""
+    if not _QUALIFIED:
+        import atexit
+        import hashlib
+        import subprocess
+        raw = subprocess.check_output(["git", "-C", REPO, "cat-file", "blob",
+                                       "%s:%s" % (QUALIFIED_CPM_COMMIT, QUALIFIED_CPM_REL)])
+        with open(os.path.join(ROOT, "k2.template.json"), "rb") as f:
+            pin = json.loads(f.read().decode("utf-8"))["pins"]["candidate_cpm_sha256"]
+        if hashlib.sha256(raw).hexdigest() != pin:
+            raise AssertionError("the CPM at %s is not the K1 candidate %s" % (QUALIFIED_CPM_COMMIT, pin))
+        where = tempfile.mkdtemp(prefix="k2qualcpm")
+        atexit.register(shutil.rmtree, where, True)
+        path = os.path.join(where, "SFM_Character_Preset_Manager.py")
+        with open(path, "wb") as f:
+            f.write(raw)
+        _QUALIFIED.append(path)
+    return _QUALIFIED[0]
+
+
 def config(folder, **paths):
     with open(os.path.join(ROOT, "k2.template.json"), "rb") as f:
         c = json.loads(f.read().decode("utf-8"))
@@ -59,7 +90,7 @@ def config(folder, **paths):
     c["paths"].update(Q=os.path.join(folder, "Q"), REPO=REPO, GAME=os.path.join(folder, "game"),
                       SESSIONS=os.path.join(folder, "sessions"), LIBRARY=os.path.join(folder, "library"),
                       R2_FIXTURE=fixture, S3_RUN1=os.path.join(folder, "s3run"), LOG_DIR=os.path.join(folder, "logs"),
-                      LEGACY_POSE=fixture)
+                      LEGACY_POSE=fixture, CANDIDATE=qualified_candidate())
     c["paths"].update(paths)
     path = os.path.join(folder, "k2.json")
     with open(path, "wb") as f:

@@ -330,6 +330,18 @@ F01_STAGEC_NEW_TOP = set([
     "PROD_POSE_RECOVERY_BLOCK",  # F-01 S1 recovery: the process-wide pause (survives CPM window recreation)
     "prod_pose_authorize", "prod_pose_context_gate", "prod_pose_deferred_verify", "prod_pose_load_registry",
     "prod_pose_registry_path", "prod_pose_reread", "prod_pose_selected_library",
+    # UI corrections after K2 (2026-11-14): Source project, the session read and the never-failing record step
+    "prod_pose_session_project", "prod_pose_record_source",
+])
+# F-01 UI corrections after K2 (Owner-authorized 2026-11-14; F01_K2_UI_CORRECTIONS.md): the shared confirmation and
+# Trash dialogs, and the Source project sidecar store in the stage B block (pure library I/O: contained, strict,
+# read back). Audited before commit: no entry point, no scene write, no file removal or rename; the only scene access
+# is the read-only session path in the stage C prod_pose_session_project above.
+F01_K2UI_NEW_TOP = set([
+    "PROD_CONFIRM_TITLE", "tool_confirm_action", "tool_confirm_trash",
+    "PROD_POSE_NOT_RECORDED", "PROD_POSE_SOURCES", "PROD_POSE_SOURCES_KIND", "PROD_POSE_SOURCE_PROJECT_MAX",
+    "prod_pose_load_sources", "prod_pose_set_source", "prod_pose_source_project", "prod_pose_sources_path",
+    "prod_pose_valid_project",
 ])
 F01_STAGEC_CHANGED_METHODS = set(["selected_or_none", "operation_default_error_copy"])
 F01_STAGEC_NEW_METHODS = set(["apply_pose", "pose_begin_verification", "pose_finish_verification", "pose_guard",
@@ -540,7 +552,7 @@ def section_derivation(app):
     check("derivation.added_top_level_is_bounded",
           added == EXPECTED_NEW_TOP | R15_NEW_TOP | ITEM6_NEW_TOP | UIPASS_NEW_TOP | LOGFIX_NEW_TOP | M05_NEW_TOP
           | M06_NEW_TOP | M06W1_NEW_TOP | F01_STAGEA_NEW_TOP | F01_STAGEB_NEW_TOP | F01_STAGEC_NEW_TOP | F01_STAGED_NEW_TOP
-          | F01_UI_NEW_TOP | F01_STAGEE_NEW_TOP | F01_SFP1_NEW_TOP,
+          | F01_UI_NEW_TOP | F01_STAGEE_NEW_TOP | F01_SFP1_NEW_TOP | F01_K2UI_NEW_TOP,
           sorted(added))
     check("derivation.removed_is_exactly_item6_and_item7", removed == ITEM6_REMOVED_TOP | ITEM7_REMOVED_TOP
           | LOGFIX_REMOVED_TOP, sorted(removed ^ (ITEM6_REMOVED_TOP | ITEM7_REMOVED_TOP | LOGFIX_REMOVED_TOP)))
