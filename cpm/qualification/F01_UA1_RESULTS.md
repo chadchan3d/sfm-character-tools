@@ -105,3 +105,49 @@ Run 1's formal result stays **FAIL (replay 48/67, all procedural)**. If UA-1S pa
 requirement above has native machine evidence plus Owner acceptance, and the remaining limitation is that
 requirements 1–3 and 6 were checked in steps whose identity checks failed procedurally in run 1 (their content was
 correct).
+
+## UA-1S supplemental native check — results (2026-11-15)
+
+**Authority:** "F-01 — UA-1S Native Execution Authorization, OWNER AUTHORIZATION: GO"; closeout under "F-01 UA-1S —
+Owner Acceptance and Final Closeout". **Kit:** `8b8c971`; candidate `615acf0c…` (`fda1fb3`), qualification build
+`849d0ed4…` (line 42220 only); capture script `d5d07b90…` unchanged. **Run folder (raw evidence, not committed):**
+`E:\SFM_U0B_Scratch\f01-ui-acceptance-s1`.
+
+| Result | Status |
+|---|---|
+| **Automated verdict** | **PASS, 25/25** (`evidence\UA_SUPPLEMENT_VERDICT.json` `3f185cf0…`), the unchanged supplement comparator. Finding (not a failure): Body Save rewrote Krystal's `character.json` and its `.bak` (the known F-T01-1 behaviour); both were restored from the backup. |
+| **Owner visual acceptance** | **Accepted**, V2 (Trash dialogs), V3 (Body Preset Update), V4 (Expression Update), V5 (recovery path): approved titles, wording and buttons, recovery paths visible and selectable, no unexpected behaviour. **Source:** the Owner's closeout message in the conversation. `owner_review\OWNER_VISUAL_REVIEW.md` is still the blank template (byte-identical, `ec70a847…`), and no screenshots are in the run folder; the Owner reports having taken them, but they are not in the local evidence. |
+| **Restoration** | **Verified.** Library cleanup `files_equal_pre` and `folders_equal_pre` true (nothing removed, nothing recreated); published CPM `ccbed9d7…`; both registries removed; all four inventories equal their baselines; `UA_SOURCE.dmx` unchanged (`259ea8a6…`). The 8 evidence files collected before restoration are byte-identical afterwards. |
+
+**Measured (from the captures and the CPM log):** one SFM process on the source session; `UA Body` and `UA Expr`
+saved on their own tabs and selected; A5 and A6 each captured the Update Preset confirmation (title `Character Preset
+Manager`, the approved question, **Update Preset** / **Cancel**, Cancel the default) and the Trash dialog (the approved
+question, `You can recover it from:`, the library Trash folder visible and selectable, **Move to Trash** / **Cancel**,
+Cancel the default); A7's clipboard equals the Trash folder (the A7 command was prepared before copying, as
+directed). Log: only `Save Current Body` and `Save Current Expression` written (verified); every preset dialog
+cancelled; no pose operation other than Pose Info; no recovery. Library: only the two preset files added (and the
+F-T01-1 rewrite); nothing removed; nothing moved to Trash.
+
+**Product defects:** none. **Procedural deviations:** none in UA-1S. **Documentation limitation:** the Owner's
+visual record and screenshots are not in the run folder (acceptance recorded from the conversation).
+
+## Combined assessment after UA-1S
+
+UA-1 run 1 keeps its formal **FAIL, 48/67** (replay `709065a4…`, unchanged). UA-1S is recorded separately: **PASS
+25/25**, Owner accepted. Against the original UI acceptance requirements:
+
+| Requirement | Evidence | Status |
+|---|---|---|
+| 1. Save Pose Full body summary | run 1 A3 (check passed); Owner accepted | met |
+| 2. Pose Info order, Model path, Source shot and project, Saved Values | run 1 A1/A2/A4/B1, content correct (identity checks failed procedurally); Owner accepted | met, with the run 1 procedural limitation |
+| 3. Update Pose confirmation and updated source | run 1 A4 (exact, `UA Expr`) and B1 (exact, updated shot and project); Owner accepted | met, with the run 1 procedural limitation |
+| 4. Body Preset and Expression confirmations | **UA-1S A5/A6 exact; Owner accepted** | **met** |
+| 5. Trash dialogs: name, button, visible, selectable and copyable path | run 1 A4 (Delete Pose, exact, selectable); **UA-1S A5/A6 (preset Trash dialogs, exact) and A7 (path copied)**; Owner accepted | **met** |
+| 6. Older records and missing metadata | run 1 A1/A2: `Not recorded`, Apply enabled, records unchanged; Owner accepted | met, with the run 1 procedural limitation |
+
+**Remaining qualification limitations:** run 1's formal FAIL stands (all 19 failures procedural: inspection order and
+selections); requirements 2, 3 and 6 rest on run 1 captures whose content was correct but whose step-identity checks
+failed; the Owner's visual records for both runs are statements in the conversation, not filled forms or local
+screenshots. No further native run is recommended solely to correct run 1's inspection order. The UI tested natively
+is `615acf0c…` for the presets (UA-1S) and `8eccf172…` for everything else (run 1); the only difference between them
+is the Pose Info pose-type label (`fda1fb3`), tested offline.
