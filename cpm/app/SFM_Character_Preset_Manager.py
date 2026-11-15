@@ -48036,7 +48036,8 @@ def prod_pose_info_date(stamp):
 
 def prod_pose_info_view(record, source_project=None):
     """What Pose Info shows about any saved pose (versions 1-3), from the record alone (PS-2 UI corrections,
-    2026-11-14; Expression Preset Info is the reference): its type; the model file and path it was saved from;
+    2026-11-14; Expression Preset Info is the reference): its type, always Full body or Selected parts (a version 1
+    arm pose is Selected parts and includes its saved arm; Owner decision 2026-11-15); the model file and path;
     the saved and updated dates; what it includes (how many bones, and the group for a selection); what it does not
     include when that is consequential (recorded exclusions; for a full body, what is never saved); for a version 3
     Full body, what happens to the hips; and a sentence only for a consequential selection effect. The saved
@@ -48067,10 +48068,15 @@ def prod_pose_info_view(record, source_project=None):
             effect = prod_scope_selection_effect(sc[u"posed"], parents) or None
     else:
         regions = [r for r in PROD_POSE_REGIONS + (u"full_body",) if r in pose[u"regions"]]
-        kind = u", ".join(PROD_POSE_PART_NAMES[r] for r in regions)
-        includes = None
         if u"full_body" in regions:
+            kind = u"Full body"
+            includes = None
             not_included += PROD_POSE_FULL_BODY_NOT_INCLUDED[2]
+        else:
+            # Owner decision after UA-1 (2026-11-15): exactly two pose types are shown. A version 1 arm pose is
+            # "Selected parts" with its fixed saved part(s) under Includes; the record and its behaviour are unchanged.
+            kind = u"Selected parts"
+            includes = u", ".join(PROD_POSE_PART_NAMES[r] for r in regions) or None
     rows.append([u"Type:", kind, None])
     model = u(pose[u"source"].get(u"model_ref") or u"").replace(u"\\", u"/")
     rows.append([u"Model:", model.rsplit(u"/", 1)[-1] or u"Unknown", None])

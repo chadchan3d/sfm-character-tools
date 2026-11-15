@@ -2509,18 +2509,28 @@ def section_ui_copy(ns, fx, root):
                                                                u"positions": {u"Hip_p": [1.0, 2.0, 3.0]}}},
                     u"source": {u"model_ref": u"models/k.mdl"}}}
     a, bb = view(v1), view(v2)
-    check("UI.7_legacy_records_remain_readable",
-          a[u"rows"] == [[u"Type:", u"Left arm", None], [u"Model:", u"krystal2020.mdl", None],
+    # Owner decision after UA-1 (2026-11-15): only two pose types; a version 1 arm pose is Selected parts and
+    # includes its saved arm.
+    check("UI.7_legacy_records_remain_readable_with_two_pose_types",
+          a[u"rows"] == [[u"Type:", u"Selected parts", None], [u"Model:", u"krystal2020.mdl", None],
                          [u"Model path:", u"models/a/krystal2020.mdl", None],
                          [u"Source shot:", u"shot10", None], [u"Source project:", u"Not recorded", None],
                          [u"Saved:", u"November 1, 2026", None],
-                         [u"Updated:", u"November 2, 2026", None]] and a[u"effect"] is None and
+                         [u"Updated:", u"November 2, 2026", None], [u"Includes:", u"Left arm", None]]
+          and a[u"effect"] is None and
           bb[u"rows"] == [[u"Type:", u"Full body", None], [u"Model:", u"k.mdl", None],
                           [u"Model path:", u"models/k.mdl", None],
                           [u"Source shot:", u"Not recorded", None], [u"Source project:", u"Not recorded", None],
                           [u"Saved:", u"November 3, 2026", None],
                           [u"Not included:", u"Facial expressions, rootTransform", None]] and
           bb[u"effect"] is None, (a, bb))
+    both = dict(v1, pose=dict(v1[u"pose"], regions=dict(v1[u"pose"][u"regions"], right_arm={})))
+    types = set(r[1] for rec in (grip, mixed, single, forearm, body, body_face) for r in view(rec[u"record"])[u"rows"]
+                if r[0] == u"Type:") | set(r[1] for r in a[u"rows"] + bb[u"rows"] + view(both)[u"rows"]
+                                         if r[0] == u"Type:")
+    check("UI.7b_every_record_version_shows_exactly_the_two_pose_types",
+          types == set([u"Full body", u"Selected parts"]) and
+          [u"Includes:", u"Left arm, Right arm", None] in view(both)[u"rows"], (types, view(both)[u"rows"]))
     lv1, lv2 = values(v1), values(v2)
     check("UI.values_legacy_records_show_their_saved_goals_and_controls",
           lv1[0][u"title"] == u"Left arm goals, relative to CollarL (2)" and

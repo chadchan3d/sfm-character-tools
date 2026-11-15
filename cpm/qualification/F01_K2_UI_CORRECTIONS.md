@@ -124,3 +124,28 @@ No native run, installation, promotion, signing, push or merge. The K2-qualified
 ownership, Undo/Redo, P7 and recovery code are unchanged (the diff touches only the dialogs, the Save/Update/Pose
 Info call sites, the sidecar store and the Pose Info view). The Owner's visual review needs an installed build,
 which is a separate authorization.
+
+## 6. Addendum (2026-11-15): two pose types (Owner decision after UA-1)
+
+**Change:** Pose Info's Type is always **Full body** or **Selected parts**. A version 1 arm pose (left arm, the right
+arm, or both) shows Type `Selected parts` and its saved part(s) under Includes (`NQ1 Pose A`: Type `Selected parts`,
+Includes `Left arm`). Version 2 and version 3 records show what they showed before. CPM `8eccf172…` →
+`615acf0c23ffcf5c278785bb47de6aaf6a7b9ae26779b9313979ac928240c432` (`prod_pose_info_view` only; 9 lines).
+
+**Where pose types appear (inventory):** only the Pose Info Type row. Pose list rows show names only; Help names no
+pose type; the Saved and Applied statuses name the pose only. Messages that name a **part** (the Update refusal
+"… Left arm can't be read …", the Pose Info note "Can't be applied to …: Right arm", the Saved Values group "Left arm
+goals, relative to CollarL", the Apply Parts dialog rows) name the part, not a type, and are unchanged. The Poses page
+state summary (`prod_pose_ui_state`, "Saved: Left arm") is not displayed (the page shows only the Motion Editor note)
+and is unchanged.
+
+**Unchanged:** records (no migration or rewrite), the version 1 fixed scope, every Save, Update, Apply, compatibility,
+recovery and registry path, and the version 2 and version 3 behaviour.
+
+**Tests (Python 2.7.5 and 3.10.6):** scoped 486/486 (UI.7 now expects Selected parts + Includes Left arm; new UI.7b:
+every v1, v2 and v3 record shows exactly the two types, a two-arm v1 record includes "Left arm, Right arm"); Poses
+page 123/123 (U8 and V4 expect Selected parts and Includes; the two-part record likewise); body 257/257, pose
+integration 218/218, pose library/core/live 87/255/104, M-06 179/179, operation context 108/108, scoped page 17/17,
+empty states 15/15; kits PS-2 14, EF-1 34, K2 11, UA-1 7 and 12 (2.7.5). Pre-existing, unchanged: M-05 114/115 (A9),
+canonical route 84/85 (`derivation.added_top_level_is_bounded`, no new top-level name). No native qualification:
+the change is display-only and no functional dependency was found.

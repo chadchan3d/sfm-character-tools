@@ -255,10 +255,12 @@ def section_ui_pass(window, tabs, env, boxes, QtGui):
         d = info[0] if info else {"status": window.status.text()}
         labels = d.get("labels", [])
         fields = [t for t in labels if t.endswith(u":")]
-        check("U8 Pose Info opens a read-only dialog in the Owner's order (after K2): name, type, model, model path, "
-              "source shot, source project (not recorded), saved",
-              d.get("title") == u"Pose Info" and labels[:6] == [u"Name:", u"Arms Up", u"Type:", u"Left arm", u"Model:",
-                                                                u"krystal2020.mdl"]
+        check("U8 Pose Info opens a read-only dialog in the Owner's order (after K2): name, type (a version 1 arm "
+              "pose is Selected parts, including Left arm), model, model path, source shot, source project (not "
+              "recorded), saved",
+              d.get("title") == u"Pose Info" and labels[:6] == [u"Name:", u"Arms Up", u"Type:", u"Selected parts",
+                                                                u"Model:", u"krystal2020.mdl"]
+              and labels[labels.index(u"Includes:") + 1] == u"Left arm"
               and fields[:7] == [u"Name:", u"Type:", u"Model:", u"Model path:", u"Source shot:", u"Source project:",
                                  u"Saved:"]
               and labels[labels.index(u"Source project:") + 1] == u"Not recorded"
@@ -735,7 +737,9 @@ def section_polish(window, tabs, env, boxes, QtGui):
         one = info(u"p1")
         check("V4 Pose Info, one part (PS-2 UI corrections): a Pose box (name, type, model, model path, dates) and a "
               "Saved Values tree; no note",
-              one.get("labels", [])[:6] == [u"Name:", u"Wave", u"Type:", u"Left arm", u"Model:", u"krystal2020.mdl"]
+              one.get("labels", [])[:6] == [u"Name:", u"Wave", u"Type:", u"Selected parts", u"Model:",
+                                            u"krystal2020.mdl"]
+              and one["labels"][one["labels"].index(u"Includes:") + 1] == u"Left arm"
               and u"Model path:" in one.get("labels", []) and one.get("parts") is None and one.get("note") is None
               and one.get("groups") == [u"Pose", u"Saved Values"]
               and one.get("headers") == [u"Bone / Control", u"Value"] and len(one.get("values") or []) == 1
@@ -755,7 +759,8 @@ def section_polish(window, tabs, env, boxes, QtGui):
               never["labels"][never["labels"].index(u"Saved:") + 1] == u"November 1, 2026", never)
         many = info(u"p3")
         check("V4 Pose Info, several parts: listed together, and a note only for the part Krystal can't use",
-              u"Left arm, Right arm" in many.get("labels", [])
+              many["labels"][many["labels"].index(u"Type:") + 1] == u"Selected parts"
+              and many["labels"][many["labels"].index(u"Includes:") + 1] == u"Left arm, Right arm"
               and many.get("note") == u"Can't be applied to Krystal: Right arm.", many)
         # Statuses: routine success messages name the item only; a long name is shortened in the middle.
         short = g["tool_status_name"](u"Standing")
