@@ -34,6 +34,7 @@ SELECTABLE = 1 | 2          # Qt.TextSelectableByMouse | Qt.TextSelectableByKeyb
 POSE, BODY, EXPRESSION = u"UA Pose", u"UA Body", u"UA Expr"
 OLD_V2, OLD_V1 = u"K2 Pose", u"NQ1 Pose A"
 STEPS = ("A1", "A2", "A3", "A4", "A5", "A6", "A7", "B1")
+SUPPLEMENT_STEPS = ("A5", "A6", "A7")   # UA-1S reuses these capture steps unchanged, in its own run folder
 SOURCE_DOC, DESTINATION_DOC = u"ua_source.dmx", u"ua_destination.dmx"
 BAD_LOG = ("RECOVERY_BLOCKED", "undo-uncertain", "abort-unverified", "P7-unverified", "committed-unverified",
            "recovery-unverified", "abort-failed", "SOURCE-unrecorded")
@@ -72,13 +73,36 @@ def operations(rows):
     return out
 
 
+def one_dialog(capture, kind):
+    """(the single captured dialog of `kind`, problems). Kit correction after UA-1 run 1: a missing capture, an error,
+    more than one dialog, a dialog of the other kind (e.g. an error message box where a Trash dialog was expected),
+    or a capture without the fields its kind records is an explicit failure, never an exception. It decides nothing
+    else: every acceptance predicate is applied by the caller exactly as before."""
+    if not isinstance(capture, dict):
+        return None, ["not captured"]
+    if capture.get("error"):
+        return None, ["the capture raised %r" % (capture.get("error"),)]
+    dialogs = capture.get("dialogs")
+    if not isinstance(dialogs, list) or len(dialogs) != 1 or not isinstance(dialogs[0], dict):
+        return None, ["not captured exactly once (%d dialogs)" % (len(dialogs) if isinstance(dialogs, list) else 0)]
+    d = dialogs[0]
+    if d.get("kind") != kind:
+        return None, ["a %s was captured where a %s was expected: %r %r" % (d.get("kind"), kind, d.get("title"),
+                                                                           d.get("text"))]
+    need = (("labels", "text"), ("buttons", "text")) if kind == "dialog" else ()
+    for field, key in need:
+        rows = d.get(field)
+        if not isinstance(rows, list) or not all(isinstance(r, dict) and key in r for r in rows):
+            return None, ["the captured %s has no readable %s" % (kind, field)]
+    return d, []
+
+
 def pose_info(capture):
     """(problems, {field: value}) for a captured Pose Info dialog."""
     problems = []
-    dialogs = (capture or {}).get("dialogs") or []
-    if (capture or {}).get("error") or len(dialogs) != 1 or dialogs[0].get("title") != u"Pose Info":
-        return ["Pose Info was not captured exactly once (%r)" % ((capture or {}).get("error"),)], {}
-    d = dialogs[0]
+    d, wrong = one_dialog(capture, "dialog")
+    if wrong or d.get("title") != u"Pose Info":
+        return ["Pose Info was not captured exactly once (%s)" % (wrong or ["title %r" % d.get("title")])], {}
     labels = [l["text"] for l in d["labels"]]
     fields = [t for t in labels if t.endswith(u":")]
     values = dict((labels[i], labels[i + 1] if i + 1 < len(labels) else None)
@@ -99,20 +123,18 @@ def pose_info(capture):
 
 
 def message_problems(capture, question, action):
-    dialogs = (capture or {}).get("dialogs") or []
-    if (capture or {}).get("error") or len(dialogs) != 1:
-        return ["not captured exactly once (%r)" % ((capture or {}).get("error"),)]
-    d = dialogs[0]
+    d, wrong = one_dialog(capture, "message")
+    if wrong:
+        return wrong
     want = {"kind": "message", "title": TITLE, "text": question, "informative": u"",
             "buttons": [action, u"Cancel"], "default": u"Cancel"}
     return ["%s %r != %r" % (k, d.get(k), v) for k, v in sorted(want.items()) if d.get(k) != v]
 
 
 def trash_problems(capture, question, folder):
-    dialogs = (capture or {}).get("dialogs") or []
-    if (capture or {}).get("error") or len(dialogs) != 1:
-        return ["not captured exactly once (%r)" % ((capture or {}).get("error"),)]
-    d = dialogs[0]
+    d, wrong = one_dialog(capture, "dialog")
+    if wrong:
+        return wrong
     out = []
     if d.get("title") != TITLE:
         out.append("title %r" % d.get("title"))
@@ -120,11 +142,11 @@ def trash_problems(capture, question, folder):
     if labels != [u"<b>%s</b>" % escape(question), u"You can recover it from:", folder]:
         out.append("labels %r" % labels)
     path = [l for l in d["labels"] if l["text"] == folder]
-    if not path or path[0]["flags"] & SELECTABLE != SELECTABLE or not path[0]["visible"]:
+    if not path or int(path[0].get("flags") or 0) & SELECTABLE != SELECTABLE or not path[0].get("visible"):
         out.append("recovery folder not visible and selectable %r" % path)
     buttons = dict((b["text"], b) for b in d["buttons"])
-    if sorted(buttons) != [u"Cancel", u"Move to Trash"] or not buttons[u"Cancel"]["default"] or \
-            buttons[u"Move to Trash"]["default"]:
+    if sorted(buttons) != [u"Cancel", u"Move to Trash"] or not buttons[u"Cancel"].get("default") or \
+            buttons[u"Move to Trash"].get("default"):
         out.append("buttons %r" % d["buttons"])
     return out
 
@@ -134,11 +156,22 @@ class Run(object):
         self.c, self.q = c, c["paths"]["Q"]
         self.checks, self.findings = [], []
         self.ids = opt_json(os.path.join(self.q, "staged", "IDENTITIES.json")) or {}
-        self.cap = {}
+        self.cap, self.malformed = {}, {}
         for step in STEPS:
             path = os.path.join(self.q, "observations", "UA-%s.json" % step)
             if os.path.isfile(path):
-                self.cap[step] = read_json(path)
+                # A capture file that is unreadable or lacks its pid or captures is reported as not captured (an
+                # explicit failure of captured.<step>), never an exception.
+                try:
+                    data = read_json(path)
+                except ValueError as exc:
+                    self.malformed[step] = "unreadable: %s" % exc
+                    continue
+                if not isinstance(data, dict) or not isinstance(data.get("captures"), dict) or \
+                        not isinstance(data.get("pid"), int):
+                    self.malformed[step] = "malformed capture file"
+                    continue
+                self.cap[step] = data
 
     def check(self, cid, ok, detail=None):
         self.checks.append({"id": cid, "pass": bool(ok), "detail": detail})
@@ -154,7 +187,7 @@ def evaluate(R):
     chk("identity.qualification_build", R.ids.get("qualification_cpm_sha256") == want and
         R.ids.get("candidate_cpm_sha256") == c["pins"]["candidate_cpm_sha256"], R.ids.get("qualification_cpm_sha256"))
     for step in STEPS:
-        chk("captured.%s" % step, step in cap)
+        chk("captured.%s" % step, step in cap, R.malformed.get(step))
         if step in cap:
             chk("cpm.%s" % step, cap[step].get("cpm_build_sha256") == want, cap[step].get("cpm_build_sha256"))
     if any(s not in cap for s in STEPS):
@@ -184,16 +217,16 @@ def evaluate(R):
     chk("older.v2_updated_record_shows_updated", u"Updated:" in v2, sorted(v2))
 
     # 1. Save Pose: the approved Full body summary (the real dialog, cancelled)
-    sd = cap["A3"]["captures"].get("save_dialog") or {}
-    dialogs = sd.get("dialogs") or []
-    d = dialogs[0] if len(dialogs) == 1 else {}
-    radios = dict((r["text"], r) for r in d.get("radios") or [])
+    sd = cap["A3"]["captures"].get("save_dialog")
+    d, wrong = one_dialog(sd, "dialog")
+    d = d or {}
+    radios = dict((r.get("text"), r) for r in d.get("radios") or [] if isinstance(r, dict))
     chk("save.dialog_full_body_summary",
-        not sd.get("error") and d.get("title") == u"Save Pose" and (radios.get(u"Full body") or {}).get("checked") and
-        any(l["text"] == SUMMARY and l["visible"] for l in d.get("labels") or []) and
-        any(b["text"] == u"Save" and b["enabled"] for b in d.get("buttons") or []),
-        {"title": d.get("title"), "radios": d.get("radios"), "labels": [l["text"] for l in d.get("labels") or []],
-         "error": sd.get("error")})
+        not wrong and d.get("title") == u"Save Pose" and (radios.get(u"Full body") or {}).get("checked") and
+        any(l.get("text") == SUMMARY and l.get("visible") for l in d.get("labels") or []) and
+        any(b.get("text") == u"Save" and b.get("enabled") for b in d.get("buttons") or []),
+        {"title": d.get("title"), "radios": d.get("radios"), "labels": [l.get("text") for l in d.get("labels") or []],
+         "problems": wrong})
 
     # 2. Pose Info of the new pose: order, source shot, source project = the session
     sel = cap["A4"].get("selected_pose") or {}
@@ -325,27 +358,123 @@ def markdown(out):
     return "\n".join(lines) + "\n"
 
 
-def run(c):
-    R = Run(c)
-    evaluate(R)
-    failed = [x["id"] for x in R.checks if not x["pass"]]
-    out = {"format": "F01-UA1-verdict-v1", "verdict": "PASS" if not failed else "FAIL", "identities": R.ids,
-           "checks": R.checks, "failed": failed, "findings": R.findings}
-    for name, data in (("UA_VERDICT.json", json.dumps(out, indent=1, sort_keys=True)), ("UA_VERDICT.md", markdown(out))):
+def evaluate_supplement(R):
+    """UA-1S (supplement): the Body Preset and Expression Update and Delete confirmations, natively, in one SFM
+    process on the disposable source session; every dialog cancelled; nothing but the two disposable presets saved."""
+    chk, cap, c = R.check, R.cap, R.c
+    want = c["pins"]["qualification_cpm_sha256"]
+    chk("identity.qualification_build", R.ids.get("qualification_cpm_sha256") == want and
+        R.ids.get("candidate_cpm_sha256") == c["pins"]["candidate_cpm_sha256"], R.ids.get("qualification_cpm_sha256"))
+    for step in SUPPLEMENT_STEPS:
+        chk("captured.%s" % step, step in cap, R.malformed.get(step))
+        if step in cap:
+            chk("cpm.%s" % step, cap[step].get("cpm_build_sha256") == want, cap[step].get("cpm_build_sha256"))
+    if any(s not in cap for s in SUPPLEMENT_STEPS):
+        chk("complete", False, "missing captures: %s" % [s for s in SUPPLEMENT_STEPS if s not in cap])
+        return
+    pids = set(cap[s]["pid"] for s in SUPPLEMENT_STEPS)
+    doc = cap["A5"].get("document") or u""
+    chk("process.one_sfm_process_on_the_source_session", len(pids) == 1 and doc.lower().endswith(SOURCE_DOC) and
+        all((cap[s].get("document") or u"") == doc for s in SUPPLEMENT_STEPS), (sorted(pids), doc))
+    folder = cap["A5"].get("trash_folder") or u""
+    for step, kind, name, question in (("A5", "body", BODY, UPDATE_BODY), ("A6", "expression", EXPRESSION,
+                                                                          UPDATE_EXPRESSION)):
+        u_cap = cap[step]["captures"].get("update_%s" % kind) or {}
+        chk("preset.%s_selected" % kind, u_cap.get("selected_preset") == name, u_cap.get("selected_preset"))
+        p = message_problems(u_cap, question % name, u"Update Preset")
+        chk("preset.%s_update_confirmation" % kind, not p, p)
+        p = trash_problems(cap[step]["captures"].get("trash_%s" % kind), TRASH["trash_%s" % kind] % name,
+                           cap[step].get("trash_folder"))
+        chk("trash.%s_dialog" % kind, not p, p)
+    chk("trash.folder_is_the_library_trash", folder.replace(u"\\", u"/").lower().endswith(
+        u"/sfm character preset manager/trash"), folder)
+    chk("trash.recovery_folder_copies", (cap["A7"].get("clipboard") or u"").strip() == folder and bool(folder),
+        (cap["A7"].get("clipboard"), folder))
+    logs = os.path.join(R.q, "evidence", "logs")
+    if S3_TOOLS not in sys.path:
+        sys.path.insert(0, S3_TOOLS)
+    import s3_compare as S3C
+    rows = S3C.parse_logs(logs) if os.path.isdir(logs) else []
+    ops = operations(rows)
+    written = sorted(o["kind"] for o in ops if o["outcome"] not in ("no-op", "completed"))
+    chk("log.only_the_two_disposable_presets_were_written",
+        written == [u"Save Current Body", u"Save Current Expression"] and
+        all(o["outcome"] == "verified" for o in ops if o["outcome"] not in ("no-op", "completed")),
+        [(o["kind"], o["outcome"]) for o in ops])
+    cancelled = [o["kind"] for o in ops if o["outcome"] == "no-op"]
+    required = {u"Update Preset": 2, u"Delete Preset": 2}
+    chk("log.every_preset_dialog_ended_cancelled",
+        all(cancelled.count(k) >= n for k, n in required.items()) and set(cancelled) <= set(required),
+        sorted(cancelled))
+    chk("log.no_pose_operation_and_no_recovery",
+        not [o for o in ops if "Pose" in o["kind"] and o["kind"] != "Pose Info"] and
+        not any(b in r["text"] for r in rows for b in BAD_LOG), sorted(set(o["kind"] for o in ops)))
+    clean = opt_json(R.ev("library_cleanup.json")) or {}
+    diffs = clean.get("differences_kept_in_evidence") or []
+    chk("library.nothing_existing_was_removed", not [x for x in diffs if x["status"] == "removed"], diffs)
+    chk("library.nothing_moved_to_trash", not [x for x in diffs if x["path"].startswith("Trash/")], diffs)
+    char = "Characters/%s/" % c["character_dir"]
+    added = [x["path"] for x in diffs if x["status"] == "added"]
+    chk("library.only_presets_added", added and all(p.startswith(char + "Body Presets/") or
+                                                    p.startswith(char + "Expressions/") for p in added), added)
+    changed = [x["path"] for x in diffs if x["status"] == "changed"]
+    if changed:
+        R.findings.append("existing library files changed during the run and restored from the backup: %s" % changed)
+    restore = opt_json(R.ev("restore.json")) or {}
+    chk("restore.library_exactly_as_before", clean.get("files_equal_pre") is True and
+        clean.get("folders_equal_pre") is True, {k: clean.get(k) for k in ("files_equal_pre", "folders_equal_pre")})
+    chk("restore.published_and_inventories_equal", restore.get("restored") is True, restore.get("inventory_problems"))
+    sessions = os.path.join(R.q, "sessions")
+    chk("sessions.never_saved",
+        os.path.isfile(os.path.join(sessions, "UA_SOURCE.dmx")) and
+        sha(os.path.join(sessions, "UA_SOURCE.dmx")) == c["pins"]["r2_fixture_sha256"])
+
+
+def write_once(R, names, out, title):
+    md = markdown(out).replace("# F-01 UA-1 native UI acceptance verdict", title, 1)
+    for name, data in ((names[0], json.dumps(out, indent=1, sort_keys=True)), (names[1], md)):
         fd = os.open(R.ev(name), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0))
         with os.fdopen(fd, "wb") as f:
             f.write(data.encode("utf-8"))
-    print(markdown(out))
+    print(md)
+
+
+def run(c, mode="run"):
+    """mode "run": the verdict of a run (UA_VERDICT; UA_SUPPLEMENT_VERDICT for a supplement configuration).
+    mode "replay": re-evaluate an earlier run's preserved evidence with this comparator into UA_VERDICT_REPLAY
+    (exclusive create), naming the files it read; nothing of the run is changed."""
+    R = Run(c)
+    supplement = c.get("mode") == "supplement"
+    (evaluate_supplement if supplement else evaluate)(R)
+    failed = [x["id"] for x in R.checks if not x["pass"]]
+    out = {"format": "F01-UA1-verdict-v1", "verdict": "PASS" if not failed else "FAIL", "identities": R.ids,
+           "checks": R.checks, "failed": failed, "findings": R.findings,
+           "comparator_sha256": sha(os.path.abspath(__file__))}
+    if supplement:
+        names, title = ("UA_SUPPLEMENT_VERDICT.json", "UA_SUPPLEMENT_VERDICT.md"), \
+            "# F-01 UA-1S supplemental preset confirmation verdict"
+    elif mode == "replay":
+        out["replay_of"] = dict((n, sha(os.path.join(R.q, "observations", n)))
+                                for n in sorted(os.listdir(os.path.join(R.q, "observations")))
+                                if n.startswith("UA-") and n.endswith(".json"))
+        out["note"] = ("Replay with the corrected comparator (non-dialog or malformed captures are explicit "
+                       "failures). The original run's comparator raised KeyError and wrote no UA_VERDICT; this is "
+                       "not that verdict, and no evidence was changed.")
+        names, title = ("UA_VERDICT_REPLAY.json", "UA_VERDICT_REPLAY.md"), \
+            "# F-01 UA-1 verdict, replay of the preserved evidence with the corrected comparator"
+    else:
+        names, title = ("UA_VERDICT.json", "UA_VERDICT.md"), "# F-01 UA-1 native UI acceptance verdict"
+    write_once(R, names, out, title)
     return 0 if not failed else 1
 
 
 def main(argv):
-    if len(argv) != 2:
+    if len(argv) not in (2, 3) or (len(argv) == 3 and argv[2] != "--replay"):
         print(__doc__)
         return 2
     sys.path.insert(0, HERE)
     import ua_tool
-    return run(ua_tool.S.load(argv[1]))
+    return run(ua_tool.S.load(argv[1]), "replay" if len(argv) == 3 else "run")
 
 
 if __name__ == "__main__":

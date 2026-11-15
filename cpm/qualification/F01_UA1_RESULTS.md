@@ -60,3 +60,48 @@ without a selection.
    separately named verdict without touching `UA_VERDICT`.
 3. **Owner visual record.** The template was not filled in; the Owner's acceptance is recorded from the closeout
    message. Screenshots, if kept, can be added to `owner_review\` by the Owner.
+
+## Designer disposition and kit correction (2026-11-15)
+
+**Designer disposition:** the available UA-1 functional evidence and the Owner's visual approval are accepted with the
+procedural limitations documented above; no formal automated PASS is claimed for run 1. The Owner also accepted
+`fda1fb3` (two pose types).
+
+**Comparator correction (offline, kit only):** `ua_compare.one_dialog` makes a missing capture, an error, zero or
+several dialogs, a dialog of the other kind (an error message box where a Trash dialog was expected — the run 1
+crash), or a capture without readable labels or buttons an explicit failed check; an unreadable or malformed capture
+file fails `captured.<step>`. No acceptance predicate was relaxed. Tests: `test_ua.py` 15/15 on Python 3.10.6 (new:
+the run 1 message-box case, a malformed capture file, every reader against eight kinds of missing or wrong captures,
+replay safety, the supplement); `test_ua_capture.py` 12/12 on Python 2.7.5 (unchanged).
+
+**Replay of run 1 (formal record of run 1 under the corrected comparator):** `ua_tool replay` wrote
+`evidence\UA_VERDICT_REPLAY.json/.md` (`709065a4…`): **FAIL, 48/67**, exactly the 19 procedural failures of the
+diagnostic. It names the eight capture files it read by SHA-256; all 28 earlier evidence files are byte-identical
+before and after; no `UA_VERDICT` exists or was created for run 1.
+
+## Supplement UA-1S (prepared offline, not run)
+
+`real_sfm_qualification/f01_ui_acceptance/PROCEDURE_SUPPLEMENT.md`, `ua_supplement.template.json`
+(`"mode": "supplement"`), `owner_visual_review_supplement.template.md`. One SFM process on a fresh copy of the R2
+source session, candidate `615acf0c…` (`fda1fb3`), qualification build `849d0ed4…`: Save New one Body preset and one
+Expression on their own tabs, capture A5/A6 (the unchanged capture script) and A7 (the copied folder), and the Owner
+opens, inspects (V2–V5), screenshots and cancels each Update Preset and Delete Preset confirmation. Supplement
+comparator checks: the exact native wording, title, buttons and Cancel default of all four confirmations; the
+recovery folder visible, selectable and copied; only the two preset saves written; every preset dialog cancelled; no
+pose operation; nothing removed or moved to Trash; restoration exact. Needs the Owner's separate authorization.
+
+## Combined evidence against the original UI acceptance requirements
+
+| Requirement (UA-1 proposal) | Native machine evidence | Owner visual | Remaining limitation |
+|---|---|---|---|
+| 1. Save Pose Full body summary | A3 (passes) | accepted | none |
+| 2. Pose Info order, Model path, Source shot and project, Saved Values | A1/A2 (swapped), A4 (`UA Expr`), B1 — content correct | accepted | the formal checks failed on step identity only |
+| 3. Update Pose confirmation and updated source | A4 (`UA Expr`), B1 — exact | accepted | none material |
+| 4. Body Preset and Expression confirmations | **none** (not shown in run 1) | accepted per the Owner's statement; no record | **open until UA-1S** (offline real-window evidence only) |
+| 5. Trash dialogs: name, button, visible, selectable path | A4 Delete Pose — exact, selectable | accepted | copying not machine-recorded (A7 held the command); preset Trash dialogs open until UA-1S |
+| 6. Older records and missing metadata | A1/A2 — `Not recorded`, Apply enabled, records unchanged | accepted | none |
+
+Run 1's formal result stays **FAIL (replay 48/67, all procedural)**. If UA-1S passes with V2–V5 accepted, every UI
+requirement above has native machine evidence plus Owner acceptance, and the remaining limitation is that
+requirements 1–3 and 6 were checked in steps whose identity checks failed procedurally in run 1 (their content was
+correct).

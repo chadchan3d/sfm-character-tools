@@ -24,8 +24,14 @@ Own commands:
                 inventory equal to its baseline)
   compare       run tools/ua_compare.py (Q/evidence/UA_VERDICT.json and UA_VERDICT.md)
 
+  replay        re-evaluate a finished UA-1 run's preserved evidence with the current comparator into
+                Q/evidence/UA_VERDICT_REPLAY.json and .md (exclusive create; nothing of the run changes)
+
+A configuration with "mode": "supplement" is UA-1S (ua_supplement.template.json): the same tool without seed or
+replay; compare writes UA_SUPPLEMENT_VERDICT.
+
 usage: python -I ua_tool.py UA.json build | pre | status | install | seed | check | library TAG | collect-logs |
-                                     restore | compare
+                                     restore | compare | replay
 """
 from __future__ import print_function
 
@@ -241,10 +247,25 @@ def cmd_compare(c):
     return ua_compare.run(c)
 
 
+def cmd_replay(c):
+    """Re-evaluate a finished run's preserved evidence with the current comparator into UA_VERDICT_REPLAY (exclusive
+    create). Read-only for the run; refuses for a supplement configuration."""
+    if c.get("mode") == "supplement":
+        raise SystemExit("REFUSED: replay is for a UA-1 run")
+    import ua_compare
+    return ua_compare.run(c, "replay")
+
+
+def cmd_seed_checked(c):
+    if c.get("mode") == "supplement":
+        raise SystemExit("REFUSED: the UA-1S supplement seeds no poses")
+    return cmd_seed(c)
+
+
 def main(argv):
     commands = {"build": cmd_build, "pre": cmd_pre, "status": S.cmd_status, "install": S.cmd_install,
-                "seed": cmd_seed, "check": S.cmd_check, "collect-logs": S.cmd_collect_logs, "restore": cmd_restore,
-                "compare": cmd_compare}
+                "seed": cmd_seed_checked, "check": S.cmd_check, "collect-logs": S.cmd_collect_logs,
+                "restore": cmd_restore, "compare": cmd_compare, "replay": cmd_replay}
     if len(argv) == 4 and argv[2] == "library":
         return cmd_library(S.load(argv[1]), argv[3]) or 0
     if len(argv) != 3 or argv[2] not in commands:

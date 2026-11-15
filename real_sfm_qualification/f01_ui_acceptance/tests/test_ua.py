@@ -256,9 +256,17 @@ class UASynthetic(object):
             "update_pose": message(C.UPDATE_POSE % u"UA Pose" if "update-wording" not in f else
                                    u'Update "UA Pose" using the current pose?', u"Update Pose"),
             "trash_pose": trash(C.TRASH["trash_pose"] % u"UA Pose", flags=0 if "path-not-selectable" in f else 3)})
+        trash_body = dict(trash(C.TRASH["trash_body"] % u"UA Body"), selected_preset=u"UA Body")
+        if "a5-message-box" in f:     # UA-1 run 1: CPM's error box where the Trash dialog was expected
+            trash_body = {"dialogs": [{"kind": "message", "class": "QMessageBox", "title": u"Can't delete preset",
+                                       "text": u"Preset could not be moved to Trash. Try again.", "informative": u"",
+                                       "text_format": 0, "buttons": [u"OK"], "default": None}],
+                          "error": None, "selected_preset": u"unreadable: Select a preset first."}
         self.capture("A5", 100, SRC_DOC, ua_a, {
             "update_body": dict(message(C.UPDATE_BODY % u"UA Body", u"Update Preset"), selected_preset=u"UA Body"),
-            "trash_body": dict(trash(C.TRASH["trash_body"] % u"UA Body"), selected_preset=u"UA Body")})
+            "trash_body": trash_body})
+        if "malformed-a2" in f:
+            write(os.path.join(self.q, "observations", "UA-A2.json"), b'{"step": "A2"}')
         self.capture("A6", 100, SRC_DOC, ua_a, {
             "update_expression": dict(message(C.UPDATE_EXPRESSION % u"UA Expr", u"Update Preset"),
                                       selected_preset=u"UA Expr"),
@@ -368,6 +376,187 @@ class CompareTests(unittest.TestCase):
     def test_the_trashed_case_also_fails_the_write_check(self):
         out = self.verdict("trashed")
         self.assertIn("log.only_the_owners_saves_and_one_update_were_written", out["failed"])
+
+    # --- kit correction after UA-1 run 1: wrong or missing captures are explicit failures, never exceptions ---------
+
+    def test_a_message_box_where_a_trash_dialog_was_expected_fails_without_an_exception(self):
+        out = self.verdict("a5-message-box")       # the exact shape that raised KeyError in UA-1 run 1
+        self.assertEqual(out["verdict"], "FAIL")
+        self.assertIn("trash.body_dialog", out["failed"])
+        detail = [x for x in out["checks"] if x["id"] == "trash.body_dialog"][0]["detail"]
+        self.assertTrue(any("message was captured where a dialog was expected" in d for d in detail), detail)
+
+    def test_a_malformed_capture_file_is_not_captured_without_an_exception(self):
+        out = self.verdict("malformed-a2")
+        self.assertIn("captured.A2", out["failed"])
+
+    def test_every_dialog_reader_reports_missing_or_wrong_captures(self):
+        good_msg = message(C.UPDATE_POSE % u"P", u"Update Pose")
+        good_trash = trash(C.TRASH["trash_pose"] % u"P")
+        good_info = info(pose_fields(u"P", u"Full body", u"shot15", u"Not recorded", False))
+        msg_dialog = good_msg["dialogs"][0]
+        trash_dialog = good_trash["dialogs"][0]
+        wrong = {
+            "missing": None,
+            "error": {"dialogs": [], "error": u"RuntimeError: boom"},
+            "none": {"dialogs": [], "error": None},
+            "two": {"dialogs": [trash_dialog, trash_dialog], "error": None},
+            "not a list": {"dialogs": "x", "error": None},
+            "no labels": {"dialogs": [dict(trash_dialog, labels=None)], "error": None},
+            "label without text": {"dialogs": [dict(trash_dialog, labels=[{"flags": 3}])], "error": None},
+            "button without text": {"dialogs": [dict(trash_dialog, buttons=[{"default": True}])], "error": None},
+        }
+        self.assertEqual(C.message_problems(good_msg, C.UPDATE_POSE % u"P", u"Update Pose"), [])
+        self.assertEqual(C.trash_problems(good_trash, C.TRASH["trash_pose"] % u"P", TRASH), [])
+        self.assertEqual(C.pose_info(good_info)[0], [])
+        for name, cap in sorted(wrong.items()):
+            self.assertTrue(C.trash_problems(cap, C.TRASH["trash_pose"] % u"P", TRASH), name)
+            self.assertTrue(C.pose_info(cap)[0], name)
+        self.assertTrue(C.message_problems({"dialogs": [trash_dialog], "error": None}, u"q", u"Update Pose"))
+        self.assertTrue(C.trash_problems({"dialogs": [msg_dialog], "error": None}, u"q", TRASH))
+        self.assertTrue(C.pose_info({"dialogs": [msg_dialog], "error": None})[0])
+        for name in ("missing", "error", "none", "two", "not a list"):
+            self.assertTrue(C.message_problems(wrong[name], C.UPDATE_POSE % u"P", u"Update Pose"), name)
+
+    def test_replay_writes_separate_files_and_changes_no_evidence(self):
+        q = os.path.join(self.dir, "R")
+        c = UASynthetic(q, ("a5-message-box",)).build()
+        before = dict((n, TOOL.T.sha(os.path.join(q, "observations", n))) for n in os.listdir(os.path.join(
+            q, "observations")))
+        code = quiet(lambda: C.run(c, "replay"))
+        out = load(os.path.join(q, "evidence", "UA_VERDICT_REPLAY.json"))
+        self.assertEqual((code, out["verdict"]), (1, "FAIL"))
+        self.assertEqual(out["replay_of"], dict((n, h) for n, h in before.items() if n.startswith("UA-")))
+        self.assertFalse(os.path.exists(os.path.join(q, "evidence", "UA_VERDICT.json")))
+        self.assertEqual(before, dict((n, TOOL.T.sha(os.path.join(q, "observations", n))) for n in before))
+        self.assertRaises(OSError, quiet, lambda: C.run(c, "replay"))
+
+
+# --- UA-1S, the supplemental preset-confirmation check ---------------------------------------------------------------
+
+class SupplementSynthetic(object):
+    def __init__(self, folder, faults=()):
+        self.q, self.f = folder, set(faults)
+        for d in ("staged", "observations", "evidence", "sessions", os.path.join("evidence", "logs")):
+            os.makedirs(os.path.join(folder, d))
+
+    def dump(self, rel, data):
+        write(os.path.join(self.q, rel), json.dumps(data, indent=1, sort_keys=True).encode("utf-8"))
+
+    def capture(self, step, captures, **extra):
+        self.dump(os.path.join("observations", "UA-%s.json" % step), {
+            "format": "F01-UA1-capture-v1", "step": step, "pid": 300, "cpm_build_sha256": SUP_QUAL,
+            "document": SRC_DOC, "clipboard": extra.get("clipboard", u""), "selected_pose": None,
+            "trash_folder": TRASH, "captures": captures})
+
+    def build(self):
+        f = self.f
+        self.dump(os.path.join("staged", "IDENTITIES.json"), {"qualification_cpm_sha256": SUP_QUAL,
+                                                              "candidate_cpm_sha256": SUP_PIN})
+        body_title = u"Update preset?" if "old-title" in f else C.TITLE
+        self.capture("A5", {
+            "update_body": dict(message(C.UPDATE_BODY % u"UA Body", u"Update Preset"), selected_preset=u"UA Body"),
+            "trash_body": dict(trash(C.TRASH["trash_body"] % u"UA Body"), selected_preset=u"UA Body")})
+        if "old-title" in f:
+            path = os.path.join(self.q, "observations", "UA-A5.json")
+            d = load(path)
+            d["captures"]["update_body"]["dialogs"][0]["title"] = body_title
+            write(path, json.dumps(d).encode("utf-8"))
+        if "a6-message-box" in f:
+            expr_trash = {"dialogs": [{"kind": "message", "title": u"Can't delete preset", "text": u"x",
+                                       "informative": u"", "buttons": [u"OK"], "default": None}], "error": None,
+                          "selected_preset": u"UA Expr"}
+        else:
+            expr_trash = dict(trash(C.TRASH["trash_expression"] % u"UA Expr"), selected_preset=u"UA Expr")
+        self.capture("A6", {
+            "update_expression": dict(message(C.UPDATE_EXPRESSION % u"UA Expr", u"Update Preset"),
+                                      selected_preset=u"UA Expr"),
+            "trash_expression": expr_trash})
+        self.capture("A7", {}, clipboard=u"other" if "clipboard" in f else TRASH)
+        ops = [("Save Current Body", "verified"), ("Update Preset", "no-op"), ("Delete Preset", "no-op"),
+               ("Save Current Expression", "verified"), ("Update Preset", "no-op"), ("Delete Preset", "no-op"),
+               ("Update Preset", "no-op")]
+        if "preset-updated" in f:
+            ops.append(("Update Preset", "verified"))
+        if "pose-saved" in f:
+            ops.append(("Save Pose", "verified"))
+        lines, n = [], 0
+        for i, (kind, outcome) in enumerate(ops, 1):
+            for t in ("PROD_OPERATION_BEGIN id=%d kind=u'%s' context=None" % (i, kind),
+                      "PROD_OPERATION_RESULT id=%d kind=u'%s' outcome=u'%s'" % (i, kind, outcome)):
+                n += 1
+                lines.append("2026-11-15T10:%02d:%02d.000Z #%06d s=x w=1 op=%d | %s" % (n // 60, n % 60, n, i, t))
+        write(os.path.join(self.q, "evidence", "logs", "CPM - 2026-11-15_10-00-00Z - pid300 - x - 001.log"),
+              ("\n".join(lines) + "\n").encode("utf-8"))
+        base = "Characters/%s/" % CHAR
+        diffs = [{"status": "added", "path": base + "Body Presets/UA Body.json", "sha256": "b"},
+                 {"status": "added", "path": base + "Expressions/UA Expr.json", "sha256": "e"},
+                 {"status": "changed", "path": base + "character.json", "sha256": "c"}]
+        if "pose-saved" in f:
+            diffs.append({"status": "added", "path": base + "Poses/UA Body--x.json", "sha256": "p"})
+        if "trashed" in f:
+            diffs.append({"status": "added", "path": "Trash/x--UA Body.json", "sha256": "t"})
+        self.dump(os.path.join("evidence", "library_cleanup.json"), {
+            "differences_kept_in_evidence": diffs, "files_equal_pre": True, "folders_equal_pre": True})
+        self.dump(os.path.join("evidence", "restore.json"), {"restored": "not-restored" not in f,
+                                                              "inventory_problems": []})
+        write(os.path.join(self.q, "sessions", "UA_SOURCE.dmx"), b"src")
+        return {"mode": "supplement", "paths": {"Q": self.q}, "character_dir": CHAR,
+                "pins": {"qualification_cpm_sha256": SUP_QUAL, "candidate_cpm_sha256": SUP_PIN,
+                         "r2_fixture_sha256": sha_bytes(b"src"), "destination_sha256": sha_bytes(b"dst")}}
+
+
+SUP_PIN = "615acf0c23ffcf5c278785bb47de6aaf6a7b9ae26779b9313979ac928240c432"
+SUP_QUAL = "849d0ed44101965de62165f01fcbb22b3caae9797e867169e71d4247b49cd4a2"
+
+
+class SupplementTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="uasup")
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, True)
+
+    def verdict(self, *faults):
+        q = os.path.join(self.dir, "Q%d" % len(os.listdir(self.dir)))
+        c = SupplementSynthetic(q, faults).build()
+        code = quiet(lambda: C.run(c))
+        out = load(os.path.join(q, "evidence", "UA_SUPPLEMENT_VERDICT.json"))
+        self.assertEqual(code == 0, out["verdict"] == "PASS")
+        return out
+
+    def test_a_complete_correct_supplement_passes_with_the_changed_file_as_a_finding(self):
+        out = self.verdict()
+        self.assertEqual((out["verdict"], out["failed"]), ("PASS", []), out["failed"])
+        self.assertTrue(out["findings"])
+
+    def test_supplement_counterexamples_fail_on_their_own_check(self):
+        cases = {"old-title": "preset.body_update_confirmation",
+                 "a6-message-box": "trash.expression_dialog",
+                 "clipboard": "trash.recovery_folder_copies",
+                 "preset-updated": "log.only_the_two_disposable_presets_were_written",
+                 "pose-saved": "library.only_presets_added",
+                 "trashed": "library.nothing_moved_to_trash",
+                 "not-restored": "restore.published_and_inventories_equal"}
+        for fault, check in sorted(cases.items()):
+            out = self.verdict(fault)
+            self.assertEqual(out["verdict"], "FAIL", fault)
+            self.assertIn(check, out["failed"], (fault, out["failed"]))
+
+    def test_the_supplement_configuration_refuses_seed_and_replay(self):
+        c = TOOL.S.load(config(self.dir))
+        c["mode"] = "supplement"
+        self.assertRaises(SystemExit, TOOL.cmd_seed_checked, c)
+        self.assertRaises(SystemExit, TOOL.cmd_replay, c)
+
+    def test_the_supplement_template_pins_the_current_candidate_and_its_qualification_build(self):
+        with open(os.path.join(ROOT, "ua_supplement.template.json"), "rb") as f:
+            t = json.loads(f.read().decode("utf-8"))
+        with open(os.path.join(ROOT, "ua.template.json"), "rb") as f:
+            base = json.loads(f.read().decode("utf-8"))
+        self.assertEqual((t["mode"], t["format"], t["pins"]["candidate_cpm_sha256"],
+                          t["pins"]["qualification_cpm_sha256"], t["pins"]["capture_sha256"]),
+                         ("supplement", "F01-UA1-config-v1", SUP_PIN, SUP_QUAL, base["pins"]["capture_sha256"]))
 
 
 if __name__ == "__main__":
