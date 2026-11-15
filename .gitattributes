@@ -396,3 +396,7 @@ real_sfm_qualification/f01_nq_s6/** text eol=lf
 # F-01 Blueprint R4 (Revised Owner-Review Edition, 2026-11-14): Owner-approved, incorporated byte-exact
 # (SHA-256 957637586bb5...); LF only.
 cpm/qualification/F01_BLUEPRINT_R4_REVISED_OWNER_REVIEW_20261114.md text eol=lf
+
+# F-01 UA-1 native UI acceptance kit (2026-11-14): the capture script SHA-256 is pinned in ua.template.json
+# (capture_sha256) and PROCEDURE.md; keep exact LF bytes for the whole kit on every checkout and archive export.
+real_sfm_qualification/f01_ui_acceptance/** text eol=lf
