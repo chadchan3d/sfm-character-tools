@@ -20,7 +20,7 @@ correction and replay), `F01_Q1_RESULTS_ERRATUM_1.md` (the corrected refresh-bef
 | Registries (unchanged) | pose `f445d5ef…`, body `22dcd159…` |
 | Published installation (restored after the trial) | v1.0.0, CPM `ccbed9d7…` |
 | Trial suite | `cpm/convergence/tests/test_cpm_app_f01_ordering_trial.py` `4424ab09…` |
-| Native kit | `real_sfm_qualification/f01_ot1_ordering_trial/`: `PROCEDURE.md`, `ot1.template.json` `2ed8057f…`, `observer/F01_OT1_Observe.py` `66a4f485…` (loads the pinned Q1 observer `f2eba1e0…`), `tools/ot1_tool.py` `84769ba5…`, `tools/ot1_analyze.py` `f4e95125…`, `tests/test_ot1.py` `9a614196…`, `tests/test_ot1_observer.py` `e9f78d4f…` |
+| Native kit (revised 2026-11-16 for the BASE preflight, section 4.1; committed in `ac84df8` with observer `66a4f485…`) | `real_sfm_qualification/f01_ot1_ordering_trial/`: `PROCEDURE.md`, `ot1.template.json` `2982e299…`, `observer/F01_OT1_Observe.py` **`93e9fbf3cc579d9899ea25bc2c06928c73128cabf8ad7890c1f9a3511ff78aad`** (loads the pinned Q1 observer `f2eba1e0…`), `tools/ot1_tool.py` `84769ba5…` (unchanged), `tools/ot1_analyze.py` `b4c038cc…`, `tests/test_ot1.py` `f03ff256…`, `tests/test_ot1_observer.py` `30df4669…` |
 
 ## 2. The candidate correction
 
@@ -124,6 +124,10 @@ No suite changed result because of the candidate.
 
 ### 3.4 Native-kit tests
 
+Revised with the BASE preflight (section 4.1): `tests/test_ot1.py` **67/67** (the five added cases: no preflight, a
+state change across it, a shared expression, an unreadable endpoint, another instance → INCOMPLETE);
+`tests/test_ot1_observer.py` **35/35 on SFM Python 2.7.5 and 3.10.6** (15 added, P1–P12, below). As first committed:
+
 - `tests/test_ot1.py` (Python 3.10.6): **62/62** — template pins equal the files (candidate, registries, both observers,
   the S0 observer; published, fixture, destination, Body, legacy-pose pins equal the Q1/UA-1 kits'; no personal path);
   the one-line derivation from the real candidate gives the pinned qualification build; the analyzer on synthetic runs:
@@ -152,6 +156,66 @@ other preset, no retiming.
 | Edit > Redo → REDO | exactly the APPLY state, settled map PASS, history forward one entry |
 | Edit > Undo → UNDO2 | exactly BASE again |
 | ARM, Apply `Body` → ABORT | controlled failure after the tail's operator call (both expressions operated and verified first): CPM's own abort verification `restored=True`, no recovery uncertainty, A equals ARM exactly, no history entry, B untouched, injector fired once |
+
+### 4.1 BASE graph preflight (Designer authorization "F-01 OT1 — BASE Preflight Improvement"; observer only)
+
+At BASE, before the hooks are installed, the observer inspects A's existing `bip_head` and `bip_tail00` graphs read
+only: CPM's own `prod_bs_index_snapshot` and `prod_bs_index_binding` for the selected instance, then
+- the **candidate's own scan**, `prod_bs_expression_channels` (the exact function the candidate calls before
+  `Operate()`): reader and writer counts and identities, or the error it raises (it stops at the first unreadable item);
+- a **diagnostic enumeration** of the same structure with the same strict primitives that continues past failures,
+  listing every reader and writer (clip, channel, attribute) and every unreadable track, clip type, clip channel list
+  or endpoint;
+- the candidate's other pre-`Operate()` graph checks that need no plan baseline: expression type and text, the four
+  endpoints, static output mode 3;
+- which animation sets list the expression in their `operators` arrays (reported; not part of the candidate);
+- **would_pass**: the candidate's graph-uniqueness precondition holds for both scales (exactly the planned reader and
+  writer, nothing unreadable, endpoints and expression as required);
+- the instance and the expression, output, input-channel, transform and control identities.
+
+The Undo state (description, Redo description, count) and the playhead are read before and after the preflight and
+recorded. It calls no `Operate()`, writes nothing, refreshes nothing, moves nothing and opens no Undo action (offline
+test P1 and the static check L2; natively, `side_effects.unchanged`). The analyzer requires a passing, unchanged
+preflight (`preflight.read_only_no_state_change`, `preflight.candidate_uniqueness_precondition`, EVIDENCE), and the
+procedure stops before the first Apply when BASE prints `preflight FAIL`. The candidate is unchanged (`0cea8acd…`).
+
+Offline (`test_ot1_observer.py` P1–P12, with the candidate's committed scan and strict-read helpers extracted verbatim
+from the app source): valid graphs pass; a second reader in another set's clip (shared) and a second writer
+(ambiguous) fail with both listed; an unreadable endpoint in an unrelated clip makes the candidate's scan refuse while
+the enumeration names it and still finds the one reader and writer; an unreadable clip type and channel list are both
+listed; a refused binding, a missing bone and a changed endpoint fail; operators-array membership is reported only; a
+state change across the preflight is recorded; nothing is written or operated; the preflight precedes the hooks.
+
+### 4.2 What the scan covers, and what it cannot establish
+
+**Covered (both in the candidate and in the preflight):** every `DmeChannel` listed in the `channels` array of every
+`DmeChannelsClip` child of the shot's `channelTrackGroup` / `animSetEditorChannels` track, by its `fromElement`
+(readers) and `toElement` (writers), compared by element identity with the bound expression. This is where SFM keeps
+the channels of every animation set in the shot, including a same-model peer's.
+
+**Not covered:**
+- channels outside that track: other tracks or track groups, other shots or nested film clips, and channels listed in
+  no clip;
+- **non-channel references** to the expression: operators that hold element or attribute references (for example
+  connection or constraint operators, rig or script-created elements), other element-valued attributes or element
+  arrays anywhere in the document. The preflight's `operators`-array report shows membership in animation sets'
+  operator lists only, not data flow. No read-only, verified way to enumerate every element referring to another
+  element was used; the SFM Python API's reverse-reference facilities were not established in this work.
+
+**Consequence: the scan proves channel exclusivity within the shot's animation-set channels track, not universal graph
+exclusivity.** Neither the candidate nor this record claims more.
+
+**Does the trial's safety depend on the uncovered reference types?** Operating the expression changes only that
+expression's own `result`. Q1 measured that, without the candidate, Body's own same-time refresh already advances that
+`result` to the same value; the candidate makes it current before commit instead of after. A consumer outside the scan
+would therefore receive the same value it already receives today, a little earlier and inside CPM's owned Undo entry,
+and nothing evaluates inside the transaction except CPM's explicit calls. A hidden writer into `expression.value`
+would already conflict with today's Body path; the candidate's post-`Operate()` authored check and the unchanged
+postcommit physical verification would report it, not certify it. On that reasoning no new destination is created.
+But Astra's condition reads "ensure no conflicting or shared destination of the expression result", and that can be
+ensured only for channel references. **This is recorded as an unresolved Astra design condition (OT1-DC1):** Astra
+should either accept channel-track exclusivity plus the reasoning above as sufficient for the qualification-only
+trial, or name an additional reference inspection to be prepared before the native run.
 
 **Protected inventories** (the S3 tool, unchanged): `usermod\scripts`, `usermod\cfg`, the preset library, the SFM
 sessions folder; plus the published CPM, both registries absent, `.pyc` and housekeeping files; restoration verified
@@ -187,8 +251,9 @@ renewed adjudication; a second refresh is admissible only as Astra's separate co
    `CDmeExpressionOperator` (it derives from `IDmeOperator`); the same-element cast fallback is implemented and tested
    offline only.
 4. **Strict shot-wide scan.** Any unreadable channel endpoint in any channels clip of the shot refuses the Body Apply
-   (fail closed, verified Abort). The fixture's other clips (camera, lights, props) are not yet proven readable; such
-   a refusal would show at the first Apply (STOP), not as a silent pass.
+   (fail closed, verified Abort). The fixture's other clips (camera, lights, props) are not yet proven readable; the
+   BASE preflight (section 4.1) now reports this before any Apply and stops the trial if it fails. The scan's coverage
+   limit is design condition OT1-DC1 (section 4.2).
 5. **Observer reads.** Inside the transaction the observer reads only `prod_bs_snapshot`, which the candidate itself
    calls after `Operate()`. After CPM's refresh it reads the same snapshot of the two written scales before CPM's
    deferred verification. In Q1, heavier full-map reads at these boundaries did not advance a stale physical scale,
@@ -202,7 +267,8 @@ renewed adjudication; a second refresh is admissible only as Astra's separate co
 
 ## 7. Readiness recommendation
 
-**Ready for the Owner's authorization of the native trial**, with these conditions: run exactly `PROCEDURE.md` in one
+**Ready for the Owner's authorization of the native trial once Astra has disposed of design condition OT1-DC1**
+(section 4.2: channel-track exclusivity is what the scan can prove), with these conditions: run exactly `PROCEDURE.md` in one
 SFM session from a new run folder; the candidate and qualification build as pinned (`0cea8acd…` / `0fbb4fb1…`);
 restoration and the analyzer always run; the verdict is reported as the analyzer gives it. A CANDIDATE PASS qualifies
 the ordering for review only: production repair stays on hold, the shipping behaviour (`committed-unverified`) is

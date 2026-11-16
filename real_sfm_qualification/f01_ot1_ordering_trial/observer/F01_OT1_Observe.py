@@ -27,6 +27,24 @@ and never runs its own capture.
    character and instance, the raw fields of every animation set in the shot (Q1's reader), the settled full map of
    the selected instance against the `Body` record, and the hook events since the previous capture.
 
+4. BASE preflight (read only; before the hooks are installed): for the selected instance's existing `bip_head` and
+   `bip_tail00` scale graphs, CPM's own read-only prod_bs_index_snapshot and prod_bs_index_binding, then:
+   - the candidate's own scan, prod_bs_expression_channels (the exact function the candidate calls before Operate()):
+     its reader and writer counts and identities, or the error it raises (it stops at the first unreadable item);
+   - a diagnostic enumeration over the same structure with the same strict primitives that continues past
+     unreadable items and lists every unreadable track, clip, channel list or endpoint and every reader and writer;
+   - the candidate's other pre-Operate graph checks that need no plan baseline (expression type and text, the four
+     endpoints, static output mode 3);
+   - which animation sets list the expression in their `operators` array (reported only; not part of the candidate);
+   - "would_pass": the candidate's graph-uniqueness precondition holds for both scales.
+   Undo state and playhead are read before and after the preflight and recorded. Nothing is operated, written,
+   refreshed or moved, and no Undo action is opened.
+   Coverage: DmeChannel elements listed in the `channels` array of DmeChannelsClip children of the shot's
+   channelTrackGroup / animSetEditorChannels track, by their fromElement and toElement. Not covered: channels in other
+   tracks, track groups, shots or nested clips, or in no clip; operators and any other element attribute or array that
+   references the expression (connection operators, constraints, rig or script elements, other expressions); the
+   operators-array report shows membership only, not data flow.
+
 Its only write is <OT1_DIR>\\observations\\OT1-<step>.json (exclusive create).
 
 Steps: BASE (peer created, A selected; installs the hooks), APPLY (after Apply Body), UNDO (after Ctrl+Z), REDO (after
@@ -47,6 +65,7 @@ OT1_RECORD = u"Body"
 OT1_FAIL_BONE = u"bip_tail00"
 OT1_FAIL_TEXT = "OT1 controlled failure after the operator call"
 Q1_OBSERVER_SHA256 = "f2eba1e0abce6e1e1e68202546e750b99dc0032f105d393bf0a40111824fca58"
+OT1_PREFLIGHT_BONES = (u"bip_head", u"bip_tail00")
 SNAP_FIELDS = ("source", "key_value", "key_count", "expr_input", "expr_result", "physical_scale", "input_mode",
                "output_mode", "output_key_count", "output_is_empty", "output_use_default_value", "lo", "hi",
                "expression_id", "output_id", "transform_id", "input_channel_id", "control_id")
@@ -210,6 +229,151 @@ def ot1_uninstall(cpm):
     return ok
 
 
+def ot1_enumerate(cpm, q1, binding):
+    """Diagnostic: every reader and writer of the bound expression and every unreadable item, over the structure the
+    candidate's prod_bs_expression_channels scans and with the same strict primitives, continuing past failures."""
+    text, plain = q1["q1_text"], q1["q1_plain"]
+    expression = binding["expression"]
+    out = {"clips": 0, "channels": 0, "readers": [], "writers": [], "unreadable": []}
+
+    def label(element):
+        try:
+            return text(element.GetName())
+        except Exception:
+            return None
+    try:
+        group = binding["shot"].FindTrackGroup("channelTrackGroup")
+        track = group.FindTrack("animSetEditorChannels") if group is not None else None
+    except Exception as exc:
+        out["unreadable"].append({"what": "track", "error": repr(exc)})
+        return out
+    if track is None:
+        out["unreadable"].append({"what": "track", "error": "unavailable"})
+        return out
+    try:
+        children = cpm.prod_instance_strict_members(track, "children", "The shot's channels clips")
+    except Exception as exc:
+        out["unreadable"].append({"what": "track children", "error": repr(exc)})
+        return out
+    for index, clip in enumerate(children):
+        try:
+            kind = cpm.prod_instance_strict_text(clip, "GetTypeString", "A channels-clip type")
+        except Exception as exc:
+            out["unreadable"].append({"what": "clip type", "clip_index": index, "error": repr(exc)})
+            continue
+        if kind != u"DmeChannelsClip":
+            continue
+        clip_name = label(clip)
+        try:
+            channels = cpm.prod_instance_strict_members(clip, "channels", "A channels clip's channels")
+        except Exception as exc:
+            out["unreadable"].append({"what": "clip channels", "clip": clip_name, "clip_index": index,
+                                      "error": repr(exc)})
+            continue
+        out["clips"] += 1
+        for position, channel in enumerate(channels):
+            out["channels"] += 1
+            for attr_name, found, side in (("fromElement", out["readers"], "fromAttribute"),
+                                           ("toElement", out["writers"], "toAttribute")):
+                state, element = cpm.prod_flex_strict_read(channel, attr_name)
+                if state == u"absent" or (state == u"present" and element is None):
+                    continue
+                if state != u"present":
+                    out["unreadable"].append({"what": "endpoint", "clip": clip_name, "channel": label(channel),
+                                              "position": position, "attribute": attr_name})
+                    continue
+                if cpm.same_dme(element, expression):
+                    found.append({"clip": clip_name, "channel": plain(cpm.dme_id(channel)),
+                                  "attribute": text(cpm.attr_value(channel, side))})
+    return out
+
+
+def ot1_preflight_bone(cpm, q1, snapshot, row):
+    text, plain = q1["q1_text"], q1["q1_plain"]
+    out = {"would_pass": False, "error": None}
+    if row is None:
+        out["error"] = "bone not found in the selected instance"
+        return out
+    out["classification"] = text(row.get("classification"))
+    try:
+        binding = cpm.prod_bs_index_binding(snapshot, row)
+    except Exception as exc:
+        out["error"] = "binding: %r" % (exc,)
+        return out
+    expression, output = binding["expression"], binding["output"]
+    input_channel, transform = binding["input_channel"], binding["transform"]
+    out["static_output_mode"] = plain(binding.get("static_output_mode"))
+    out["identities"] = dict((k, plain(cpm.dme_id(x))) for k, x in (
+        ("expression", expression), ("output", output), ("input_channel", input_channel), ("transform", transform),
+        ("control", binding.get("control"))))
+    out["expression_type"] = text(cpm.typ(expression))
+    out["expr"] = text(cpm.attr_value(expression, "expr") or u"")
+    out["expression_ok"] = (out["expression_type"] == u"DmeExpressionOperator" and
+                            out["expr"].replace(u" ", u"").lower() == u"lerp(value,lo,hi)")
+    out["endpoints_ok"] = bool(
+        cpm.same_dme(cpm.attr_value(output, "fromElement"), expression)
+        and text(cpm.attr_value(output, "fromAttribute") or u"") == u"result"
+        and cpm.same_dme(cpm.attr_value(output, "toElement"), transform)
+        and text(cpm.attr_value(output, "toAttribute") or u"") == u"scale"
+        and cpm.same_dme(cpm.attr_value(input_channel, "toElement"), expression)
+        and text(cpm.attr_value(input_channel, "toAttribute") or u"") == u"value")
+    try:
+        readers, writers = cpm.prod_bs_expression_channels(binding)
+        out["candidate_scan"] = {"error": None, "readers": len(readers), "writers": len(writers),
+                                 "reader_ids": [plain(cpm.dme_id(x)) for x in readers],
+                                 "writer_ids": [plain(cpm.dme_id(x)) for x in writers]}
+        out["unique"] = (len(readers) == 1 and bool(cpm.same_dme(readers[0], output)) and len(writers) == 1 and
+                         bool(cpm.same_dme(writers[0], input_channel)))
+    except Exception as exc:
+        out["candidate_scan"] = {"error": repr(exc)}
+        out["unique"] = False
+    out["enumeration"] = ot1_enumerate(cpm, q1, binding)
+    lists = []
+    try:
+        for animset in q1["q1_seq"](q1["q1_attr"](binding["shot"], "animationSets")):
+            if any(cpm.same_dme(x, expression) for x in q1["q1_seq"](q1["q1_attr"](animset, "operators"))):
+                lists.append(text(animset.GetName()))
+        out["operator_lists"] = lists
+    except Exception as exc:
+        out["operator_lists"] = {"error": repr(exc)}
+    out["would_pass"] = bool(out["unique"] and out["endpoints_ok"] and out["expression_ok"] and
+                             out["static_output_mode"] == 3 and not out["enumeration"]["unreadable"])
+    return out
+
+
+def ot1_preflight(cpm, q1, identity, token):
+    """The read-only BASE graph scan of the two existing scales (see the docstring, part 4)."""
+    out = {"bones": {}, "error": None, "would_pass": False}
+    try:
+        out["instance"] = q1["q1_plain"](cpm.prod_instance_token(token))
+        snapshot = cpm.prod_bs_index_snapshot(identity, **cpm.prod_instance_kw(token))
+    except Exception as exc:
+        out["error"] = "snapshot: %r" % (exc,)
+        return out
+    try:
+        rows = dict((q1["q1_text"](r.get("bone_name")), r) for r in snapshot["bone_index"].values())
+        for bone in OT1_PREFLIGHT_BONES:
+            try:
+                out["bones"][bone] = ot1_preflight_bone(cpm, q1, snapshot, rows.get(bone))
+            except Exception as exc:
+                out["bones"][bone] = {"would_pass": False, "error": repr(exc)}
+    finally:
+        if isinstance(snapshot, dict):
+            snapshot.clear()
+    out["would_pass"] = out["error"] is None and all(out["bones"].get(b, {}).get("would_pass") is True
+                                                     for b in OT1_PREFLIGHT_BONES)
+    return out
+
+
+def ot1_guarded_preflight(cpm, q1, identity, token, probe):
+    """The preflight between two reads of the scene state probe() returns (Undo state, playhead)."""
+    before = probe()
+    result = ot1_preflight(cpm, q1, identity, token)
+    after = probe()
+    result["side_effects"] = {"before": before, "after": after, "unchanged": before == after and "error" not in before}
+    return result
+
+
 def ot1_events_payload(st):
     if st is None:
         return []
@@ -287,6 +451,12 @@ def ot1_capture(g):
     except Exception as exc:
         data["settled_full_map"] = {"error": repr(exc)}
     if step == "BASE":
+        def probe():
+            try:
+                return {"undo": undo(), "head_seconds": float(sfmApp.GetHeadTimeInSeconds())}
+            except Exception as exc:
+                return {"error": repr(exc)}
+        data["preflight"] = ot1_guarded_preflight(cpm, q1, identity, token, probe)
         st = ot1_install(cpm, q1)
         data["hooks_installed"] = sorted(n for n in OT1_HOOKED if getattr(getattr(cpm, n), "ot1_original", None)
                                          is st["originals"][n])
@@ -312,6 +482,11 @@ def ot1_capture(g):
         ((data.get("session") or {}).get("undo") or {}).get("undo_desc"),
         ((data.get("session") or {}).get("undo") or {}).get("redo_desc"),
         data.get("injector"), sorted(data["errors"]) or "none")
+    pre = data.get("preflight")
+    if pre is not None:
+        ok = pre.get("would_pass") and pre["side_effects"]["unchanged"]
+        line += " | preflight %s%s" % ("PASS" if ok else "FAIL",
+                                       "" if pre["side_effects"]["unchanged"] else " (state changed)")
     print(line.encode("ascii", "replace") if sys.version_info[0] == 2 else line)
 
 

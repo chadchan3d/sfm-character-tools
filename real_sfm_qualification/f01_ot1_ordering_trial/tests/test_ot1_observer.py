@@ -7,6 +7,10 @@ module (the five hooked functions and prod_bs_snapshot as plain functions). The 
   restores the exact originals and disarms.
 - J: the controlled failure fires at most once, only when armed, only after CPM's write of the armed bone returned
   normally (never when that write raised), and raises the pinned text from inside the wrapper.
+- P: the read-only BASE preflight runs the candidate's real prod_bs_expression_channels (extracted verbatim from the
+  app source, with its strict-read helpers) on a fake channels track: valid, shared, ambiguous and unreadable graphs,
+  a refused binding, a missing bone, a changed endpoint, operators-array membership, a recorded state change; no
+  write, Operate or key change; it runs before the hooks are installed.
 - L: the Q1 observer is used only at its pinned SHA-256; the observer's source makes no scene write, refresh, event
   pumping, Undo or Operate call of its own, and its only file write is the exclusive-create capture.
 They show nothing about SFM itself.
@@ -230,12 +234,256 @@ def section_static(o):
           src.count("os.open(") == 1 and "O_EXCL" in src and builtin_opens == ['path, "rb"'], builtin_opens)
 
 
+# ---------------------------------------------------------------------------
+# P: the read-only BASE preflight, with the candidate's real scan (extracted verbatim from the app source)
+# ---------------------------------------------------------------------------
+
+REAL_NAMES = ["u", "native_attr_name", "name", "typ", "handle", "ptr", "dme_id", "same_dme", "get_attr", "attr_value",
+              "prod_flex_strict_read", "prod_flex_strict_list", "prod_instance_strict_members",
+              "prod_instance_strict_text", "prod_bs_expression_channels"]
+TOUCHED = []
+
+
+class FAttr(object):
+    def __init__(self, value, unreadable=False):
+        self.value, self.unreadable = value, unreadable
+
+    def GetValue(self):
+        if self.unreadable:
+            raise RuntimeError("unreadable value")
+        return self.value
+
+    def SetValue(self, value):
+        TOUCHED.append(("SetValue", value))
+        self.value = value
+
+
+class FEl(object):
+    _next = [5000]
+
+    def __init__(self, kind, label, **attrs):
+        FEl._next[0] += 1
+        self.kind, self.label, self.h = kind, label, FEl._next[0]
+        self.this = self.h * 8
+        self.attrs = dict((k, FAttr(v)) for k, v in attrs.items())
+        self.broken_type = False
+
+    def GetTypeString(self):
+        if self.broken_type:
+            raise RuntimeError("unreadable type")
+        return self.kind
+
+    def GetName(self):
+        return self.label
+
+    def GetHandle(self):
+        return self.h
+
+    def GetAttribute(self, attr_name):
+        if isinstance(attr_name, bytes):
+            attr_name = attr_name.decode("ascii")
+        return self.attrs.get(attr_name)
+
+    def HasAttribute(self, attr_name):
+        if isinstance(attr_name, bytes):
+            attr_name = attr_name.decode("ascii")
+        return attr_name in self.attrs
+
+    def Operate(self):
+        TOUCHED.append(("Operate", self.label))
+
+    def SetKeyValue(self, index, value):
+        TOUCHED.append(("SetKeyValue", self.label))
+
+
+class FShot(FEl):
+    def __init__(self, track):
+        FEl.__init__(self, u"DmeFilmClip", u"shot15", animationSets=[])
+        self.track = track
+
+    def FindTrackGroup(self, group):
+        return self if group == "channelTrackGroup" else None
+
+    def FindTrack(self, track):
+        return self.track if track == "animSetEditorChannels" else None
+
+
+def fgraph(bone):
+    transform = FEl(u"DmeTransform", u"bone (%s)" % bone, scale=1.13)
+    control = FEl(u"DmElement", bone + u"_scale", value=0.113)
+    expression = FEl(u"DmeExpressionOperator", bone + u"_scale_rescale", expr=u"lerp(value, lo, hi)", lo=0.0, hi=10.0,
+                     value=0.113, result=1.13)
+    inp = FEl(u"DmeChannel", bone + u"_scale", fromElement=control, fromAttribute=u"value", toElement=expression,
+              toAttribute=u"value", mode=3)
+    out = FEl(u"DmeChannel", u"scaled_%s_scale_channel" % bone, fromElement=expression, fromAttribute=u"result",
+              toElement=transform, toAttribute=u"scale", mode=3)
+    return {"binding": {"expression": expression, "output": out, "input_channel": inp, "transform": transform,
+                        "control": control, "static_output_mode": 3}, "channels": [inp, out]}
+
+
+def fscene():
+    graphs = dict((b, fgraph(b)) for b in (u"bip_head", u"bip_tail00"))
+    peer = fgraph(u"bip_head")
+    clip = FEl(u"DmeChannelsClip", u"Krystal", channels=graphs[u"bip_head"]["channels"] + graphs[u"bip_tail00"]["channels"])
+    peer_clip = FEl(u"DmeChannelsClip", u"krystal20201", channels=list(peer["channels"]))
+    film = FEl(u"DmeFilmClip", u"not a channels clip")
+    track = FEl(u"DmeTrack", u"animSetEditorChannels", children=[clip, peer_clip, film])
+    shot = FShot(track)
+    target = FEl(u"DmeAnimationSet", u"Krystal", operators=[graphs[b]["binding"]["expression"] for b in graphs])
+    peer_set = FEl(u"DmeAnimationSet", u"krystal20201", operators=[peer["binding"]["expression"]])
+    shot.attrs["animationSets"] = FAttr([target, peer_set])
+    rows = {}
+    for i, bone in enumerate(sorted(graphs)):
+        graphs[bone]["binding"]["shot"] = shot
+        rows[(i, bone)] = {"bone_name": bone, "classification": u"CHANNEL_DRIVEN_SCALE", "_binding": graphs[bone]["binding"]}
+    return {"graphs": graphs, "peer": peer, "clip": clip, "peer_clip": peer_clip, "track": track, "shot": shot,
+            "rows": rows, "target_set": target, "peer_set": peer_set}
+
+
+def preflight_cpm(scene):
+    sys.path.insert(0, os.path.join(REPO, "cpm", "convergence", "tests"))
+    import test_cpm_app_canonical_route as route
+    app = route.AppSource(route.APP_PATH)
+    ns = {}
+    if sys.version_info[0] > 2:
+        ns["unicode"], ns["long"] = str, int
+    for n in REAL_NAMES:
+        route._run_source(app.top_text(n), "app:%s" % n, ns)
+    cpm = types.ModuleType("fake_cpm_preflight")
+    for n in REAL_NAMES:
+        setattr(cpm, n, ns[n])
+
+    def binding(snapshot, row):
+        if row.get("_raise"):
+            raise RuntimeError("This bone scale is outside the qualified generic topology.")
+        return row["_binding"]
+    cpm.prod_bs_index_snapshot = lambda identity, instance_context=None: {"bone_index": dict(scene["rows"])}
+    cpm.prod_bs_index_binding = binding
+    cpm.prod_instance_kw = lambda token: {"instance_context": token} if token is not None else {}
+    cpm.prod_instance_token = lambda token: token
+    return cpm, app
+
+
+def run_preflight(o, q1, scene, probe=None):
+    del TOUCHED[:]
+    cpm, _ = preflight_cpm(scene)
+    states = iter(probe or [{"undo": "u", "head_seconds": 0.2083}, {"undo": "u", "head_seconds": 0.2083}])
+    return o["ot1_guarded_preflight"](cpm, q1, {"model": u"m"}, {"kind": u"token"}, lambda: next(states))
+
+
+def section_preflight(o, q1):
+    scene = fscene()
+    r = run_preflight(o, q1, scene)
+    head = r["bones"][u"bip_head"]
+    check("P1 valid graphs: the candidate's precondition holds for both scales (one reader, one writer each)",
+          r["would_pass"] is True and all(r["bones"][b]["would_pass"] for b in (u"bip_head", u"bip_tail00"))
+          and head["candidate_scan"]["readers"] == 1 and head["candidate_scan"]["writers"] == 1, r)
+    check("P1 enumeration agrees (2 channels clips read, 6 channels; the film clip skipped; nothing unreadable)",
+          head["enumeration"]["clips"] == 2 and head["enumeration"]["channels"] == 6
+          and len(head["enumeration"]["readers"]) == 1 and len(head["enumeration"]["writers"]) == 1
+          and head["enumeration"]["unreadable"] == [] and head["enumeration"]["readers"][0]["attribute"] == u"result",
+          head["enumeration"])
+    check("P1 identities, expression and endpoint checks, instance and operator-list membership reported",
+          head["expression_ok"] and head["endpoints_ok"] and head["static_output_mode"] == 3
+          and head["identities"]["expression"][0] == u"DmeExpressionOperator"
+          and r["instance"] == {"kind": u"token"} and head["operator_lists"] == [u"Krystal"], head)
+    check("P1 read only: no write, Operate or key change; scene state unchanged before/after",
+          TOUCHED == [] and r["side_effects"]["unchanged"] is True, (TOUCHED, r["side_effects"]))
+
+    def variant(mutate):
+        s = fscene()
+        mutate(s)
+        return run_preflight(o, q1, s)
+
+    def shared(s):
+        g = s["graphs"][u"bip_head"]["binding"]
+        s["peer_clip"].attrs["channels"].value.append(FEl(
+            u"DmeChannel", u"foreign_reader", fromElement=g["expression"], fromAttribute=u"result",
+            toElement=FEl(u"DmeTransform", u"other"), toAttribute=u"scale"))
+    r = variant(shared)
+    head, tail = r["bones"][u"bip_head"], r["bones"][u"bip_tail00"]
+    check("P2 shared: a second reader in another set's clip -> would_pass False, two readers listed with their clips",
+          r["would_pass"] is False and head["would_pass"] is False and head["candidate_scan"]["readers"] == 2
+          and sorted(x["clip"] for x in head["enumeration"]["readers"]) == [u"Krystal", u"krystal20201"]
+          and tail["would_pass"] is True, head)
+
+    def ambiguous(s):
+        g = s["graphs"][u"bip_tail00"]["binding"]
+        s["clip"].attrs["channels"].value.append(FEl(
+            u"DmeChannel", u"second_writer", fromElement=FEl(u"DmElement", u"x", value=0.5), fromAttribute=u"value",
+            toElement=g["expression"], toAttribute=u"value"))
+    r = variant(ambiguous)
+    tail = r["bones"][u"bip_tail00"]
+    check("P3 ambiguous: two writers into the tail expression -> would_pass False, two writers listed",
+          r["would_pass"] is False and tail["candidate_scan"]["writers"] == 2
+          and len(tail["enumeration"]["writers"]) == 2 and r["bones"][u"bip_head"]["would_pass"] is True, tail)
+
+    def unreadable_endpoint(s):
+        bad = FEl(u"DmeChannel", u"broken", toElement=FEl(u"DmeTransform", u"y"), toAttribute=u"scale")
+        bad.attrs["fromElement"] = FAttr(None, unreadable=True)
+        s["peer_clip"].attrs["channels"].value.append(bad)
+    r = variant(unreadable_endpoint)
+    head = r["bones"][u"bip_head"]
+    check("P4 an unreadable endpoint in an unrelated clip: the candidate's scan refuses; the enumeration names it and "
+          "still finds the one reader and writer -> would_pass False",
+          r["would_pass"] is False and u"unreadable" in head["candidate_scan"]["error"]
+          and head["enumeration"]["unreadable"] == [{"what": "endpoint", "clip": u"krystal20201", "channel": u"broken",
+                                                    "position": 2, "attribute": "fromElement"}]
+          and len(head["enumeration"]["readers"]) == 1 and len(head["enumeration"]["writers"]) == 1, head)
+
+    def unreadable_clip(s):
+        s["track"].attrs["children"].value[2].broken_type = True
+        s["peer_clip"].attrs["channels"] = FAttr(None, unreadable=True)
+    r = variant(unreadable_clip)
+    kinds = sorted(x["what"] for x in r["bones"][u"bip_head"]["enumeration"]["unreadable"])
+    check("P5 an unreadable clip type and an unreadable channel list are both listed -> would_pass False",
+          r["would_pass"] is False and kinds == ["clip channels", "clip type"], kinds)
+
+    def no_binding(s):
+        for row in s["rows"].values():
+            if row["bone_name"] == u"bip_tail00":
+                row["_raise"] = True
+    r = variant(no_binding)
+    check("P6 a graph CPM's own binding refuses -> its error recorded, would_pass False",
+          r["would_pass"] is False and u"outside the qualified" in r["bones"][u"bip_tail00"]["error"])
+    r = variant(lambda s: s["rows"].pop((0, u"bip_head")))
+    check("P7 a missing bone -> error recorded, would_pass False",
+          r["would_pass"] is False and u"not found" in r["bones"][u"bip_head"]["error"])
+
+    def endpoint_changed(s):
+        s["graphs"][u"bip_head"]["binding"]["output"].attrs["fromAttribute"] = FAttr(u"value")
+    r = variant(endpoint_changed)
+    check("P8 an output reading another attribute -> endpoints_ok False, would_pass False",
+          r["would_pass"] is False and r["bones"][u"bip_head"]["endpoints_ok"] is False)
+
+    def listed_twice(s):
+        s["peer_set"].attrs["operators"].value.append(s["graphs"][u"bip_head"]["binding"]["expression"])
+    r = variant(listed_twice)
+    check("P9 an expression listed in two sets' operators arrays is reported (membership only; not part of the "
+          "candidate's precondition)", r["bones"][u"bip_head"]["operator_lists"] == [u"Krystal", u"krystal20201"]
+          and r["would_pass"] is True)
+    r = run_preflight(o, q1, fscene(), probe=[{"undo": "a", "head_seconds": 0.2083},
+                                               {"undo": "b", "head_seconds": 0.2083}])
+    check("P10 a state change across the preflight is recorded as side effects (unchanged False)",
+          r["side_effects"]["unchanged"] is False)
+
+    with open(OBSERVER, "rb") as f:
+        src = f.read().decode("ascii")
+    capture = src[src.index("def ot1_capture"):]
+    check("P11 BASE runs the preflight before installing the hooks",
+          capture.index("ot1_guarded_preflight(") < capture.index("ot1_install(cpm, q1)"))
+    _, app = preflight_cpm(fscene())
+    check("P12 the preflight uses the candidate's committed scan text (extracted verbatim here)",
+          u"def prod_bs_expression_channels(binding):" in app.top_text("prod_bs_expression_channels"))
+
+
 def main():
     print("Interpreter: %s" % sys.version.split()[0])
     o = load_observer()
     q1 = o["ot1_q1"](REPO)
     check("L0 the pinned Q1 observer loads without running its capture", callable(q1.get("q1_full_map")))
-    for section in (lambda: section_wrappers(o, q1), lambda: section_injection(o, q1), lambda: section_static(o)):
+    for section in (lambda: section_wrappers(o, q1), lambda: section_injection(o, q1), lambda: section_static(o),
+                    lambda: section_preflight(o, q1)):
         try:
             section()
         except Exception:

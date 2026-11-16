@@ -15,7 +15,8 @@ Four gates on complete evidence; the candidate passes only when all four pass:
           fires once after the tail's operator call, CPM's own abort verification returns True (restored=True, no
           recovery uncertainty), the target's fields and graphs equal ARM exactly, no history entry is added, the peer
           is untouched.
-  EVIDENCE identities, every capture, one SFM process on the disposable session at shot15 with the time never moved,
+  EVIDENCE the BASE preflight (read only, no Undo or playhead change; both graphs pass the candidate's own reader/writer
+          uniqueness scan with nothing unreadable), identities, every capture, one SFM process on the disposable session at shot15 with the time never moved,
           hooks installed and removed, the same selected instance, no other CPM operation, no visibility edit,
           library and installation restored exactly, the session never saved.
 
@@ -194,6 +195,27 @@ def evaluate(R):
     vis = dict((s, [n for n in sets["BASE"] if sets[s].get(n) and Q.set_diff(sets["BASE"][n], sets[s][n])["visibility"]])
                for s in STEPS[1:])
     E("edits.no_visibility_change", not any(vis.values()), vis)
+    pre = cap["BASE"].get("preflight") or {}
+    side = pre.get("side_effects") or {}
+    E("preflight.read_only_no_state_change", isinstance(pre, dict) and bool(pre) and side.get("unchanged") is True
+      and isinstance(side.get("before"), dict) and "error" not in side.get("before", {}), side)
+    bones = pre.get("bones") or {}
+    pf = dict((b, {"would_pass": (bones.get(b) or {}).get("would_pass"),
+                   "readers": ((bones.get(b) or {}).get("candidate_scan") or {}).get("readers"),
+                   "writers": ((bones.get(b) or {}).get("candidate_scan") or {}).get("writers"),
+                   "scan_error": ((bones.get(b) or {}).get("candidate_scan") or {}).get("error"),
+                   "unreadable": ((bones.get(b) or {}).get("enumeration") or {}).get("unreadable"),
+                   "error": (bones.get(b) or {}).get("error"),
+                   "operator_lists": (bones.get(b) or {}).get("operator_lists")}) for b in CHANGED)
+    R.info["preflight"] = {"instance": pre.get("instance"), "bones": pf}
+    E("preflight.candidate_uniqueness_precondition", pre.get("would_pass") is True and pre.get("error") is None and
+      pre.get("instance") == instance and
+      all(v["would_pass"] is True and v["readers"] == 1 and v["writers"] == 1 and v["unreadable"] == [] and
+          v["scan_error"] is None for v in pf.values()), {"error": pre.get("error"), "bones": pf})
+    for b, v in sorted(pf.items()):
+        if isinstance(v["operator_lists"], list) and len(v["operator_lists"]) != 1:
+            R.findings.append("preflight: %s's expression is listed in the operators arrays of %r (membership only; "
+                              "outside the candidate's channel scan)" % (b, v["operator_lists"]))
     base_map = cap["BASE"].get("settled_full_map") or {}
     base_fail = sorted(b.get("bone") for b in base_map.get("bones") or [] if not b.get("ok"))
     E("base.precondition_head_and_tail_differ", Q.map_ok(base_map) and base_map["result"] is False and
@@ -352,6 +374,12 @@ def markdown(out):
         detail = "" if x["pass"] else json.dumps(x["detail"], ensure_ascii=False, default=repr)[:300].replace("|", "\\|")
         lines.append("| %s | `%s` | %s | %s |" % (x["gate"], x["id"], "PASS" if x["pass"] else "**FAIL**", detail))
     info = out.get("info") or {}
+    if info.get("preflight"):
+        lines += ["", "BASE preflight (read only): " + "; ".join(
+            "%s would_pass %s, readers %s, writers %s, unreadable %s%s" % (
+                b, v["would_pass"], v["readers"], v["writers"], len(v["unreadable"] or []) if isinstance(
+                    v["unreadable"], list) else v["unreadable"], (", error %s" % v["error"]) if v["error"] else "")
+            for b, v in sorted(info["preflight"]["bones"].items())) + "."]
     if info.get("precommit"):
         lines += ["", "Precommit (inside the transaction, after the operator): " + "; ".join(
             "%s result %s (expected %s), physical %s -> %s" % (r["bone"], r["expr_result"], r["expected"],

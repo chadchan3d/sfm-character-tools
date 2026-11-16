@@ -165,6 +165,18 @@ U_UNDONE = {"can_undo": True, "can_redo": True, "undo_desc": u"CreateAnimationSe
             "redo_desc": u"Redo Apply Body Preset", "count": 5}
 
 
+def preflight():
+    def bone():
+        return {"would_pass": True, "error": None, "static_output_mode": 3, "expression_ok": True,
+                "endpoints_ok": True, "unique": True, "operator_lists": [u"Krystal"],
+                "candidate_scan": {"error": None, "readers": 1, "writers": 1},
+                "enumeration": {"clips": 3, "channels": 900, "readers": [{}], "writers": [{}], "unreadable": []}}
+    state = {"undo": dict(U_BASE), "head_seconds": 0.20829999446868896}
+    return {"instance": {"animset_key": ["DmeAnimationSet", TARGET, u"uuid"]}, "error": None, "would_pass": True,
+            "bones": {u"bip_head": bone(), u"bip_tail00": bone()},
+            "side_effects": {"before": state, "after": copy.deepcopy(state), "unchanged": True}}
+
+
 def passing_run():
     apply_events = ([{"kind": "apply-begin", "preset": u"Body", "preset_kind": u"body"}] + writes() +
                     [{"kind": "refresh-after", "label": u"PROD_APPLY",
@@ -182,6 +194,7 @@ def passing_run():
             "UNDO2": capture("UNDO2", False, U_UNDONE), "ARM": capture("ARM", False, U_UNDONE),
             "ABORT": capture("ABORT", False, U_UNDONE, abort_events)}
     caps["BASE"]["hooks_installed"] = list(A.HOOKS)
+    caps["BASE"]["preflight"] = preflight()
     caps["ARM"]["injector"] = {"armed": True, "fired": 0, "bone": u"bip_tail00"}
     caps["ABORT"]["injector"] = {"armed": False, "fired": 1}
     caps["ABORT"]["hooks_removed"] = True
@@ -330,6 +343,18 @@ def section_analyzer():
             "instance", {"animset_key": ["DmeAnimationSet", PEER, u"uuid"]})),
         ("no same-model peer", lambda r: [c["animation_sets"].pop(1) for c in r["caps"].values()]),
         ("recovery uncertainty in the log", lambda r: r["logs"].append(u"PROD_OPERATION_OUTCOME outcome=u'recovery-unverified'")),
+        ("no BASE preflight", lambda r: r["caps"]["BASE"].pop("preflight")),
+        ("BASE preflight changed the Undo state", lambda r: r["caps"]["BASE"]["preflight"]["side_effects"].__setitem__(
+            "unchanged", False)),
+        ("BASE preflight: a shared head expression (two readers)", lambda r: (
+            r["caps"]["BASE"]["preflight"].__setitem__("would_pass", False),
+            r["caps"]["BASE"]["preflight"]["bones"][u"bip_head"].__setitem__("would_pass", False),
+            r["caps"]["BASE"]["preflight"]["bones"][u"bip_head"]["candidate_scan"].__setitem__("readers", 2))),
+        ("BASE preflight: an unreadable endpoint", lambda r: (
+            r["caps"]["BASE"]["preflight"]["bones"][u"bip_tail00"]["enumeration"]["unreadable"].append(
+                {"what": "endpoint"}))),
+        ("BASE preflight: another instance", lambda r: r["caps"]["BASE"]["preflight"].__setitem__(
+            "instance", {"animset_key": ["DmeAnimationSet", PEER, u"uuid"]})),
         ("BASE not the expected starting state", lambda r: r["caps"]["BASE"].__setitem__("settled_full_map",
                                                                                         full_map(True))),
     ]
