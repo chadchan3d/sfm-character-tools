@@ -13,8 +13,9 @@ It does two separate things:
    target and of the peer between BEFORE, APPLY and UNDO (controls, bone positions, orientations, scales, flex weights,
    visibility). It names what the evidence shows and leaves the cause decision to review.
 
-usage: python -I q1_analyze.py Q1.json      (or: q1_tool.py Q1.json analyze)
-Writes Q/evidence/Q1_REPORT.json and Q1_REPORT.md (exclusive create). Exit 0 only on "EVIDENCE COMPLETE".
+usage: python -I q1_analyze.py Q1.json [--replay]      (or: q1_tool.py Q1.json analyze | replay)
+Writes Q/evidence/Q1_REPORT.json and Q1_REPORT.md (exclusive create); --replay writes Q1_REPORT_REPLAY.json and .md
+instead, for a finished run whose Q1_REPORT exists (unchanged). Exit 0 only on "EVIDENCE COMPLETE".
 """
 from __future__ import print_function
 
@@ -138,6 +139,99 @@ def diff_summary(d):
     return "; ".join(parts) or "identical"
 
 
+def set_field_problems(cap):
+    """Kit correction after Q1 run 1: every animation set keeps its identity and control fields; game-model fields are
+    required only of sets that have a game model (a camera or light set has none: the observer records model None).
+    The capture's own error list must be empty and its session readable."""
+    out = []
+    if cap.get("errors"):
+        out.append("capture errors %r" % (cap.get("errors"),))
+    if not isinstance(cap.get("session"), dict):
+        out.append("session unreadable")
+    sets = cap.get("animation_sets")
+    if not isinstance(sets, list) or not sets:
+        return out + ["no animation sets"]
+    for s in sets:
+        if not isinstance(s, dict) or not isinstance(s.get("name"), str) or not isinstance(s.get("handle"), int) or \
+                not isinstance(s.get("controls"), dict):
+            out.append("set without identity or controls: %r" % ((s or {}).get("name"),))
+            continue
+        m = s.get("model")
+        if m is None:
+            continue
+        if not isinstance(m, dict) or not isinstance(m.get("bones"), list) or not isinstance(m.get("flexes"), list) or \
+                not isinstance(m.get("handle"), int) or "visible" not in m:
+            out.append("game-model fields missing in %r" % s["name"])
+    if not any(isinstance(s, dict) and isinstance(s.get("model"), dict) for s in sets):
+        out.append("no animation set with a game model")
+    return out
+
+
+def precommit_sequence(events_, n, deferred_map):
+    """Kit correction after Q1 run 1: CPM's authored-scale check sequence for an operation with n changed existing
+    scales, as the source makes it (prod_bs_authored_matches): n pre-write calls on the original values (through
+    prod_bs_evaluated_matches while the plan is built), n post-write calls (prod_bs_write_existing_scale), n precommit
+    calls before FinishUndo. Returns (problems, rows). Each call's bone (its control), native value, result and its own
+    snapshot's authored fields are checked; the requested native value is derived from the deferred map's desired
+    physical value and the snapshot's lo/hi."""
+    rows, problems = [], []
+    for e in events_:
+        s = e.get("snapshot") if isinstance(e.get("snapshot"), dict) else {}
+        bone = (((e.get("binding") or {}).get("bone_row") or {}).get("_control") or {}).get("element")
+        rows.append({"seq": e.get("seq"), "bone": bone, "native": e.get("desired_native"), "result": e.get("result"),
+                     "key_value": s.get("key_value"), "source": s.get("source"), "expr_input": s.get("expr_input"),
+                     "expr_result": s.get("expr_result"), "physical": s.get("physical_scale"), "lo": s.get("lo"),
+                     "hi": s.get("hi")})
+    if n is None or len(rows) != 3 * n or n == 0:
+        return ["expected 3 x %r calls, found %d" % (n, len(rows))], rows
+    stages = {"pre-write": rows[:n], "post-write": rows[n:2 * n], "precommit": rows[2 * n:]}
+    for name, part in stages.items():
+        for r in part:
+            r["stage"] = name
+    desired = dict((b.get("bone"), b.get("desired")) for b in (deferred_map or {}).get("bones") or [])
+
+    def close(a, b, tol=1e-6):
+        return isinstance(a, (int, float)) and isinstance(b, (int, float)) and abs(float(a) - float(b)) <= tol
+    bones = [r["bone"] for r in stages["post-write"]]
+    if [r["bone"] for r in stages["precommit"]] != bones or sorted(r["bone"] for r in stages["pre-write"]) != \
+            sorted(bones) or len(set(bones)) != n or None in bones:
+        problems.append("the three stages do not cover the same %d bones: %r" % (n, [r["bone"] for r in rows]))
+    for r in rows:
+        if r["result"] is not True:
+            problems.append("%s %s returned %r" % (r["stage"], r["bone"], r["result"]))
+        if not (close(r["key_value"], r["native"]) and close(r["source"], r["native"]) and
+                close(r["expr_input"], r["native"])):
+            problems.append("%s %s authored fields differ from the checked value" % (r["stage"], r["bone"]))
+    for r in stages["post-write"] + stages["precommit"]:
+        lo, hi, want = r["lo"], r["hi"], desired.get(r["bone"])
+        if not (isinstance(lo, (int, float)) and isinstance(hi, (int, float)) and hi != lo and
+                close(r["native"], (float(want) - lo) / (hi - lo) if isinstance(want, (int, float)) else None)):
+            problems.append("%s %s native %r is not the requested scale %r" % (r["stage"], r["bone"], r["native"], want))
+    for r in stages["pre-write"]:
+        post = [p for p in stages["post-write"] if p["bone"] == r["bone"]]
+        if post and close(r["native"], post[0]["native"], 1e-9):
+            problems.append("pre-write %s already holds the requested value (not a changed scale)" % r["bone"])
+    return problems, rows
+
+
+def propagation(seq_rows, maps, bones):
+    """Per changed bone and boundary: the expression input, the expression result and the physical scale, from CPM's
+    own snapshots (the authored-check calls) and from the boundary maps' traces. Values missing from a capture are
+    reported as None, never inferred."""
+    out = []
+    for r in seq_rows:
+        out.append({"boundary": r.get("stage"), "bone": r.get("bone"), "expr_input": r.get("expr_input"),
+                    "expr_result": r.get("expr_result"), "physical": r.get("physical")})
+    for label, m in maps:
+        for b in (m or {}).get("bones") or []:
+            if b.get("bone") in bones:
+                ex = ((b.get("trace") or {}).get("expression") or {})
+                ex = ex if isinstance(ex, dict) else {}
+                out.append({"boundary": label, "bone": b.get("bone"), "expr_input": ex.get("value"),
+                            "expr_result": ex.get("result"), "physical": b.get("physical")})
+    return out
+
+
 def sets_by_handle(cap):
     """{animation-set handle: raw set}; the selection token names its instance by native handle (animset_key[1])."""
     return dict((s.get("handle"), s) for s in (cap or {}).get("animation_sets") or [] if isinstance(s, dict))
@@ -202,9 +296,8 @@ def evaluate(R):
             continue
         d = cap[step]
         chk("cpm.%s" % step, d.get("cpm_build_sha256") == want, d.get("cpm_build_sha256"))
-        chk("fields.%s" % step, not d.get("errors") and isinstance(d.get("animation_sets"), list) and
-            all(isinstance((s or {}).get("model"), dict) and (s["model"].get("bones") is not None)
-                for s in d["animation_sets"]) and isinstance(d.get("session"), dict), d.get("errors"))
+        problems = set_field_problems(d)
+        chk("fields.%s" % step, not problems, problems)
     if any(s not in cap for s in steps):
         chk("complete", False, "missing captures: %s" % [s for s in steps if s not in cap])
         return
@@ -223,11 +316,12 @@ def evaluate(R):
         [e.get("preset") for e in events(b, "apply-begin")])
     pre = events(b, "precommit-authored")
     n = pending_scale_count(rows, BODY)
-    chk("body.precommit_checks_observed", n is not None and len(pre) == n, (len(pre), n))
     rb, ra = events(b, "refresh-before", operation=BODY), events(b, "refresh-after")
+    dv = events(b, "deferred-verify", record=BODY)
+    seq_problems, seq_rows = precommit_sequence(pre, n, dv[0].get("full_map") if dv else None)
+    chk("body.authored_check_sequence", not seq_problems, seq_problems[:8])
     chk("body.refresh_boundary_maps", len(rb) == 1 and map_ok(rb[0].get("full_map")) and len(ra) >= 1 and
         map_ok(ra[0].get("full_map")), [(e.get("kind"), (e.get("full_map") or {}).get("error")) for e in rb + ra])
-    dv = events(b, "deferred-verify", record=BODY)
     outcomes = deferred_outcomes(rows, BODY)
     chk("body.deferred_map_matches_cpm",
         len(dv) == 1 and map_ok(dv[0].get("full_map")) and dv[0].get("consistent") is True and len(outcomes) == 1 and
@@ -291,8 +385,7 @@ def evaluate(R):
         return None if not isinstance(m, dict) else {"result": m.get("result"), "failing": failures(m),
                                                      "would_raise": m.get("would_raise")}
     body = {"log_outcomes": outcomes,
-            "precommit": [{"bone": e.get("bone"), "result": e.get("result"), "desired_native": e.get("desired_native")}
-                          for e in pre],
+            "precommit": seq_rows,
             "refresh_before": stage(rb[0].get("full_map")) if rb else None,
             "refresh_after": stage(ra[0].get("full_map")) if ra else None,
             "deferred": stage(dv[0].get("full_map")) if dv else None,
@@ -303,6 +396,15 @@ def evaluate(R):
         body["happy_refresh_before"] = stage(hb[0].get("full_map")) if hb else None
         body["happy_refresh_after"] = stage(ha[0].get("full_map")) if ha else None
         body["happy_settled"] = stage((h.get("settled_full_map") or {}).get(BODY))
+    changed = sorted(set(r["bone"] for r in seq_rows if r.get("bone")))
+    maps = [("refresh_before", rb[0].get("full_map") if rb else None),
+            ("refresh_after", ra[0].get("full_map") if ra else None),
+            ("deferred", dv[0].get("full_map") if dv else None), ("settled", body_settled)]
+    if happy_required:
+        maps += [("happy_refresh_before", hb[0].get("full_map") if hb else None),
+                 ("happy_refresh_after", ha[0].get("full_map") if ha else None),
+                 ("happy_settled", (cap["HAPPY"].get("settled_full_map") or {}).get(BODY))]
+    body["propagation"] = propagation(seq_rows, maps, changed)
     d_res = (body.get("deferred") or {}).get("result")
     s_res = (body.get("settled") or {}).get("result")
     if d_res is True:
@@ -330,6 +432,12 @@ def evaluate(R):
         dup["target_diffs"][label] = {"summary": diff_summary(td), "detail": td}
         dup["peer_diffs"][label] = dict((p, diff_summary(set_diff(x.get(p), y.get(p)))) for p in peers)
     R.analysis = {"body": body, "duplicate": dup}
+    truncated = sorted(set("%s/%s" % (step, e.get("kind")) for step, d in cap.items() for e in d.get("events") or []
+                           if isinstance(e, dict) and u"<depth>" in json.dumps(e.get("full_map"))))
+    if truncated:
+        R.findings.append("evidence limitation: boundary maps hold depth-truncated values (observer depth bound at "
+                          "capture), e.g. the output-channel log rows, in %s; they are not inferred; the settled maps "
+                          "carry them" % ", ".join(truncated))
 
 
 def markdown(out):
@@ -354,9 +462,14 @@ def markdown(out):
             fails = "; ".join("%s (%s, %s, %s)" % (f["bone"], f["predicate"], f["desired"], f["physical"])
                               for f in st.get("failing") or []) or "none"
             lines.append("| %s | %s | %s |" % (key, st.get("result"), fails.replace("|", "\\|")))
-        lines += ["", "Precommit authored checks: %s." % (", ".join("%s %s" % (p["bone"], p["result"])
-                                                                     for p in body.get("precommit") or []) or "none"),
-                  "CPM log: %s." % body.get("log_outcomes")]
+        lines += ["", "Authored-check sequence (CPM's six calls for two changed scales): " + ", ".join(
+            "%s %s %s" % (p.get("stage"), p.get("bone"), p.get("result")) for p in body.get("precommit") or []) + ".",
+                  "", "Propagation of the changed scales (expression input, expression result, physical scale):", "",
+                  "| Boundary | Bone | Expression input | Expression result | Physical |", "|---|---|---|---|---|"]
+        for row in body.get("propagation") or []:
+            lines.append("| %s | %s | %s | %s | %s |" % (row["boundary"], row["bone"], row["expr_input"],
+                                                       row["expr_result"], row["physical"]))
+        lines += ["", "CPM log: %s." % body.get("log_outcomes")]
     if dup:
         lines += ["", "## Duplicate-model Apply and Undo", "", "Target `%s` (handle %s); peers %s; CPM log %s." % (
             dup.get("target_name"), dup.get("target"), dup.get("peer_names"), dup.get("log_outcomes")), "",
@@ -369,14 +482,40 @@ def markdown(out):
     return "\n".join(lines) + "\n"
 
 
-def run(c):
+def run(c, replay=False):
+    """replay=True re-evaluates a finished run's preserved evidence into Q1_REPORT_REPLAY (exclusive create), naming
+    the original report and the captures it read by SHA-256; nothing of the run changes."""
     R = Report(c)
+    original = None
+    if replay:
+        path = R.ev("Q1_REPORT.json")
+        if not os.path.isfile(path):
+            print("REPLAY REFUSED: the original Q1_REPORT.json must exist")
+            return 2
+        first = read_json(path)
+        original = {"Q1_REPORT.json": sha(path), "Q1_REPORT.md": sha(R.ev("Q1_REPORT.md")),
+                    "verdict": first.get("verdict"), "failed": first.get("failed")}
     evaluate(R)
     failed = [x["id"] for x in R.checks if not x["pass"]]
     out = {"format": "F01-Q1-report-v1", "verdict": "EVIDENCE COMPLETE" if not failed else "EVIDENCE INCOMPLETE",
-           "identities": R.ids, "checks": R.checks, "failed": failed, "analysis": R.analysis, "findings": R.findings}
+           "identities": R.ids, "checks": R.checks, "failed": failed, "analysis": R.analysis, "findings": R.findings,
+           "analyzer_sha256": sha(os.path.abspath(__file__))}
+    names = ("Q1_REPORT.json", "Q1_REPORT.md")
+    if replay:
+        obs = os.path.join(R.q, "observations")
+        out["replay"] = {"original": original, "captures": dict((n, sha(os.path.join(obs, n)))
+                                                               for n in sorted(os.listdir(obs)) if n.endswith(".json")),
+                         "note": "Replay with the corrected analyzer (set fields only for sets with a game model; CPM's "
+                                 "six-call authored-check sequence). The original Q1_REPORT is unchanged. The boundary "
+                                 "maps' output-channel log rows were cut by the run's observer depth bound and are not "
+                                 "recoverable; nothing here infers them."}
+        names = ("Q1_REPORT_REPLAY.json", "Q1_REPORT_REPLAY.md")
     md = markdown(out)
-    for name, data in (("Q1_REPORT.json", json.dumps(out, indent=1, sort_keys=True)), ("Q1_REPORT.md", md)):
+    if replay:
+        md = md.replace("# F-01 Q1 PS-2 diagnostic:", "# F-01 Q1 PS-2 diagnostic, replay with the corrected analyzer:", 1)
+        md += ("\nReplay of the original report (%s, sha256 %s), unchanged.\n" %
+               (original["verdict"], original["Q1_REPORT.json"]))
+    for name, data in ((names[0], json.dumps(out, indent=1, sort_keys=True)), (names[1], md)):
         fd = os.open(R.ev(name), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0))
         with os.fdopen(fd, "wb") as f:
             f.write(data.encode("utf-8"))
@@ -385,12 +524,12 @@ def run(c):
 
 
 def main(argv):
-    if len(argv) != 2:
+    if len(argv) not in (2, 3) or (len(argv) == 3 and argv[2] != "--replay"):
         print(__doc__)
         return 2
     sys.path.insert(0, HERE)
     import q1_tool
-    return run(q1_tool.S.load(argv[1]))
+    return run(q1_tool.S.load(argv[1]), replay=len(argv) == 3)
 
 
 if __name__ == "__main__":

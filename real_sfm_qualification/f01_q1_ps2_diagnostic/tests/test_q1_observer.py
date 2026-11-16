@@ -146,6 +146,22 @@ def main():
             check("E a failure before a trace error: CPM returns False, the map records both and no would_raise",
                   not raised and cpm_result is False and fm["result"] is False and not fm["would_raise"] and
                   [b["predicate"] for b in fm["bones"]] == [u"physical", u"trace-error"], fm["bones"])
+            # D: the capture keeps the boundary maps' full depth (kit correction after Q1 run 1)
+            deep = static_trace(1.13)
+            deep["output"] = {"mode": 3, "name": u"scaled_bip_head_scale_channel",
+                              "log": {"key_count": 0, "is_empty": True, "layers": [{"keys": [[0.0, 1.13]]}]}}
+            deep["expression"] = {"value": 0.133, "result": 1.33}
+            _, _, fm_deep = case([(u"bip_head", 1.33, u"CHANNEL_DRIVEN_SCALE", deep)])
+            st_deep = {"events": [{"kind": "refresh-before", "seq": 1, "full_map": fm_deep}]}
+            written = ns["q1_events_payload"](st_deep)
+            trace = written[0]["full_map"]["bones"][0]["trace"]
+            check("D the written boundary map keeps the output-channel log rows and the expression fields",
+                  trace["output"]["log"]["layers"][0]["keys"] == [[0.0, 1.13]] and
+                  trace["expression"]["result"] == 1.33 and ns["q1_events_payload"](None) == [], trace.get("output"))
+            old = ns["q1_plain"](list(st_deep["events"]))
+            check("D the run-1 double sanitization did truncate them (the defect this corrects)",
+                  old[0]["full_map"]["bones"][0]["trace"]["output"]["log"] == u"<depth>",
+                  old[0]["full_map"]["bones"][0]["trace"]["output"])
             _, _, fm = case([(u"bip_head", 1.33, u"CHANNEL_DRIVEN_SCALE", static_trace(1.13))])
             bone = fm["bones"][0]
             check("E the failing bone carries desired, physical, delta, static class and trace fields",

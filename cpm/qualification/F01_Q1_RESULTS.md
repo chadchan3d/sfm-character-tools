@@ -1,5 +1,8 @@
 # F-01 Q1: PS-2 Body Preset and Undo diagnostic — results
 
+> **Erratum (2026-11-16):** section 2's "refresh before" expression result is corrected in
+> `F01_Q1_RESULTS_ERRATUM_1.md` (it was 1.13 / 0.8; Body's own refresh advanced it). The text below is unchanged.
+
 **Date:** 2026-11-15. **Authority:** "F-01 Q1 — Native Diagnostic Execution Authorization, OWNER AUTHORIZATION: GO";
 closeout under "F-01 Q1 — Owner Native Completion". **Kit:** `8ede527` (`F01_Q1_DIAGNOSTIC_PREPARATION.md`).
 **Candidate:** `615acf0c…`, qualification build `849d0ed4…`. **Run folder (raw evidence, not committed):**

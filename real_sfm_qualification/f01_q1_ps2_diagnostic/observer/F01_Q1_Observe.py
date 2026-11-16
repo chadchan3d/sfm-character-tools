@@ -352,6 +352,15 @@ def q1_raw_set(animset):
             "model": model}
 
 
+def q1_events_payload(st):
+    """The recorded events as written to a capture. Events are made plain when recorded (q1_plain, q1_full_map); a
+    JSON round trip keeps their full depth. (Kit correction after Q1 run 1: sanitizing them a second time here cut the
+    boundary maps' output-channel log rows at the depth bound.)"""
+    if st is None:
+        return []
+    return json.loads(json.dumps(list(st["events"]), default=repr))
+
+
 def q1_capture(g):
     root, step = g.get("Q1_DIR"), g.get("Q1_STEP")
     if not root or step not in Q1_STEPS:
@@ -414,7 +423,7 @@ def q1_capture(g):
         data["hooks_installed"] = sorted(n for n in Q1_HOOKED if getattr(getattr(cpm, n), "q1_original", None)
                                          is st["originals"][n])
     st = q1_state(cpm)
-    data["events"] = q1_plain(list(st["events"])) if st is not None else []
+    data["events"] = q1_events_payload(st)
     if st is not None:
         del st["events"][:]
     if step == "DUP-UNDO":

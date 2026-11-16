@@ -17,9 +17,10 @@ Own commands:
   library TAG   read-only: every preset-library file that differs from the pre-run library
   restore       UA-1's library cleanup, then the S3 restore
   analyze       run tools/q1_analyze.py (Q/evidence/Q1_REPORT.json and Q1_REPORT.md)
+  replay        re-evaluate a finished run with the current analyzer (Q/evidence/Q1_REPORT_REPLAY.json and .md)
 
 usage: python -I q1_tool.py Q1.json build | pre | status | install | seed | check | library TAG | collect-logs |
-                                     restore | analyze
+                                     restore | analyze | replay
 """
 from __future__ import print_function
 
@@ -109,10 +110,17 @@ def cmd_analyze(c):
     return q1_analyze.run(c)
 
 
+def cmd_replay(c):
+    """Re-evaluate a finished run's preserved evidence with the current analyzer into Q1_REPORT_REPLAY (exclusive
+    create; the original Q1_REPORT and the evidence are unchanged)."""
+    import q1_analyze
+    return q1_analyze.run(c, replay=True)
+
+
 def main(argv):
     commands = {"build": cmd_build, "pre": cmd_pre, "status": S.cmd_status, "install": S.cmd_install,
                 "seed": cmd_seed, "check": S.cmd_check, "collect-logs": S.cmd_collect_logs, "restore": U.cmd_restore,
-                "analyze": cmd_analyze}
+                "analyze": cmd_analyze, "replay": cmd_replay}
     if len(argv) == 4 and argv[2] == "library":
         return U.cmd_library(S.load(argv[1]), argv[3]) or 0
     if len(argv) != 3 or argv[2] not in commands:

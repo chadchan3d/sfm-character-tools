@@ -27,7 +27,7 @@ is added; committed-unverified handling is unchanged.
 | Qualification build | `849d0ed44101965de62165f01fcbb22b3caae9797e867169e71d4247b49cd4a2` (one line; the kit's verified install and restore need it; the Body path does not depend on it) |
 | Session | `Q1_KRYSTAL.dmx`: verified copy of the R2 fixture `259ea8a6…` (PS-2's `PS2_KRYSTAL.dmx`), shot15, 0.2083 s |
 | Presets | Krystal's `Body` (`cd31c7f1…`, bip_head 1.33, others 1.0) and `Happy` (`bc4e8585…`), verified unchanged since PS-2 and only read; PS-2's own `PS2 Dup Body` (`29629f1b…`, every bone 1.0) seeded from PS-2's evidence |
-| Observer | `observer/F01_Q1_Observe.py` `81ab0bbc…` (hooks and captures; see its docstring) |
+| Observer | `observer/F01_Q1_Observe.py` `f2eba1e0…` (hooks and captures; see its docstring) |
 | Tool | `python -I <REPO>\real_sfm_qualification\f01_q1_ps2_diagnostic\tools\q1_tool.py <Q>\q1.json <command>` |
 | Restored afterwards | the published CPM `ccbed9d7…`; both registries removed; the preset library exactly as backed up (files and folders); every protected inventory equal to its baseline |
 

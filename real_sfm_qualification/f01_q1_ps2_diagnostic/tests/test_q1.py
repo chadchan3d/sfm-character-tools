@@ -198,9 +198,13 @@ class Q1Synthetic(object):
                                      "redo_desc": undo[1]}},
                 "character": {u"model": u"models/krystal2020.mdl"},
                 "instance": {"kind": "token", "animset_key": ["DmeAnimationSet", 100, "id-100"]},
-                "animation_sets": sets, "records": {}, "settled_full_map": settled or {}, "events": list(events)}
+                "animation_sets": copy.deepcopy(list(sets)) + [
+                    {"name": u"Main_Cam", "handle": 900, "controls": {}, "model": None}],   # no game model
+                "records": {}, "settled_full_map": settled or {}, "events": list(events)}
         if "missing-fields" in f and step == "DUP-APPLY":
-            data["animation_sets"][0]["model"] = None
+            data["animation_sets"][0]["model"] = {"model": u"models/krystal2020.mdl"}   # a game model without bones
+        if "set-without-identity" in f and step == "BODY":
+            del data["animation_sets"][-1]["handle"]
         data.update(extra or {})
         if not ("missing-capture" in f and step == "DUP-UNDO"):
             self.dump(os.path.join("observations", "Q1-%s.json" % step), data)
@@ -214,12 +218,31 @@ class Q1Synthetic(object):
         self.capture("BASE", [a0], settled={u"Body": full_map(u"Body", (u"bip_head",))},
                      extra={"hooks_installed": sorted(A.HOOKS)})
         deferred_fail = "not-reproduced" not in f
-        body_events = [
-            {"kind": "apply-begin", "preset": u"Body", "preset_kind": u"body", "seq": 1},
-            {"kind": "precommit-authored", "bone": u"bip_head", "result": True, "desired_native": 1.33, "seq": 2},
-            {"kind": "precommit-authored", "bone": u"bip_tail00", "result": True, "desired_native": 1.0, "seq": 3},
+
+        def authored(seq, bone, native, result=True, stored=None):
+            stored = native if stored is None else stored
+            return {"kind": "precommit-authored", "seq": seq, "result": result, "desired_native": native,
+                    "bone": None, "binding": {"bone_row": {"_control": {"element": bone, "handle": 1}}},
+                    "snapshot": {"key_value": stored, "source": stored, "expr_input": stored, "expr_result": 1.13,
+                                 "physical_scale": 1.13, "lo": 0.0, "hi": 10.0}}
+        # CPM's six calls for two changed scales: pre-write (originals), post-write, precommit
+        calls = [authored(2, u"bip_head", 0.113), authored(3, u"bip_tail00", 0.08),
+                 authored(4, u"bip_head", 0.133), authored(5, u"bip_tail00", 0.1),
+                 authored(6, u"bip_head", 0.133), authored(7, u"bip_tail00", 0.1)]
+        if "authored-false" in f:
+            calls[5] = authored(7, u"bip_tail00", 0.1, result=False)
+        if "authored-wrong-value" in f:
+            calls[3] = authored(5, u"bip_tail00", 0.2)
+        if "authored-other-bone" in f:
+            calls[4] = authored(6, u"bip_neck", 0.133)
+        if "authored-stored-differs" in f:
+            calls[2] = authored(4, u"bip_head", 0.133, stored=0.113)
+        if "authored-five-calls" in f:
+            calls = calls[:5]
+        body_events = [{"kind": "apply-begin", "preset": u"Body", "preset_kind": u"body", "seq": 1}] + calls + [
             {"kind": "refresh-before", "operation": u"Body", "seq": 4,
-             "full_map": {"error": "boom"} if "refresh-map-error" in f else full_map(u"Body", (u"bip_head",))},
+             "full_map": {"error": "boom"} if "refresh-map-error" in f else
+             dict(full_map(u"Body", (u"bip_head",)), note=u"<depth>" if "depth-truncated" in f else None)},
             {"kind": "refresh-after", "seq": 5, "full_map": full_map(u"Body", (u"bip_head",))},
             {"kind": "apply-returned", "seq": 6},
             {"kind": "deferred-verify", "record": u"Body", "seq": 7, "result": not deferred_fail,
@@ -321,6 +344,44 @@ class AnalyzeTests(unittest.TestCase):
         out = self.report("not-reproduced")
         self.assertEqual(out["verdict"], "EVIDENCE COMPLETE", out["failed"])
         self.assertIn("not reproduced", out["analysis"]["body"]["reading"])
+
+    def test_sets_without_a_game_model_keep_identity_checks(self):
+        out = self.report()
+        self.assertNotIn("fields.BODY", out["failed"])
+        self.assertIn("fields.BODY", self.report("set-without-identity")["failed"])
+
+    def test_the_six_call_authored_sequence_is_validated_by_stage_bone_value_and_result(self):
+        out = self.report()
+        rows = out["analysis"]["body"]["precommit"]
+        self.assertEqual([(r["stage"], r["bone"]) for r in rows],
+                         [("pre-write", "bip_head"), ("pre-write", "bip_tail00"), ("post-write", "bip_head"),
+                          ("post-write", "bip_tail00"), ("precommit", "bip_head"), ("precommit", "bip_tail00")])
+        for fault in ("authored-false", "authored-wrong-value", "authored-other-bone", "authored-stored-differs",
+                      "authored-five-calls"):
+            self.assertIn("body.authored_check_sequence", self.report(fault)["failed"], fault)
+
+    def test_the_propagation_table_reports_measured_values_only(self):
+        rows = self.report()["analysis"]["body"]["propagation"]
+        self.assertTrue(rows and all(set(r) == {"boundary", "bone", "expr_input", "expr_result", "physical"}
+                                     for r in rows))
+        self.assertEqual(sorted(set(r["bone"] for r in rows)), ["bip_head", "bip_tail00"])
+
+    def test_replay_writes_separate_files_and_changes_no_evidence(self):
+        q = os.path.join(self.dir, "R")
+        c = Q1Synthetic(q, ("depth-truncated",)).build()
+        self.assertEqual(quiet(lambda: A.run(c, replay=True)), 2)          # refused: no original report
+        quiet(lambda: A.run(c))
+        ev = os.path.join(q, "evidence")
+        before = dict((n, A.sha(os.path.join(ev, n))) for n in ("Q1_REPORT.json", "Q1_REPORT.md"))
+        obs = dict((n, A.sha(os.path.join(q, "observations", n))) for n in os.listdir(os.path.join(q, "observations")))
+        quiet(lambda: A.run(c, replay=True))
+        out = load(os.path.join(ev, "Q1_REPORT_REPLAY.json"))
+        self.assertEqual((out["replay"]["original"]["Q1_REPORT.json"], out["replay"]["captures"]),
+                         (before["Q1_REPORT.json"], obs))
+        self.assertEqual(dict((n, A.sha(os.path.join(ev, n))) for n in before), before)
+        self.assertTrue(any("depth-truncated" in x and "BODY/refresh-before" in x for x in out["findings"]))
+        self.assertFalse(any("depth-truncated" in x for x in self.report()["findings"]))
+        self.assertRaises(OSError, quiet, lambda: A.run(c, replay=True))
 
     def test_incomplete_evidence_fails_on_its_own_check(self):
         cases = {"missing-capture": "captured.DUP-UNDO",
