@@ -105,6 +105,11 @@ class FakeElement(object):
             attr_name = attr_name.decode("ascii")
         return self._attrs.get(attr_name)
 
+    def HasAttribute(self, attr_name):
+        if isinstance(attr_name, bytes):
+            attr_name = attr_name.decode("ascii")
+        return attr_name in self._attrs
+
     # Evaluation / test-side direct state (never recorded as a CPM write).
     def raw(self, attr_name):
         return self._attrs[attr_name].value
@@ -179,6 +184,44 @@ class FakeChannel(FakeElement):
                                       self.raw("fromElement").raw(self.raw("fromAttribute")))
 
 
+class FakeExpression(FakeElement):
+    """F-01 ordering trial: Operate() evaluates lerp(value, lo, hi) into result (the expression only; no channel)."""
+    def __init__(self, element_name, **attrs):
+        FakeElement.__init__(self, u"DmeExpressionOperator", element_name, **attrs)
+
+    def Operate(self):
+        Scene.current.expression_operates.append(self._name)
+        lo, hi = self.raw("lo"), self.raw("hi")
+        self.put("result", lo + self.raw("value") * (hi - lo))
+
+
+class FakeLiveList(object):
+    """An array attribute whose value is read live (the scene's current channels)."""
+    def __init__(self, getter):
+        self.getter = getter
+
+    def GetValue(self):
+        return list(self.getter())
+
+
+class FakeChannelsTrack(object):
+    """shot -> channelTrackGroup -> animSetEditorChannels -> one DmeChannelsClip holding every scene channel."""
+    def __init__(self, scene):
+        self.clip = FakeElement(u"DmeChannelsClip", u"Krystal")
+        self.clip._attrs["channels"] = FakeLiveList(lambda: scene.channels)
+        self.track = FakeElement(u"DmeTrack", u"animSetEditorChannels")
+        self.track._attrs["children"] = FakeLiveList(lambda: [self.clip] + scene.extra_clips)
+        # Containers, not scene state: kept out of the Undo capture.
+        scene.elements.remove(self.clip)
+        scene.elements.remove(self.track)
+
+    def FindTrackGroup(self, group_name):
+        return self if group_name == "channelTrackGroup" else None
+
+    def FindTrack(self, track_name):
+        return self.track if track_name == "animSetEditorChannels" else None
+
+
 class FakeTransformControl(FakeElement):
     def __init__(self, element_name, transform):
         FakeElement.__init__(self, u"DmeTransformControl", element_name)
@@ -247,6 +290,8 @@ class Scene(object):
         self.cpm_writes = []
         self.events = []
         self.operate_calls = 0
+        self.expression_operates = []
+        self.extra_clips = []
         self.head = 0.375
         self.context_ok = True
         self.channels = []
@@ -258,6 +303,7 @@ class Scene(object):
         self.animset = FakeAnimset(u"DmeAnimationSet", u"Krystal")
         self.group = FakeElement(u"DmeControlGroup", u"Body", controls=[])
         self.dm = FakeDataModel(self)
+        self.shot = FakeChannelsTrack(self)
 
     # --- construction -----------------------------------------------------
     def bone(self, index, bone_name, scale=None):
@@ -274,8 +320,8 @@ class Scene(object):
         literal = bone_name + u"_scale"
         control = FakeElement(u"DmElement", literal, value=native, defaultValue=0.1)
         self.controls.append(control)
-        expression = FakeElement(u"DmeExpressionOperator", literal + u"_rescale", expr=expr_text, lo=lo, hi=hi,
-                                 value=native, result=lo + native * (hi - lo))
+        expression = FakeExpression(literal + u"_rescale", expr=expr_text, lo=lo, hi=hi,
+                                    value=native, result=lo + native * (hi - lo))
         self.operators.append(expression)
         keys = [(0.0, native)] if in_keys is None else in_keys
         in_log = FakeLog(literal + u"_log", [FakeLayer(literal + u"_layer%d" % i, keys if i == 0 else [])
@@ -381,6 +427,9 @@ TOP_EXTRACT = [
     "prod_bs_keyed_evidence", "prod_bs_static_play_evidence", "prod_bs_classify_static_scale",
     "prod_bs_static_scale_trace", "prod_bs_static_pass_trace", "prod_bs_full_bone_scale_map",
     "prod_bs_bone_record_index", "prod_bs_write_existing_scale", "prod_bs_index_snapshot",
+    # F-01 ordering trial: the bound expression's exclusivity scan and Operate() (strict DME reads)
+    "prod_bs_expression_channels", "prod_bs_operate_bound_expression", "prod_flex_strict_read",
+    "prod_flex_strict_list", "prod_instance_strict_members", "prod_instance_strict_text",
     "prod_bs_index_log_state", "prod_bs_index_trace", "prod_bs_index_binding", "prod_bs_index_clean_fixture",
     "prod_bs_index_validate_saved_map", "prod_bs_index_build_plan", "prod_bs_index_verify_saved",
     "prod_bs_index_capture_static_trace", "prod_bone_scale_keys_from_records",
@@ -506,7 +555,7 @@ def build_namespace(app):
     ns["prod_resource_snapshot"] = lambda label, *a, **k: Log.samples.append(_TEXT(label))
     # Scene topology boundaries (the indexed/historical traversals above are real).
     ns["prod_bs_find_model_row"] = lambda identity: {"model": IDENTITY["model"], "checksum": IDENTITY["checksum"],
-                                                     "animset": Scene.current.animset, "shot": u"shot10"}
+                                                     "animset": Scene.current.animset, "shot": Scene.current.shot}
     ns["get_channels_clip"] = lambda animset, shot: u"clip"
     ns["r26_clip_channels"] = lambda clip: list(Scene.current.channels)
     ns["prod_bs_animset_controls"] = lambda animset: list(Scene.current.controls)

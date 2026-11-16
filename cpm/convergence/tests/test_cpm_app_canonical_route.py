@@ -343,6 +343,11 @@ F01_K2UI_NEW_TOP = set([
     "prod_pose_load_sources", "prod_pose_set_source", "prod_pose_source_project", "prod_pose_sources_path",
     "prod_pose_valid_project",
 ])
+# F-01 ordering trial (Astra, ACCEPT WITH CONDITIONS; qualification only, F01_OT1_ORDERING_TRIAL_PREPARATION.md):
+# a changed, admitted, existing mode-3 Body scale operates its exclusively bound expression inside the owned
+# transaction and verifies the result before commit. Bounded to the Body existing-scale write; no other caller.
+F01_OT1_CHANGED_TOP = set(["prod_bs_write_existing_scale"])
+F01_OT1_NEW_TOP = set(["prod_bs_expression_channels", "prod_bs_operate_bound_expression"])
 F01_STAGEC_CHANGED_METHODS = set(["selected_or_none", "operation_default_error_copy"])
 F01_STAGEC_NEW_METHODS = set(["apply_pose", "pose_begin_verification", "pose_finish_verification", "pose_guard",
                               "pose_registry_mode", "save_pose"])
@@ -463,7 +468,7 @@ F01_SFP1_NEW_METHODS = set(["prompt_pose_scope"])
 EXPECTED_CHANGED_TOP = (STEP2B_CHANGED_TOP | STEP3_CHANGED_TOP | STEP4_CHANGED_TOP | R14_CHANGED_TOP
                         | R15_CHANGED_TOP | ITEM6_CHANGED_TOP | ITEM7_CHANGED_TOP | UIPASS_CHANGED_TOP
                         | LOGFIX_CHANGED_TOP | M05_CHANGED_TOP | M06_CHANGED_TOP | M06W1_CHANGED_TOP
-                        | F01_STAGEC_CHANGED_TOP | F01_UI_CHANGED_TOP)
+                        | F01_STAGEC_CHANGED_TOP | F01_UI_CHANGED_TOP | F01_OT1_CHANGED_TOP)
 EXPECTED_NEW_TOP = set([
     "PROD_CPM_MAINMENU_RELATIVE_PARTS", "PROD_CPM_ADAPTER_MODULES", "ProdCpmAuthorityBootstrapError",
     "ProdCpmAuthorityNotMigrated", "prod_cpm_mainmenu_dir", "prod_cpm_import_adapter", "prod_cpm_is_main_thread",
@@ -552,7 +557,7 @@ def section_derivation(app):
     check("derivation.added_top_level_is_bounded",
           added == EXPECTED_NEW_TOP | R15_NEW_TOP | ITEM6_NEW_TOP | UIPASS_NEW_TOP | LOGFIX_NEW_TOP | M05_NEW_TOP
           | M06_NEW_TOP | M06W1_NEW_TOP | F01_STAGEA_NEW_TOP | F01_STAGEB_NEW_TOP | F01_STAGEC_NEW_TOP | F01_STAGED_NEW_TOP
-          | F01_UI_NEW_TOP | F01_STAGEE_NEW_TOP | F01_SFP1_NEW_TOP | F01_K2UI_NEW_TOP,
+          | F01_UI_NEW_TOP | F01_STAGEE_NEW_TOP | F01_SFP1_NEW_TOP | F01_K2UI_NEW_TOP | F01_OT1_NEW_TOP,
           sorted(added))
     check("derivation.removed_is_exactly_item6_and_item7", removed == ITEM6_REMOVED_TOP | ITEM7_REMOVED_TOP
           | LOGFIX_REMOVED_TOP, sorted(removed ^ (ITEM6_REMOVED_TOP | ITEM7_REMOVED_TOP | LOGFIX_REMOVED_TOP)))

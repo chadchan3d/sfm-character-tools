@@ -25542,6 +25542,223 @@ def prod_bs_existing_binding_for_row(model_row, bone_row):
         identity
     )
 
+def prod_bs_expression_channels(binding):
+    """F-01 ordering trial (Astra, ACCEPT WITH CONDITIONS): every channel of
+    the shot's animation-set channel clips that reads from (readers) or
+    writes to (writers) the bound scale expression, read strictly. Any clip
+    of the track counts, so a peer's or another set's reference is seen; an
+    unreadable track, clip, channel list or endpoint refuses rather than
+    being treated as unrelated."""
+    expression = binding["expression"]
+
+    try:
+        group = binding["shot"].FindTrackGroup("channelTrackGroup")
+        track = group.FindTrack("animSetEditorChannels") if group is not None else None
+    except Exception:
+        raise RuntimeError(
+            "The scale expression's channels track is unreadable."
+        )
+
+    if track is None:
+        raise RuntimeError(
+            "The scale expression's channels track is unavailable."
+        )
+
+    readers = []
+    writers = []
+
+    for clip in prod_instance_strict_members(
+        track,
+        "children",
+        "The shot's channels clips",
+    ):
+        if prod_instance_strict_text(
+            clip,
+            "GetTypeString",
+            "A channels-clip type",
+        ) != u"DmeChannelsClip":
+            continue
+
+        for channel in prod_instance_strict_members(
+            clip,
+            "channels",
+            "A channels clip's channels",
+        ):
+            for attr_name, found in (
+                ("fromElement", readers),
+                ("toElement", writers),
+            ):
+                state, element = prod_flex_strict_read(
+                    channel,
+                    attr_name,
+                )
+
+                if state == u"absent" or (state == u"present" and element is None):
+                    continue
+
+                if state != u"present":
+                    raise RuntimeError(
+                        "A channel endpoint near the scale expression is unreadable."
+                    )
+
+                if same_dme(element, expression):
+                    found.append(channel)
+
+    return readers, writers
+
+def prod_bs_operate_bound_expression(item, native):
+    """F-01 ordering trial, qualification only (Astra, ACCEPT WITH
+    CONDITIONS): for an admitted, changed, existing mode-3 scale whose input
+    was just written inside the owned Body transaction, operate the bound
+    expression once and verify its result before commit.
+
+    The expression must still be the planned one (identities, logs and limits
+    equal the plan baseline) and exclusively wired: exactly one writer, the
+    planned input channel into value, and exactly one reader, the planned
+    output channel from result into the planned transform's scale. A shared,
+    replaced or ambiguous binding refuses before Operate(). Its result alone
+    never verifies the Apply: the physical scale is still verified only after
+    commit by the existing deferred map."""
+    binding = item[
+        "binding"
+    ]
+    baseline = item[
+        "baseline"
+    ]
+    expression = binding[
+        "expression"
+    ]
+    output = binding[
+        "output"
+    ]
+    input_channel = binding[
+        "input_channel"
+    ]
+    bone = item[
+        "bone_name"
+    ]
+
+    if typ(expression) != u"DmeExpressionOperator" or u(
+        attr_value(expression, "expr") or u""
+    ).replace(" ", "").lower() != u"lerp(value,lo,hi)":
+        raise RuntimeError(
+            "Bone %s scale expression was replaced." % bone
+        )
+
+    if not (
+        same_dme(attr_value(output, "fromElement"), expression)
+        and u(attr_value(output, "fromAttribute") or u"") == u"result"
+        and same_dme(attr_value(output, "toElement"), binding["transform"])
+        and u(attr_value(output, "toAttribute") or u"") == u"scale"
+        and same_dme(attr_value(input_channel, "toElement"), expression)
+        and u(attr_value(input_channel, "toAttribute") or u"") == u"value"
+    ):
+        raise RuntimeError(
+            "Bone %s scale expression binding changed." % bone
+        )
+
+    readers, writers = prod_bs_expression_channels(
+        binding
+    )
+
+    if (
+        len(readers) != 1
+        or not same_dme(readers[0], output)
+        or len(writers) != 1
+        or not same_dme(writers[0], input_channel)
+    ):
+        raise RuntimeError(
+            "Bone %s scale expression is shared or ambiguous." % bone
+        )
+
+    current = prod_bs_snapshot(
+        binding
+    )
+
+    for field in (
+        "control_id",
+        "input_channel_id",
+        "input_log_id",
+        "input_layer_id",
+        "expression_id",
+        "output_id",
+        "output_log_id",
+        "output_layer_id",
+        "transform_id",
+    ):
+        if current.get(field) is None or current.get(field) != baseline.get(field):
+            raise RuntimeError(
+                "Bone %s scale expression binding was replaced." % bone
+            )
+
+    # The input log is read afresh from its channel (the snapshot reports the
+    # planned object), so a replaced input log or layer also refuses.
+    if prod_bs_channel_log_ids(
+        input_channel
+    ) != (
+        baseline["input_log_id"],
+        baseline["input_layer_id"],
+    ):
+        raise RuntimeError(
+            "Bone %s scale expression binding was replaced." % bone
+        )
+
+    if not (
+        close_enough(current["lo"], baseline["lo"])
+        and close_enough(current["hi"], baseline["hi"])
+        and close_enough(current["lo"], binding["lo"])
+        and close_enough(current["hi"], binding["hi"])
+    ):
+        raise RuntimeError(
+            "Bone %s scale expression limits changed." % bone
+        )
+
+    operate = getattr(expression, "Operate", None)
+
+    if not callable(operate):
+        try:
+            cast = vs.CastElementAsDmeExpressionOperator(expression)
+        except Exception:
+            cast = None
+
+        if cast is None or not same_dme(cast, expression):
+            raise RuntimeError(
+                "Bone %s scale expression cannot be operated." % bone
+            )
+
+        operate = getattr(cast, "Operate", None)
+
+        if not callable(operate):
+            raise RuntimeError(
+                "Bone %s scale expression cannot be operated." % bone
+            )
+
+    operate()
+
+    operated = prod_bs_snapshot(
+        binding
+    )
+
+    if not prod_bs_authored_matches(
+        binding,
+        operated,
+        native,
+    ):
+        raise RuntimeError(
+            "Bone %s failed authored-state verification after its expression was operated." % bone
+        )
+
+    if not close_enough(
+        operated["expr_result"],
+        prod_bs_expected_physical(
+            binding,
+            native,
+        ),
+    ):
+        raise RuntimeError(
+            "Bone %s scale expression did not produce the expected result." % bone
+        )
+
 def prod_bs_write_existing_scale(item):
     binding = item[
         "binding"
@@ -25593,6 +25810,15 @@ def prod_bs_write_existing_scale(item):
             % item[
                 "bone_name"
             ]
+        )
+
+    # F-01 ordering trial: only an admitted mode-3 graph; mode 1 is unchanged.
+    if binding.get(
+        "static_output_mode"
+    ) == 3:
+        prod_bs_operate_bound_expression(
+            item,
+            native,
         )
 
 def prod_bs_verify_saved_scales(identity, record):
