@@ -69,6 +69,8 @@ def section_template():
           and t["paths"]["LEGACY_POSE"] == ua["paths"]["LEGACY_POSE"])
     with open(os.path.join(KIT, "observer", "F01_OT1_Observe.py"), "rb") as f:
         obs = f.read().decode("ascii")
+    check("T4 the shipped vsUtils.py (Astra DC1 helper) is pinned", len(t["pins"].get("vsutils_sha256", "")) == 64
+          and all(ch in "0123456789abcdef" for ch in t["pins"]["vsutils_sha256"]))
     check("T4 the OT1 observer pins the same Q1 observer", 'Q1_OBSERVER_SHA256 = "%s"' % t["pins"]["q1_observer_sha256"]
           in obs)
 
@@ -165,15 +167,45 @@ U_UNDONE = {"can_undo": True, "can_redo": True, "undo_desc": u"CreateAnimationSe
             "redo_desc": u"Redo Apply Body Preset", "count": 5}
 
 
+VSU_PIN = "a" * 64
+
+
+def ident(kind, label, handle):
+    return [kind, label, handle, handle * 8]
+
+
+def bone_ids(bone):
+    base = 100 if bone == u"bip_head" else 200
+    return {"expression": ident(u"DmeExpressionOperator", bone + u"_scale_rescale", base),
+            "input_channel": ident(u"DmeChannel", bone + u"_scale", base + 1),
+            "output": ident(u"DmeChannel", u"scaled_%s_scale_channel" % bone, base + 2),
+            "transform": ident(u"DmeTransform", u"bone", base + 3), "control": ident(u"DmElement", bone, base + 4),
+            "animset": ident(u"DmeAnimationSet", u"Krystal", TARGET)}
+
+
+def ref(owner, attr, role):
+    return {"owner": owner, "owner_type": owner[0], "owner_name": owner[1], "owner_handle": owner[2],
+            "attribute": attr, "role": role}
+
+
+def direct(bone):
+    ids = bone_ids(bone)
+    rows = [ref(ids["animset"], u"operators", "animset"), ref(ids["input_channel"], u"toElement", "input_channel"),
+            ref(ids["output"], u"fromElement", "output")]
+    return {"complete": True, "error": None, "references": rows, "pass": True,
+            "matched": {"animset": 1, "input_channel": 1, "output": 1}, "unexpected": [], "unreadable": []}
+
+
 def preflight():
-    def bone():
+    def bone(name):
         return {"would_pass": True, "error": None, "static_output_mode": 3, "expression_ok": True,
-                "endpoints_ok": True, "unique": True, "operator_lists": [u"Krystal"],
+                "endpoints_ok": True, "unique": True, "operator_lists": [u"Krystal"], "identities": bone_ids(name),
+                "direct_refs": direct(name),
                 "candidate_scan": {"error": None, "readers": 1, "writers": 1},
                 "enumeration": {"clips": 3, "channels": 900, "readers": [{}], "writers": [{}], "unreadable": []}}
     state = {"undo": dict(U_BASE), "head_seconds": 0.20829999446868896}
     return {"instance": {"animset_key": ["DmeAnimationSet", TARGET, u"uuid"]}, "error": None, "would_pass": True,
-            "bones": {u"bip_head": bone(), u"bip_tail00": bone()},
+            "bones": {u"bip_head": bone(u"bip_head"), u"bip_tail00": bone(u"bip_tail00")},
             "side_effects": {"before": state, "after": copy.deepcopy(state), "unchanged": True}}
 
 
@@ -195,6 +227,11 @@ def passing_run():
             "ABORT": capture("ABORT", False, U_UNDONE, abort_events)}
     caps["BASE"]["hooks_installed"] = list(A.HOOKS)
     caps["BASE"]["preflight"] = preflight()
+    caps["ARM"]["preflight"] = preflight()
+    for step, preloaded in (("BASE", False), ("ARM", True)):
+        caps[step]["vsutils"] = {"preloaded": preloaded, "error": None, "source_sha256": VSU_PIN, "file": u"x",
+                                 "cdm_eq_before": preloaded, "cdm_hash_before": preloaded, "cdm_eq_after": True,
+                                 "cdm_hash_after": True}
     caps["ARM"]["injector"] = {"armed": True, "fired": 0, "bone": u"bip_tail00"}
     caps["ABORT"]["injector"] = {"armed": False, "fired": 1}
     caps["ABORT"]["hooks_removed"] = True
@@ -227,7 +264,7 @@ def write_run(run):
     with open(os.path.join(q, "sessions", "OT1_KRYSTAL.dmx"), "wb") as f:
         f.write(run["session"])
     pins = {"candidate_cpm_sha256": CAND, "qualification_cpm_sha256": QUAL,
-            "r2_fixture_sha256": hashlib.sha256(b"OT1 session bytes").hexdigest()}
+            "r2_fixture_sha256": hashlib.sha256(b"OT1 session bytes").hexdigest(), "vsutils_sha256": VSU_PIN}
     return q, {"paths": {"Q": q}, "pins": pins, "character_dir": "krystal2020--x"}
 
 
@@ -243,6 +280,12 @@ def analyze(run):
         return v, gates, failed, A.markdown(out)
     finally:
         shutil.rmtree(q)
+
+
+def dc1(run, step, bone, change):
+    """Alter one capture's DC1 evidence as the observer would have recorded it (its own pass flag left True, so the
+    analyzer's independent checks are what must catch it)."""
+    change(run["caps"][step]["preflight"]["bones"][bone]["direct_refs"])
 
 
 def mutate(fn):
@@ -355,6 +398,39 @@ def section_analyzer():
                 {"what": "endpoint"}))),
         ("BASE preflight: another instance", lambda r: r["caps"]["BASE"]["preflight"].__setitem__(
             "instance", {"animset_key": ["DmeAnimationSet", PEER, u"uuid"]})),
+        ("DC1: an off-track channel reader at BASE", lambda r: dc1(r, "BASE", u"bip_head", lambda d: d["references"]
+                                                                   .append(ref(ident(u"DmeChannel", u"off", 9), u"fromElement", None)))),
+        ("DC1: an unexpected non-channel reference at ARM", lambda r: dc1(r, "ARM", u"bip_tail00", lambda d: d[
+            "references"].append(ref(ident(u"DmeConnectionOperator", u"conn", 8), u"input", None)))),
+        ("DC1: a missing reference", lambda r: dc1(r, "BASE", u"bip_tail00", lambda d: d["references"].pop(0))),
+        ("DC1: a duplicated reference", lambda r: dc1(r, "ARM", u"bip_head", lambda d: d["references"].append(
+            dict(d["references"][1])))),
+        ("DC1: an unreadable attribute", lambda r: dc1(r, "BASE", u"bip_head", lambda d: d["references"][2].update(
+            unreadable="attribute: RuntimeError()"))),
+        ("DC1: an incomplete enumeration", lambda r: dc1(r, "ARM", u"bip_head", lambda d: d.update(
+            complete=False, error="RuntimeError('iterator failed')"))),
+        ("DC1: the operators owner is the peer's set (wrong instance)", lambda r: dc1(
+            r, "BASE", u"bip_head", lambda d: d["references"].__setitem__(
+                0, ref(ident(u"DmeAnimationSet", u"krystal20201", PEER), u"operators", "animset")))),
+        ("DC1: a replaced input channel at ARM (another live element)", lambda r: dc1(
+            r, "ARM", u"bip_head", lambda d: d["references"].__setitem__(
+                1, ref(ident(u"DmeChannel", u"bip_head_scale", 999), u"toElement", "input_channel")))),
+        ("DC1: BASE and ARM disagree on the live elements", lambda r: [
+            b.update(identities=dict(b["identities"], output=ident(u"DmeChannel", u"o", 777)),
+                     direct_refs=dict(b["direct_refs"], references=[
+                         x if x["role"] != "output" else ref(ident(u"DmeChannel", u"o", 777), u"fromElement", "output")
+                         for x in b["direct_refs"]["references"]]))
+            for b in [r["caps"]["ARM"]["preflight"]["bones"][u"bip_head"]]]),
+        ("DC1: partial evidence (no reference list)", lambda r: dc1(r, "BASE", u"bip_head", lambda d: d.pop(
+            "references"))),
+        ("DC1: partial evidence (no identities)", lambda r: r["caps"]["ARM"]["preflight"]["bones"][u"bip_tail00"].pop(
+            "identities")),
+        ("DC1: no ARM preflight", lambda r: r["caps"]["ARM"].pop("preflight")),
+        ("DC1: ARM preflight changed the state", lambda r: r["caps"]["ARM"]["preflight"]["side_effects"].__setitem__(
+            "unchanged", False)),
+        ("DC1: vsUtils not the pinned shipped helper", lambda r: r["caps"]["ARM"]["vsutils"].__setitem__(
+            "source_sha256", "b" * 64)),
+        ("DC1: vsUtils import failed", lambda r: r["caps"]["BASE"]["vsutils"].__setitem__("error", "ImportError")),
         ("BASE not the expected starting state", lambda r: r["caps"]["BASE"].__setitem__("settled_full_map",
                                                                                         full_map(True))),
     ]
@@ -362,6 +438,11 @@ def section_analyzer():
         v, gates, failed, md = mutate(fn)
         check("V4 %s -> INCOMPLETE (no candidate decision)" % label, v == "INCOMPLETE" and not gates["EVIDENCE"],
               (v, failed))
+
+    v, gates, failed, md = analyze(passing_run())
+    check("V6 the expected three references with the valid operators-array membership pass at BASE and ARM, and the "
+          "observer-imported vsUtils is reported as a finding, not a failure", v == "CANDIDATE PASS" and
+          "dc1.BASE_three_live_references_per_expression" not in failed and "OT1-DC2" in md, failed)
 
     run = passing_run()
     q, c = write_run(run)

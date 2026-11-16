@@ -15,8 +15,12 @@ Four gates on complete evidence; the candidate passes only when all four pass:
           fires once after the tail's operator call, CPM's own abort verification returns True (restored=True, no
           recovery uncertainty), the target's fields and graphs equal ARM exactly, no history entry is added, the peer
           is untouched.
-  EVIDENCE the BASE preflight (read only, no Undo or playhead change; both graphs pass the candidate's own reader/writer
-          uniqueness scan with nothing unreadable), identities, every capture, one SFM process on the disposable session at shot15 with the time never moved,
+  EVIDENCE the BASE and ARM preflights (read only, no Undo or playhead change; both graphs pass the candidate's own
+          reader/writer uniqueness scan with nothing unreadable; Astra DC1: SFM's shipped vsUtils.iterReferringAttributes,
+          at its pinned source identity, returns exactly three direct references per live expression - the selected
+          animation set's operators, the admitted input channel's toElement, the admitted output channel's fromElement -
+          with complete enumeration, the same live elements at BASE and ARM, and arming only after a passing ARM
+          preflight), identities, every capture, one SFM process on the disposable session at shot15 with the time never moved,
           hooks installed and removed, the same selected instance, no other CPM operation, no visibility edit,
           library and installation restored exactly, the session never saved.
 
@@ -123,6 +127,63 @@ def graph_diff(a, b):
     return out
 
 
+REF_ROLES = (("animset", u"operators"), ("input_channel", u"toElement"), ("output", u"fromElement"))
+
+
+def direct_ref_problems(cap, target):
+    """([problems], {bone: {role: owner identity}}) for one capture's DC1 evidence. Every field is required: a missing
+    preflight, bone, enumeration or identity is a problem, never a pass."""
+    problems, owners = [], {}
+    pre = (cap or {}).get("preflight")
+    if not isinstance(pre, dict):
+        return ["no preflight"], owners
+    for bone in CHANGED:
+        b = (pre.get("bones") or {}).get(bone)
+        if not isinstance(b, dict):
+            problems.append("%s: no preflight row" % bone)
+            continue
+        d = b.get("direct_refs")
+        ids = b.get("identities") or {}
+        if not isinstance(d, dict):
+            problems.append("%s: no direct-reference evidence" % bone)
+            continue
+        if d.get("complete") is not True or d.get("error") is not None:
+            problems.append("%s: enumeration incomplete (%r)" % (bone, d.get("error")))
+        rows = d.get("references")
+        if not isinstance(rows, list):
+            problems.append("%s: no reference list" % bone)
+            continue
+        if len(rows) != len(REF_ROLES):
+            problems.append("%s: %d references, expected %d" % (bone, len(rows), len(REF_ROLES)))
+        for r in rows:
+            if not isinstance(r, dict) or "unreadable" in r or not isinstance(r.get("owner_handle"), int) or \
+                    not r.get("owner") or not r.get("attribute"):
+                problems.append("%s: unreadable or incomplete reference %r" % (bone, r))
+        seen = {}
+        for role, attr in REF_ROLES:
+            hits = [r for r in rows if isinstance(r, dict) and r.get("role") == role]
+            if len(hits) != 1:
+                problems.append("%s: %d %s references" % (bone, len(hits), role))
+                continue
+            r = hits[0]
+            if r.get("attribute") != attr:
+                problems.append("%s: %s reference through %r" % (bone, role, r.get("attribute")))
+            if not ids.get(role) or r.get("owner") != ids.get(role):
+                problems.append("%s: %s owner %r is not the binding's live %r" % (bone, role, r.get("owner"),
+                                                                                 ids.get(role)))
+            seen[role] = r.get("owner")
+        extra = [r for r in rows if isinstance(r, dict) and r.get("role") not in [x for x, _ in REF_ROLES]]
+        if extra:
+            problems.append("%s: unexpected references %r" % (bone, extra))
+        if (seen.get("animset") or [None, None, None])[2] != target:
+            problems.append("%s: operators owner is not the selected instance's animation set" % bone)
+        if d.get("pass") is not True or b.get("would_pass") is not True:
+            problems.append("%s: the observer's own verdict is not a pass" % bone)
+        seen["expression"] = ids.get("expression")
+        owners[bone] = seen
+    return problems, owners
+
+
 def undo(cap):
     return ((cap or {}).get("session") or {}).get("undo") or {}
 
@@ -212,6 +273,28 @@ def evaluate(R):
       pre.get("instance") == instance and
       all(v["would_pass"] is True and v["readers"] == 1 and v["writers"] == 1 and v["unreadable"] == [] and
           v["scan_error"] is None for v in pf.values()), {"error": pre.get("error"), "bones": pf})
+    # Astra DC1: direct DataModel references, at BASE and again at ARM, on the live expressions.
+    refs = dict((s, direct_ref_problems(cap[s], target)) for s in ("BASE", "ARM"))
+    R.info["direct_refs"] = dict((s, refs[s][1]) for s in refs)
+    for s in ("BASE", "ARM"):
+        E("dc1.%s_three_live_references_per_expression" % s, not refs[s][0], refs[s][0][:12])
+    E("dc1.base_and_arm_same_live_elements", not refs["BASE"][0] and not refs["ARM"][0] and
+      refs["BASE"][1] == refs["ARM"][1], (refs["BASE"][1], refs["ARM"][1]))
+    arm_pre = cap["ARM"].get("preflight") or {}
+    E("preflight.ARM_read_only_and_passing_before_arming",
+      arm_pre.get("would_pass") is True and (arm_pre.get("side_effects") or {}).get("unchanged") is True and
+      arm_pre.get("instance") == instance, (arm_pre.get("would_pass"), (arm_pre.get("side_effects") or {}).get("unchanged")))
+    vsu = dict((s, cap[s].get("vsutils") or {}) for s in ("BASE", "ARM"))
+    E("dc1.shipped_vsutils_helper", all(v.get("error") is None and v.get("source_sha256") == c["pins"].get("vsutils_sha256")
+                                        for v in vsu.values()), dict((s, (v.get("source_sha256"), v.get("error")))
+                                                                     for s, v in vsu.items()))
+    R.info["vsutils"] = vsu
+    if vsu["BASE"].get("preloaded") is False:
+        R.findings.append("vsUtils was not loaded before BASE: the observer imported it, and its import-time patches "
+                          "(vs.CDmElement __eq__/__hash__: before %r/%r, after %r/%r) stayed in effect for the rest of the "
+                          "session, including the Apply, Undo, Redo and Abort steps (design condition OT1-DC2)" % (
+                              vsu["BASE"].get("cdm_eq_before"), vsu["BASE"].get("cdm_hash_before"),
+                              vsu["BASE"].get("cdm_eq_after"), vsu["BASE"].get("cdm_hash_after")))
     for b, v in sorted(pf.items()):
         if isinstance(v["operator_lists"], list) and len(v["operator_lists"]) != 1:
             R.findings.append("preflight: %s's expression is listed in the operators arrays of %r (membership only; "

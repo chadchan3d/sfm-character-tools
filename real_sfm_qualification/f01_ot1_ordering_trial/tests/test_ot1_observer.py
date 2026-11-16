@@ -11,6 +11,11 @@ module (the five hooked functions and prod_bs_snapshot as plain functions). The 
   app source, with its strict-read helpers) on a fake channels track: valid, shared, ambiguous and unreadable graphs,
   a refused binding, a missing bone, a changed endpoint, operators-array membership, a recorded state change; no
   write, Operate or key change; it runs before the hooks are installed.
+- D: Astra's DC1 direct-reference condition (vsUtils.iterReferringAttributes, faked here as a generator over the
+  scene's referring attributes): the expected three live relationships pass; an off-track reader, an unexpected
+  non-channel reference, a missing or duplicated reference, an unreadable owner or attribute name, an enumeration that
+  raises part way, a wrong-instance or replaced element, and an unavailable vsUtils fail; operators-array membership
+  is one of the three expected relationships; ARM arms only after a passing, unchanged preflight.
 - L: the Q1 observer is used only at its pinned SHA-256; the observer's source makes no scene write, refresh, event
   pumping, Undo or Operate call of its own, and its only file write is the exclusive-create capture.
 They show nothing about SFM itself.
@@ -231,7 +236,8 @@ def section_static(o):
     import re
     builtin_opens = re.findall(r"(?<![\w.])open\(([^)]*)\)", src)
     check("L3 its only file write is the exclusive-create capture (one os.open with O_EXCL; builtin open read-only)",
-          src.count("os.open(") == 1 and "O_EXCL" in src and builtin_opens == ['path, "rb"'], builtin_opens)
+          src.count("os.open(") == 1 and "O_EXCL" in src and builtin_opens == ['path, "rb"', 'source, "rb"'],
+          builtin_opens)
 
 
 # ---------------------------------------------------------------------------
@@ -333,11 +339,44 @@ def fscene():
     peer_set = FEl(u"DmeAnimationSet", u"krystal20201", operators=[peer["binding"]["expression"]])
     shot.attrs["animationSets"] = FAttr([target, peer_set])
     rows = {}
+    refs = {}
+    for g, animset in [(graphs[b], target) for b in graphs] + [(peer, peer_set)]:
+        g["binding"]["shot"] = shot
+        g["binding"]["animset"] = animset
+        refs[g["binding"]["expression"].h] = [FRef(animset, "operators"), FRef(g["binding"]["input_channel"], "toElement"),
+                                              FRef(g["binding"]["output"], "fromElement")]
     for i, bone in enumerate(sorted(graphs)):
-        graphs[bone]["binding"]["shot"] = shot
         rows[(i, bone)] = {"bone_name": bone, "classification": u"CHANNEL_DRIVEN_SCALE", "_binding": graphs[bone]["binding"]}
     return {"graphs": graphs, "peer": peer, "clip": clip, "peer_clip": peer_clip, "track": track, "shot": shot,
-            "rows": rows, "target_set": target, "peer_set": peer_set}
+            "rows": rows, "target_set": target, "peer_set": peer_set, "refs": refs, "raise_after": None}
+
+
+class FRef(object):
+    """A referring attribute as GetAttributeFromIterator returns it: GetOwner() and GetName()."""
+    def __init__(self, owner, attr_name, bad_owner=False, bad_name=False):
+        self.owner, self.attr_name, self.bad_owner, self.bad_name = owner, attr_name, bad_owner, bad_name
+
+    def GetOwner(self):
+        if self.bad_owner:
+            raise RuntimeError("unreadable owner")
+        return self.owner
+
+    def GetName(self):
+        if self.bad_name:
+            raise RuntimeError("unreadable name")
+        return self.attr_name
+
+
+def fake_vsutils(scene):
+    vsu = types.ModuleType("vsUtils")
+
+    def iterReferringAttributes(elt):
+        for i, attr in enumerate(list(scene["refs"].get(elt.GetHandle(), []))):
+            if scene["raise_after"] == (elt.GetHandle(), i):
+                raise RuntimeError("iterator failed")
+            yield attr
+    vsu.iterReferringAttributes = iterReferringAttributes
+    return vsu
 
 
 def preflight_cpm(scene):
@@ -364,11 +403,12 @@ def preflight_cpm(scene):
     return cpm, app
 
 
-def run_preflight(o, q1, scene, probe=None):
+def run_preflight(o, q1, scene, probe=None, vsu="fake"):
     del TOUCHED[:]
     cpm, _ = preflight_cpm(scene)
     states = iter(probe or [{"undo": "u", "head_seconds": 0.2083}, {"undo": "u", "head_seconds": 0.2083}])
-    return o["ot1_guarded_preflight"](cpm, q1, {"model": u"m"}, {"kind": u"token"}, lambda: next(states))
+    return o["ot1_guarded_preflight"](cpm, q1, {"model": u"m"}, {"kind": u"token"}, lambda: next(states),
+                                      fake_vsutils(scene) if vsu == "fake" else vsu)
 
 
 def section_preflight(o, q1):
@@ -459,9 +499,8 @@ def section_preflight(o, q1):
     def listed_twice(s):
         s["peer_set"].attrs["operators"].value.append(s["graphs"][u"bip_head"]["binding"]["expression"])
     r = variant(listed_twice)
-    check("P9 an expression listed in two sets' operators arrays is reported (membership only; not part of the "
-          "candidate's precondition)", r["bones"][u"bip_head"]["operator_lists"] == [u"Krystal", u"krystal20201"]
-          and r["would_pass"] is True)
+    check("P9 an expression listed in two sets' operators arrays is reported (operator-list membership)",
+          r["bones"][u"bip_head"]["operator_lists"] == [u"Krystal", u"krystal20201"])
     r = run_preflight(o, q1, fscene(), probe=[{"undo": "a", "head_seconds": 0.2083},
                                                {"undo": "b", "head_seconds": 0.2083}])
     check("P10 a state change across the preflight is recorded as side effects (unchanged False)",
@@ -477,13 +516,108 @@ def section_preflight(o, q1):
           u"def prod_bs_expression_channels(binding):" in app.top_text("prod_bs_expression_channels"))
 
 
+def section_direct_refs(o, q1):
+    r = run_preflight(o, q1, fscene())
+    for bone in (u"bip_head", u"bip_tail00"):
+        d = r["bones"][bone]["direct_refs"]
+        check("D1 %s: exactly the three live relationships (operators of A, input toElement, output fromElement), "
+              "enumeration complete -> pass" % bone,
+              d["pass"] is True and d["complete"] is True and d["error"] is None and
+              sorted(x["role"] for x in d["references"]) == ["animset", "input_channel", "output"] and
+              sorted(x["attribute"] for x in d["references"]) == ["fromElement", "operators", "toElement"] and
+              all(isinstance(x.get("owner_handle"), int) for x in d["references"]), d)
+    check("D1 the valid operator-list membership is one of the three (not an unexplained extra)",
+          [x for x in r["bones"][u"bip_head"]["direct_refs"]["references"] if x["role"] == "animset"][0]["owner_name"]
+          == u"Krystal" and r["would_pass"] is True)
+
+    def variant(mutate):
+        s = fscene()
+        mutate(s)
+        return run_preflight(o, q1, s)
+
+    def head(s):
+        return s["graphs"][u"bip_head"]["binding"]
+
+    def off_track(s):  # a reader the channel-track scan cannot see (in no clip of the track)
+        ch = FEl(u"DmeChannel", u"off_track", fromElement=head(s)["expression"], fromAttribute=u"result",
+                 toElement=FEl(u"DmeTransform", u"z"), toAttribute=u"scale")
+        s["refs"][head(s)["expression"].h].append(FRef(ch, "fromElement"))
+    cases = [
+        ("an off-track channel reader (channel-track scan still passes)", off_track, "unexpected"),
+        ("an unexpected non-channel reference (a connection operator's input)",
+         lambda s: s["refs"][head(s)["expression"].h].append(
+             FRef(FEl(u"DmeConnectionOperator", u"conn"), "input")), "unexpected"),
+        ("a missing reference (no operators listing)",
+         lambda s: s["refs"][head(s)["expression"].h].pop(0), "count"),
+        ("a duplicated reference (operators returned twice)",
+         lambda s: s["refs"][head(s)["expression"].h].append(FRef(s["target_set"], "operators")), "count"),
+        ("an unreadable owner", lambda s: setattr(s["refs"][head(s)["expression"].h][1], "bad_owner", True),
+         "unreadable"),
+        ("an unreadable attribute name", lambda s: setattr(s["refs"][head(s)["expression"].h][2], "bad_name", True),
+         "unreadable"),
+        ("an enumeration that raises part way (incomplete)", lambda s: s.__setitem__("raise_after", (head(s)["expression"].h, 2)),
+         "incomplete"),
+        ("the operators listing on the peer's set (wrong instance)",
+         lambda s: s["refs"][head(s)["expression"].h].__setitem__(0, FRef(s["peer_set"], "operators")), "unexpected"),
+        ("a replaced input channel (same name, another element)",
+         lambda s: s["refs"][head(s)["expression"].h].__setitem__(
+             1, FRef(FEl(u"DmeChannel", u"bip_head_scale"), "toElement")), "unexpected"),
+        ("the right owner under another attribute name",
+         lambda s: s["refs"][head(s)["expression"].h].__setitem__(
+             2, FRef(head(s)["output"], "toElement")), "unexpected"),
+    ]
+    for label, mutate, kind in cases:
+        r = variant(mutate)
+        d = r["bones"][u"bip_head"]["direct_refs"]
+        why = {"unexpected": bool(d["unexpected"]), "count": d["matched"]["animset"] != 1,
+               "unreadable": bool(d["unreadable"]), "incomplete": d["complete"] is False and d["error"] is not None}
+        check("D2 %s -> fails (%s); would_pass False; the tail is unaffected" % (label, kind),
+              d["pass"] is False and why[kind] and r["bones"][u"bip_head"]["would_pass"] is False
+              and r["would_pass"] is False and r["bones"][u"bip_tail00"]["would_pass"] is True, d)
+    r = variant(off_track)
+    check("D2 the off-track reader is invisible to the channel-track scan, so only DC1 catches it",
+          r["bones"][u"bip_head"]["unique"] is True and r["bones"][u"bip_head"]["direct_refs"]["pass"] is False)
+    r = run_preflight(o, q1, fscene(), vsu=None)
+    check("D3 vsUtils unavailable -> no references, would_pass False",
+          r["would_pass"] is False and r["bones"][u"bip_head"]["direct_refs"]["error"] == "vsUtils unavailable")
+    r = run_preflight(o, q1, fscene())
+    check("D4 read only with DC1 too: no write, Operate or key change", TOUCHED == [] and r["side_effects"]["unchanged"])
+
+    st = {"armed": False, "fired": 0}
+    good = run_preflight(o, q1, fscene())
+    bad = variant(off_track)
+    changed = run_preflight(o, q1, fscene(), probe=[{"undo": "a", "head_seconds": 0.2083},
+                                                     {"undo": "b", "head_seconds": 0.2083}])
+    refused = [o["ot1_arm"](dict(st), x) for x in (bad, changed, None, {})]
+    check("D5 ARM refuses to arm after a failing, state-changing or missing preflight",
+          all(x["armed"] is False and "refused" in x for x in refused), refused)
+    armed_state = dict(st)
+    got = o["ot1_arm"](armed_state, good)
+    check("D5 ARM arms only after a passing, unchanged preflight", got == {"armed": True, "fired": 0,
+                                                                           "bone": u"bip_tail00"}
+          and armed_state["armed"] is True, got)
+    try:
+        o["ot1_arm"](armed_state, good)
+        twice = False
+    except RuntimeError:
+        twice = True
+    check("D5 a second arm is refused", twice)
+    with open(OBSERVER, "rb") as f:
+        src = f.read().decode("ascii")
+    capture = src[src.index("def ot1_capture"):]
+    check("D6 BASE and ARM both run the preflight with vsUtils; ARM arms through ot1_arm after it",
+          'if step in ("BASE", "ARM"):' in capture and "ot1_vsutils()" in capture
+          and capture.index("ot1_guarded_preflight(") < capture.index("ot1_arm(st, data[\"preflight\"])")
+          and "st[\"armed\"] = True" not in capture)
+
+
 def main():
     print("Interpreter: %s" % sys.version.split()[0])
     o = load_observer()
     q1 = o["ot1_q1"](REPO)
     check("L0 the pinned Q1 observer loads without running its capture", callable(q1.get("q1_full_map")))
     for section in (lambda: section_wrappers(o, q1), lambda: section_injection(o, q1), lambda: section_static(o),
-                    lambda: section_preflight(o, q1)):
+                    lambda: section_preflight(o, q1), lambda: section_direct_refs(o, q1)):
         try:
             section()
         except Exception:

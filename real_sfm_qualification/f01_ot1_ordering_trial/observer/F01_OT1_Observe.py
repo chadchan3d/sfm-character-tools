@@ -36,7 +36,16 @@ and never runs its own capture.
    - the candidate's other pre-Operate graph checks that need no plan baseline (expression type and text, the four
      endpoints, static output mode 3);
    - which animation sets list the expression in their `operators` array (reported only; not part of the candidate);
-   - "would_pass": the candidate's graph-uniqueness precondition holds for both scales.
+   - Astra's DC1 condition, direct DataModel references: SFM's shipped vsUtils.iterReferringAttributes on each live
+     expression, run to the API's invalid-iterator end, recording every referring attribute's owner identity and
+     name; it must return exactly the selected animation set's `operators`, the admitted input channel's
+     `toElement` and the admitted output channel's `fromElement`, matched by live element identity (no names, no
+     saved identities). Any missing, extra, unexpected, unreadable or incomplete result fails;
+   - "would_pass": the candidate's graph-uniqueness precondition and the direct-reference condition hold for both.
+   The same preflight runs again at ARM, before arming; a failing ARM preflight leaves the injector unarmed.
+   vsUtils is imported if it is not already loaded; its module-level code patches vs.CDmElement.__eq__ and
+   __hash__ (and vector hashes) for the rest of the SFM process. The capture records whether it was preloaded, the
+   class attributes before and after, and the source file's SHA-256.
    Undo state and playhead are read before and after the preflight and recorded. Nothing is operated, written,
    refreshed or moved, and no Undo action is opened.
    Coverage: DmeChannel elements listed in the `channels` array of DmeChannelsClip children of the shot's
@@ -66,6 +75,7 @@ OT1_FAIL_BONE = u"bip_tail00"
 OT1_FAIL_TEXT = "OT1 controlled failure after the operator call"
 Q1_OBSERVER_SHA256 = "f2eba1e0abce6e1e1e68202546e750b99dc0032f105d393bf0a40111824fca58"
 OT1_PREFLIGHT_BONES = (u"bip_head", u"bip_tail00")
+OT1_REF_EXPECTED = (("animset", "operators"), ("input_channel", "toElement"), ("output", "fromElement"))
 SNAP_FIELDS = ("source", "key_value", "key_count", "expr_input", "expr_result", "physical_scale", "input_mode",
                "output_mode", "output_key_count", "output_is_empty", "output_use_default_value", "lo", "hi",
                "expression_id", "output_id", "transform_id", "input_channel_id", "control_id")
@@ -288,7 +298,80 @@ def ot1_enumerate(cpm, q1, binding):
     return out
 
 
-def ot1_preflight_bone(cpm, q1, snapshot, row):
+def ot1_vsutils():
+    """SFM's shipped vsUtils (Astra DC1 ruling: its read-only iterReferringAttributes). Importing it runs its
+    module-level code, which patches vs.CDmElement.__eq__/__hash__ (and vector hashes) for the whole process; whether
+    it was already loaded, the class attributes before and after, and the source identity are recorded."""
+    import vs
+    info = {"preloaded": "vsUtils" in sys.modules, "error": None, "file": None, "source_sha256": None,
+            "cdm_eq_before": "__eq__" in vs.CDmElement.__dict__, "cdm_hash_before": "__hash__" in vs.CDmElement.__dict__}
+    try:
+        import vsUtils
+    except Exception as exc:
+        info["error"] = repr(exc)
+        return None, info
+    info["cdm_eq_after"] = "__eq__" in vs.CDmElement.__dict__
+    info["cdm_hash_after"] = "__hash__" in vs.CDmElement.__dict__
+    try:
+        path = os.path.abspath(getattr(vsUtils, "__file__", "") or "")
+        source = path[:-1] if path.lower().endswith((".pyc", ".pyo")) else path
+        info["file"] = source
+        with open(source, "rb") as f:
+            info["source_sha256"] = hashlib.sha256(f.read()).hexdigest()
+    except Exception as exc:
+        info["error"] = "source: %r" % (exc,)
+    if not callable(getattr(vsUtils, "iterReferringAttributes", None)):
+        info["error"] = "vsUtils.iterReferringAttributes is unavailable"
+        return None, info
+    return vsUtils, info
+
+
+def ot1_direct_refs(cpm, q1, vsu, binding):
+    """Every direct DataModel reference to the bound expression (vsUtils.iterReferringAttributes, read only), each
+    attribute's owner identity and name, matched by live element identity against exactly three relationships: the
+    selected animation set's `operators`, the admitted input channel's `toElement`, the admitted output channel's
+    `fromElement`. complete is True only when the enumeration ran to the API's invalid-iterator end."""
+    text, plain = q1["q1_text"], q1["q1_plain"]
+    expected = {"animset": binding.get("animset"), "input_channel": binding.get("input_channel"),
+                "output": binding.get("output")}
+    out = {"complete": False, "error": None, "references": [], "pass": False}
+    if vsu is None:
+        out["error"] = "vsUtils unavailable"
+        return out
+    try:
+        for attr in vsu.iterReferringAttributes(binding["expression"]):
+            row = {"role": None}
+            owner = None
+            try:
+                owner = attr.GetOwner()
+                row.update(owner=plain(cpm.dme_id(owner)), owner_type=text(owner.GetTypeString()),
+                           owner_name=text(owner.GetName()), owner_handle=int(owner.GetHandle()))
+            except Exception as exc:
+                owner = None
+                row["unreadable"] = "owner: %r" % (exc,)
+            try:
+                row["attribute"] = text(attr.GetName())
+            except Exception as exc:
+                row["unreadable"] = "attribute: %r" % (exc,)
+            if owner is not None and "unreadable" not in row:
+                for role, name in OT1_REF_EXPECTED:
+                    if row["attribute"] == name and expected[role] is not None and cpm.same_dme(owner, expected[role]):
+                        row["role"] = role
+            out["references"].append(row)
+        out["complete"] = True
+    except Exception as exc:
+        out["error"] = repr(exc)
+    refs = out["references"]
+    out["matched"] = dict((role, sum(1 for r in refs if r["role"] == role)) for role, _ in OT1_REF_EXPECTED)
+    out["unexpected"] = [r for r in refs if r["role"] is None and "unreadable" not in r]
+    out["unreadable"] = [r for r in refs if "unreadable" in r]
+    out["pass"] = bool(out["complete"] and out["error"] is None and len(refs) == len(OT1_REF_EXPECTED) and
+                       all(n == 1 for n in out["matched"].values()) and not out["unexpected"] and
+                       not out["unreadable"] and all(expected[r] is not None for r in expected))
+    return out
+
+
+def ot1_preflight_bone(cpm, q1, snapshot, row, vsu=None):
     text, plain = q1["q1_text"], q1["q1_plain"]
     out = {"would_pass": False, "error": None}
     if row is None:
@@ -305,7 +388,7 @@ def ot1_preflight_bone(cpm, q1, snapshot, row):
     out["static_output_mode"] = plain(binding.get("static_output_mode"))
     out["identities"] = dict((k, plain(cpm.dme_id(x))) for k, x in (
         ("expression", expression), ("output", output), ("input_channel", input_channel), ("transform", transform),
-        ("control", binding.get("control"))))
+        ("control", binding.get("control")), ("animset", binding.get("animset"))))
     out["expression_type"] = text(cpm.typ(expression))
     out["expr"] = text(cpm.attr_value(expression, "expr") or u"")
     out["expression_ok"] = (out["expression_type"] == u"DmeExpressionOperator" and
@@ -336,12 +419,14 @@ def ot1_preflight_bone(cpm, q1, snapshot, row):
         out["operator_lists"] = lists
     except Exception as exc:
         out["operator_lists"] = {"error": repr(exc)}
+    out["direct_refs"] = ot1_direct_refs(cpm, q1, vsu, binding)
     out["would_pass"] = bool(out["unique"] and out["endpoints_ok"] and out["expression_ok"] and
-                             out["static_output_mode"] == 3 and not out["enumeration"]["unreadable"])
+                             out["static_output_mode"] == 3 and not out["enumeration"]["unreadable"] and
+                             out["direct_refs"]["pass"])
     return out
 
 
-def ot1_preflight(cpm, q1, identity, token):
+def ot1_preflight(cpm, q1, identity, token, vsu=None):
     """The read-only BASE graph scan of the two existing scales (see the docstring, part 4)."""
     out = {"bones": {}, "error": None, "would_pass": False}
     try:
@@ -354,7 +439,7 @@ def ot1_preflight(cpm, q1, identity, token):
         rows = dict((q1["q1_text"](r.get("bone_name")), r) for r in snapshot["bone_index"].values())
         for bone in OT1_PREFLIGHT_BONES:
             try:
-                out["bones"][bone] = ot1_preflight_bone(cpm, q1, snapshot, rows.get(bone))
+                out["bones"][bone] = ot1_preflight_bone(cpm, q1, snapshot, rows.get(bone), vsu)
             except Exception as exc:
                 out["bones"][bone] = {"would_pass": False, "error": repr(exc)}
     finally:
@@ -365,13 +450,27 @@ def ot1_preflight(cpm, q1, identity, token):
     return out
 
 
-def ot1_guarded_preflight(cpm, q1, identity, token, probe):
+def ot1_guarded_preflight(cpm, q1, identity, token, probe, vsu=None):
     """The preflight between two reads of the scene state probe() returns (Undo state, playhead)."""
     before = probe()
-    result = ot1_preflight(cpm, q1, identity, token)
+    result = ot1_preflight(cpm, q1, identity, token, vsu)
     after = probe()
     result["side_effects"] = {"before": before, "after": after, "unchanged": before == after and "error" not in before}
     return result
+
+
+def ot1_preflight_ok(pre):
+    return bool(pre and pre.get("would_pass") is True and (pre.get("side_effects") or {}).get("unchanged") is True)
+
+
+def ot1_arm(st, pre):
+    """Arm the controlled failure only after a passing, unchanged ARM preflight (Astra DC1 ruling)."""
+    if st["fired"] != 0 or st["armed"]:
+        raise RuntimeError("The controlled failure was already armed or fired; nothing written.")
+    if not ot1_preflight_ok(pre):
+        return {"armed": False, "fired": 0, "refused": "ARM preflight failed: not armed"}
+    st["armed"] = True
+    return {"armed": True, "fired": 0, "bone": OT1_FAIL_BONE}
 
 
 def ot1_events_payload(st):
@@ -450,13 +549,15 @@ def ot1_capture(g):
                                     else {"error": "no Body record"})
     except Exception as exc:
         data["settled_full_map"] = {"error": repr(exc)}
+    def probe():
+        try:
+            return {"undo": undo(), "head_seconds": float(sfmApp.GetHeadTimeInSeconds())}
+        except Exception as exc:
+            return {"error": repr(exc)}
+    if step in ("BASE", "ARM"):
+        vsu, data["vsutils"] = ot1_vsutils()
+        data["preflight"] = ot1_guarded_preflight(cpm, q1, identity, token, probe, vsu)
     if step == "BASE":
-        def probe():
-            try:
-                return {"undo": undo(), "head_seconds": float(sfmApp.GetHeadTimeInSeconds())}
-            except Exception as exc:
-                return {"error": repr(exc)}
-        data["preflight"] = ot1_guarded_preflight(cpm, q1, identity, token, probe)
         st = ot1_install(cpm, q1)
         data["hooks_installed"] = sorted(n for n in OT1_HOOKED if getattr(getattr(cpm, n), "ot1_original", None)
                                          is st["originals"][n])
@@ -466,10 +567,7 @@ def ot1_capture(g):
         del st["events"][:]
         data["injector"] = {"armed": st["armed"], "fired": st["fired"]}
     if step == "ARM":
-        if st["fired"] != 0 or st["armed"]:
-            raise RuntimeError("The controlled failure was already armed or fired; nothing written.")
-        st["armed"] = True
-        data["injector"] = {"armed": True, "fired": 0, "bone": OT1_FAIL_BONE}
+        data["injector"] = ot1_arm(st, data["preflight"])
     if step == "ABORT":
         data["hooks_removed"] = ot1_uninstall(cpm)
     payload = json.dumps(data, indent=1, sort_keys=True, default=repr).encode("utf-8")
