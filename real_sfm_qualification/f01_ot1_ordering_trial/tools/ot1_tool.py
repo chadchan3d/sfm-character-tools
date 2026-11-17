@@ -17,9 +17,11 @@ Own commands:
   library TAG   read-only: every preset-library file that differs from the pre-run library
   restore       UA-1's library cleanup, then the S3 restore
   analyze       run tools/ot1_analyze.py (Q/evidence/OT1_VERDICT.json and OT1_VERDICT.md)
+  replay        re-evaluate a finished run's preserved evidence with the current analyzer
+                (Q/evidence/OT1_VERDICT_REPLAY.json and .md; the original verdict is unchanged)
 
 usage: python -I ot1_tool.py OT1.json build | pre | status | install | check | library TAG | collect-logs |
-                                       restore | analyze
+                                       restore | analyze | replay
 """
 from __future__ import print_function
 
@@ -84,10 +86,15 @@ def cmd_analyze(c):
     return ot1_analyze.run(c)
 
 
+def cmd_replay(c):
+    import ot1_analyze
+    return ot1_analyze.run(c, replay=True)
+
+
 def main(argv):
     commands = {"build": cmd_build, "pre": cmd_pre, "status": S.cmd_status, "install": S.cmd_install,
                 "check": S.cmd_check, "collect-logs": S.cmd_collect_logs, "restore": U.cmd_restore,
-                "analyze": cmd_analyze}
+                "analyze": cmd_analyze, "replay": cmd_replay}
     if len(argv) == 4 and argv[2] == "library":
         return U.cmd_library(S.load(argv[1]), argv[3]) or 0
     if len(argv) != 3 or argv[2] not in commands:

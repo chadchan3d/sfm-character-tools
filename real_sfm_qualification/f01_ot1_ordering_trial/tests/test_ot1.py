@@ -285,6 +285,14 @@ def dc1(run, step, bone, change):
     change(run["caps"][step]["preflight"]["bones"][bone]["direct_refs"])
 
 
+def realistic_counts(run):
+    """OT1 run 1's measured internal counts: +37 per Apply, -37 per Undo, unchanged by the aborted Apply."""
+    for step, n in (("BASE", 24041), ("APPLY", 24078), ("UNDO", 24041), ("REDO", 24078), ("UNDO2", 24041),
+                    ("ARM", 24041), ("ABORT", 24041)):
+        run["caps"][step]["session"]["undo"]["count"] = n
+    run["caps"]["ABORT"]["session"]["undo"].update(can_redo=False, redo_desc=u"")
+
+
 def mutate(fn):
     run = passing_run()
     fn(run)
@@ -339,7 +347,17 @@ def section_analyzer():
             1, dict(writes()[0], bone=u"bip_spine"))),
         ("APPLY", "a mode-1 write in the operation", lambda r: ev(r, "APPLY", "scale-write")[0].__setitem__(
             "static_output_mode", 1)),
-        ("APPLY", "two history entries", lambda r: r["caps"]["APPLY"]["session"]["undo"].__setitem__("count", 6)),
+        ("APPLY", "the Apply's top-level label is not 'Apply Body Preset'", lambda r: r["caps"]["APPLY"]["session"]
+         ["undo"].__setitem__("undo_desc", u"Set Value")),
+        ("APPLY", "a Redo entry pending after the Apply", lambda r: r["caps"]["APPLY"]["session"]["undo"].update(
+            can_redo=True, redo_desc=u"Redo Something")),
+        ("APPLY", "BASE already ends with an 'Apply Body Preset' action (ownership ambiguous)", lambda r: [
+            r["caps"][s_]["session"]["undo"].__setitem__("undo_desc", u"Apply Body Preset")
+            for s_ in ("BASE", "UNDO", "UNDO2", "ARM", "ABORT")]),
+        ("UNDO", "one Undo leaves a second Apply entry on top (two owned actions)", lambda r: r["caps"]["UNDO"]["session"]
+         ["undo"].update(undo_desc=u"Apply Body Preset")),
+        ("ABORT", "the failed Apply leaves the Undo stack changed (can_undo differs)", lambda r: r["caps"]["ABORT"]
+         ["session"]["undo"].__setitem__("can_undo", False)),
         ("APPLY", "peer changed by Apply", lambda r: bone(r, "APPLY", PEER, "bip_head").__setitem__(3, 1.33)),
         ("APPLY", "another target bone moved", lambda r: bone(r, "APPLY", TARGET, "bip_spine").__setitem__(1, [0.0, 1.5, 2.0])),
         ("APPLY", "physical scale not the requested value", lambda r: bone(r, "APPLY", TARGET, "bip_head").__setitem__(3, 1.13)),
@@ -454,6 +472,35 @@ def section_analyzer():
     v, gates, failed, md = analyze(run)
     check("V6 a preloaded vsUtils is a starting-environment observation (finding), not a failure",
           v == "CANDIDATE PASS" and "starting-environment observation" in md, failed)
+
+    run = passing_run()
+    realistic_counts(run)
+    v, gates, failed, md = analyze(run)
+    check("H1 SFM's internal Undo item count +37 per Apply (diagnostic only) with correct labels and exact "
+          "restoration -> CANDIDATE PASS", v == "CANDIDATE PASS" and "Apply +37" in md and "Undo -37" in md, failed)
+    check("H2 the aborted Apply clearing a pending Redo entry is reported as an observation, not a failure",
+          v == "CANDIDATE PASS" and "cleared SFM's pending Redo entry" in md, md[-600:])
+    run = passing_run()
+    realistic_counts(run)
+    run["caps"]["UNDO"]["session"]["undo"]["count"] = 24078
+    v, gates, failed, md = analyze(run)
+    check("H3 an inconsistent internal count alone does not decide history (labels and states do)",
+          v == "CANDIDATE PASS", failed)
+
+    run = passing_run()
+    q, c = write_run(run)
+    try:
+        refused = A.run(c, replay=True)
+        first = A.run(c)
+        rep = A.run(c, replay=True)
+        names = sorted(os.listdir(os.path.join(q, "evidence")))
+        with open(os.path.join(q, "evidence", "OT1_VERDICT_REPLAY.md"), "rb") as f:
+            rmd = f.read().decode("utf-8")
+        check("H4 replay refuses without an original verdict, then writes separate OT1_VERDICT_REPLAY files naming the "
+              "original, which stays", refused == 2 and rep == 0 and "OT1_VERDICT.json" in names
+              and "OT1_VERDICT_REPLAY.json" in names and "Replay of the original verdict (CANDIDATE PASS" in rmd, names)
+    finally:
+        shutil.rmtree(q)
 
     run = passing_run()
     q, c = write_run(run)

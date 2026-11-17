@@ -29,8 +29,13 @@ Four gates on complete evidence; the candidate passes only when all four pass:
 Verdict: "CANDIDATE PASS"; "CANDIDATE FAIL" (evidence complete, a gate failed; APPLY PASS with UNDO FAIL is a FAIL);
 or "INCOMPLETE" (evidence or restoration failed; no candidate decision). Exit 0 only on CANDIDATE PASS.
 
-usage: python -I ot1_analyze.py OT1.json      (or: ot1_tool.py OT1.json analyze)
-Writes Q/evidence/OT1_VERDICT.json and OT1_VERDICT.md.
+usage: python -I ot1_analyze.py OT1.json [--replay]      (or: ot1_tool.py OT1.json analyze | replay)
+Writes Q/evidence/OT1_VERDICT.json and OT1_VERDICT.md; --replay writes OT1_VERDICT_REPLAY.json and .md for a finished
+run whose original verdict exists (unchanged).
+
+History (correction after run 1): one owned history action is judged from the top-level Undo/Redo labels and from
+exactly one ordinary Undo, Redo and final Undo restoring the measured states; SFM's GetUndoItemCount counts internal
+change records and is reported as diagnostic evidence only.
 """
 from __future__ import print_function
 
@@ -358,9 +363,20 @@ def evaluate(R):
     A("settled.full_map_passes", Q.map_ok(ap.get("settled_full_map")) and ap["settled_full_map"]["result"] is True,
       Q.failures(ap.get("settled_full_map")))
     base_u, apply_u = undo(cap["BASE"]), undo(ap)
+    # Correction after OT1 run 1: SFM's GetUndoItemCount counts internal change records (+37 for this Apply), not
+    # user-facing history actions. One owned action is judged from the top-level labels here and from exactly one
+    # ordinary Undo, Redo and final Undo restoring the measured states (UNDO gate); the counts stay diagnostic.
     A("history.one_owned_entry", apply_u.get("undo_desc") == APPLY_LABEL and apply_u.get("can_redo") is False and
-      (base_u.get("count") is None or apply_u.get("count") is None or apply_u["count"] == base_u["count"] + 1),
+      apply_u.get("can_undo") is True and base_u.get("undo_desc") not in (None, u"", APPLY_LABEL),
       (base_u, apply_u))
+    counts = dict((s, undo(cap[s]).get("count")) for s in STEPS)
+    R.info["history_item_counts"] = counts
+    if all(isinstance(x, int) for x in counts.values()):
+        R.findings.append("diagnostic: SFM Undo item counts (internal change records, not history actions) %s; "
+                          "Apply %+d, Undo %+d, Redo %+d, final Undo %+d, Abort %+d" % (
+                              ", ".join("%s %d" % (s, counts[s]) for s in STEPS), counts["APPLY"] - counts["BASE"],
+                              counts["UNDO"] - counts["APPLY"], counts["REDO"] - counts["UNDO"],
+                              counts["UNDO2"] - counts["REDO"], counts["ABORT"] - counts["ARM"]))
     A("peer.untouched", peer_same("APPLY"), R.info.get("peer_diffs"))
     changes = target_diff(t("BASE"), t("APPLY"))
     bone_changes = [x for x in changes if x.startswith("bone ")]
@@ -414,11 +430,16 @@ def evaluate(R):
     X("target_fields_equal_arm", not target_diff(t("ARM"), t("ABORT")), target_diff(t("ARM"), t("ABORT"))[:12])
     X("scale_graphs_equal_arm", not graph_diff(g["ARM"], g["ABORT"]), graph_diff(g["ARM"], g["ABORT"]))
     X("history.no_entry_added", undo(ab).get("undo_desc") == undo(arm).get("undo_desc") and
-      APPLY_LABEL != undo(ab).get("undo_desc"), (undo(arm), undo(ab)))
+      undo(ab).get("can_undo") == undo(arm).get("can_undo") and APPLY_LABEL != undo(ab).get("undo_desc"),
+      (undo(arm), undo(ab)))
     X("peer.untouched", peer_same("ABORT"))
     X("injector.fired_once", (ab.get("injector") or {}).get("fired") == 1 and
       (ab.get("injector") or {}).get("armed") is False, ab.get("injector"))
     R.info["abort_redo_state"] = {"arm": undo(arm), "abort": undo(ab)}
+    if undo(arm).get("can_redo") is True and undo(ab).get("can_redo") is False:
+        R.findings.append("observation (not gated): the aborted controlled-failure Apply kept the previous Undo entry "
+                          "%r but cleared SFM's pending Redo entry %r" % (undo(ab).get("undo_desc"),
+                                                                         undo(arm).get("redo_desc")))
     E("log.no_recovery_or_uncertainty", not any(b_ in r["text"] for r in rows for b_ in BAD_LOG),
       sorted(set(b_ for r in rows for b_ in BAD_LOG if b_ in r["text"])))
 
@@ -484,8 +505,19 @@ def markdown(out):
     return "\n".join(lines) + "\n"
 
 
-def run(c):
+def run(c, replay=False):
+    """replay=True re-evaluates a finished run's preserved evidence into OT1_VERDICT_REPLAY.json/.md (exclusive
+    create), naming the original verdict and every capture by SHA-256; the original verdict and evidence are unchanged."""
     R = Report(c)
+    original = None
+    if replay:
+        path = R.ev("OT1_VERDICT.json")
+        if not os.path.isfile(path):
+            print("REPLAY REFUSED: the original OT1_VERDICT.json must exist")
+            return 2
+        first = Q.read_json(path)
+        original = {"OT1_VERDICT.json": Q.sha(path), "OT1_VERDICT.md": Q.sha(R.ev("OT1_VERDICT.md")),
+                    "verdict": first.get("verdict"), "failed": first.get("failed")}
     evaluate(R)
     v, gates = verdict(R.checks)
     out = {"format": "F01-OT1-verdict-v1", "verdict": v, "gates": gates, "identities": R.ids, "checks": R.checks,
@@ -494,8 +526,18 @@ def run(c):
            "captures": dict((n, Q.sha(os.path.join(R.q, "observations", n)))
                             for n in sorted(os.listdir(os.path.join(R.q, "observations")))
                             if n.endswith(".json")) if os.path.isdir(os.path.join(R.q, "observations")) else {}}
+    names = ("OT1_VERDICT.json", "OT1_VERDICT.md")
+    if replay:
+        out["replay"] = {"original": original, "note": "Replay with the corrected history predicate (top-level labels "
+                         "and exact Undo/Redo restoration; SFM's internal Undo item count is diagnostic). The original "
+                         "verdict, captures, logs and restoration records are unchanged."}
+        names = ("OT1_VERDICT_REPLAY.json", "OT1_VERDICT_REPLAY.md")
     md = markdown(out)
-    for name, data in (("OT1_VERDICT.json", json.dumps(out, indent=1, sort_keys=True, default=repr)), ("OT1_VERDICT.md", md)):
+    if replay:
+        md = md.replace("# F-01 OT1 ordering trial:", "# F-01 OT1 ordering trial, replay with the corrected history "
+                        "predicate:", 1) + "\nReplay of the original verdict (%s, sha256 %s), unchanged.\n" % (
+                            original["verdict"], original["OT1_VERDICT.json"])
+    for name, data in ((names[0], json.dumps(out, indent=1, sort_keys=True, default=repr)), (names[1], md)):
         fd = os.open(R.ev(name), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0))
         with os.fdopen(fd, "wb") as f:
             f.write(data.encode("utf-8"))
@@ -504,12 +546,12 @@ def run(c):
 
 
 def main(argv):
-    if len(argv) != 2:
+    if len(argv) not in (2, 3) or (len(argv) == 3 and argv[2] != "--replay"):
         print(__doc__)
         return 2
     sys.path.insert(0, HERE)
     import ot1_tool
-    return run(ot1_tool.S.load(argv[1]))
+    return run(ot1_tool.S.load(argv[1]), replay=len(argv) == 3)
 
 
 if __name__ == "__main__":
