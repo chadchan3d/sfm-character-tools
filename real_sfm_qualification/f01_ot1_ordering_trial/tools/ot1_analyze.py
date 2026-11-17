@@ -16,11 +16,13 @@ Four gates on complete evidence; the candidate passes only when all four pass:
           recovery uncertainty), the target's fields and graphs equal ARM exactly, no history entry is added, the peer
           is untouched.
   EVIDENCE the BASE and ARM preflights (read only, no Undo or playhead change; both graphs pass the candidate's own
-          reader/writer uniqueness scan with nothing unreadable; Astra DC1: SFM's shipped vsUtils.iterReferringAttributes,
-          at its pinned source identity, returns exactly three direct references per live expression - the selected
-          animation set's operators, the admitted input channel's toElement, the admitted output channel's fromElement -
-          with complete enumeration, the same live elements at BASE and ARM, and arming only after a passing ARM
-          preflight), identities, every capture, one SFM process on the disposable session at shot15 with the time never moved,
+          reader/writer uniqueness scan with nothing unreadable; Astra DC1 with the DC2 correction: the IDataModel
+          reference iterator, traversed to the DMATTRIBUTE_REFERENCE_ITERATOR_INVALID sentinel with no repeated token,
+          returns exactly three direct references per live expression - the selected animation set's operators, the
+          admitted input channel's toElement, the admitted output channel's fromElement - every row independently
+          re-validated, the CDmElement/Vector/QAngle/Quaternion class entries and sys.modules' vsUtils membership
+          identical before and after each traversal, the same live elements at BASE and ARM, and arming only after a
+          passing ARM preflight), identities, every capture, one SFM process on the disposable session at shot15 with the time never moved,
           hooks installed and removed, the same selected instance, no other CPM operation, no visibility edit,
           library and installation restored exactly, the session never saved.
 
@@ -147,8 +149,18 @@ def direct_ref_problems(cap, target):
         if not isinstance(d, dict):
             problems.append("%s: no direct-reference evidence" % bone)
             continue
-        if d.get("complete") is not True or d.get("error") is not None:
-            problems.append("%s: enumeration incomplete (%r)" % (bone, d.get("error")))
+        if d.get("complete") is not True or d.get("error") is not None or d.get("terminated_at_sentinel") is not True:
+            problems.append("%s: enumeration did not end normally at the sentinel (%r)" % (bone, d.get("error")))
+        if d.get("repeated_token") is not False:
+            problems.append("%s: repeated or unrecorded iterator-token state" % bone)
+        if (d.get("class_entries") or {}).get("unchanged") is not True:
+            problems.append("%s: Python class entries changed or unrecorded across the traversal" % bone)
+        if (d.get("vsutils_module") or {}).get("unchanged") is not True:
+            problems.append("%s: vsUtils module membership changed or unrecorded across the traversal" % bone)
+        tokens = d.get("tokens")
+        if not isinstance(tokens, list) or not isinstance(d.get("references"), list) or \
+                len(tokens) != len(d["references"]) or len(set(tokens)) != len(tokens):
+            problems.append("%s: iterator tokens do not account for the reference rows" % bone)
         rows = d.get("references")
         if not isinstance(rows, list):
             problems.append("%s: no reference list" % bone)
@@ -284,17 +296,13 @@ def evaluate(R):
     E("preflight.ARM_read_only_and_passing_before_arming",
       arm_pre.get("would_pass") is True and (arm_pre.get("side_effects") or {}).get("unchanged") is True and
       arm_pre.get("instance") == instance, (arm_pre.get("would_pass"), (arm_pre.get("side_effects") or {}).get("unchanged")))
-    vsu = dict((s, cap[s].get("vsutils") or {}) for s in ("BASE", "ARM"))
-    E("dc1.shipped_vsutils_helper", all(v.get("error") is None and v.get("source_sha256") == c["pins"].get("vsutils_sha256")
-                                        for v in vsu.values()), dict((s, (v.get("source_sha256"), v.get("error")))
-                                                                     for s, v in vsu.items()))
-    R.info["vsutils"] = vsu
-    if vsu["BASE"].get("preloaded") is False:
-        R.findings.append("vsUtils was not loaded before BASE: the observer imported it, and its import-time patches "
-                          "(vs.CDmElement __eq__/__hash__: before %r/%r, after %r/%r) stayed in effect for the rest of the "
-                          "session, including the Apply, Undo, Redo and Abort steps (design condition OT1-DC2)" % (
-                              vsu["BASE"].get("cdm_eq_before"), vsu["BASE"].get("cdm_hash_before"),
-                              vsu["BASE"].get("cdm_eq_after"), vsu["BASE"].get("cdm_hash_after")))
+    env = dict((s, cap[s].get("environment")) for s in ("BASE", "ARM"))
+    E("dc2.environment_recorded", all(isinstance(e, dict) and isinstance(e.get("vsutils_in_sys_modules_at_capture"),
+                                                                           bool) for e in env.values()), env)
+    R.info["environment"] = env
+    if isinstance(env["BASE"], dict) and env["BASE"].get("vsutils_in_sys_modules_at_capture") is True:
+        R.findings.append("vsUtils was already in sys.modules at BASE (a starting-environment observation; the observer "
+                          "imports no vsUtils and its membership was unchanged across every traversal)")
     for b, v in sorted(pf.items()):
         if isinstance(v["operator_lists"], list) and len(v["operator_lists"]) != 1:
             R.findings.append("preflight: %s's expression is listed in the operators arrays of %r (membership only; "

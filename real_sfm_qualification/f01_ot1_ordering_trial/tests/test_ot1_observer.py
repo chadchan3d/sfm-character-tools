@@ -11,8 +11,11 @@ module (the five hooked functions and prod_bs_snapshot as plain functions). The 
   app source, with its strict-read helpers) on a fake channels track: valid, shared, ambiguous and unreadable graphs,
   a refused binding, a missing bone, a changed endpoint, operators-array membership, a recorded state change; no
   write, Operate or key change; it runs before the hooks are installed.
-- D: Astra's DC1 direct-reference condition (vsUtils.iterReferringAttributes, faked here as a generator over the
-  scene's referring attributes): the expected three live relationships pass; an off-track reader, an unexpected
+- D: Astra's DC1 direct-reference condition with the DC2 correction (the IDataModel iterator primitives on a fake
+  vs.g_pDataModel over the scene's referring attributes, configurable sentinel, fault injection; no vsUtils):
+  traversal to the sentinel, an empty enumeration, a false-valued valid token, a fourth reference, an attribute-less
+  token, an exception after three rows, a repeated token, a class entry replaced or created during traversal, vsUtils
+  loaded during traversal, vsUtils initially absent or already loaded; the expected three live relationships pass; an off-track reader, an unexpected
   non-channel reference, a missing or duplicated reference, an unreadable owner or attribute name, an enumeration that
   raises part way, a wrong-instance or replaced element, and an unavailable vsUtils fail; operators-array membership
   is one of the three expected relationships; ARM arms only after a passing, unchanged preflight.
@@ -236,7 +239,7 @@ def section_static(o):
     import re
     builtin_opens = re.findall(r"(?<![\w.])open\(([^)]*)\)", src)
     check("L3 its only file write is the exclusive-create capture (one os.open with O_EXCL; builtin open read-only)",
-          src.count("os.open(") == 1 and "O_EXCL" in src and builtin_opens == ['path, "rb"', 'source, "rb"'],
+          src.count("os.open(") == 1 and "O_EXCL" in src and builtin_opens == ['path, "rb"'],
           builtin_opens)
 
 
@@ -348,7 +351,9 @@ def fscene():
     for i, bone in enumerate(sorted(graphs)):
         rows[(i, bone)] = {"bone_name": bone, "classification": u"CHANNEL_DRIVEN_SCALE", "_binding": graphs[bone]["binding"]}
     return {"graphs": graphs, "peer": peer, "clip": clip, "peer_clip": peer_clip, "track": track, "shot": shot,
-            "rows": rows, "target_set": target, "peer_set": peer_set, "refs": refs, "raise_after": None}
+            "rows": rows, "target_set": target, "peer_set": peer_set, "refs": refs, "raise_after": None,
+            "dm": {"sentinel": 0, "first_token": 1, "raise_on_next": None, "repeat_at": None, "none_attr_at": None,
+                   "on_next": None}}
 
 
 class FRef(object):
@@ -367,16 +372,58 @@ class FRef(object):
         return self.attr_name
 
 
-def fake_vsutils(scene):
-    vsu = types.ModuleType("vsUtils")
+class FClass(object):
+    """Stand-ins for vs.CDmElement / Vector / QAngle / Quaternion: their own __dict__ entries are what DC2 snapshots."""
 
-    def iterReferringAttributes(elt):
-        for i, attr in enumerate(list(scene["refs"].get(elt.GetHandle(), []))):
-            if scene["raise_after"] == (elt.GetHandle(), i):
+
+def fake_vs(scene):
+    """A fake vs module: g_pDataModel implements Astra's three iterator primitives over scene["refs"], with a
+    configurable sentinel and token numbering, and fault injection; the five DC2 classes."""
+    cfg = scene["dm"]
+    vsmod = types.ModuleType("vs")
+    vsmod.DMATTRIBUTE_REFERENCE_ITERATOR_INVALID = cfg["sentinel"]
+    for cls_name in ("CDmElement", "Vector", "QAngle", "Quaternion"):
+        setattr(vsmod, cls_name, type(cls_name, (FClass,), {}))
+    vsmod.CDmElement.__hash__ = lambda self: 1   # an existing entry (as vsUtils would leave), kept by identity
+    tokens = {}
+    calls = {"first": 0, "get": 0, "next": 0}
+
+    class DM(object):
+        def FirstAttributeReferencingElement(self, handle):
+            calls["first"] += 1
+            rows = scene["refs"].get(handle, [])
+            if not rows:
+                return cfg["sentinel"]
+            token = cfg["first_token"] + handle * 100
+            tokens[token] = (handle, 0)
+            return token
+
+        def GetAttributeFromIterator(self, token):
+            calls["get"] += 1
+            handle, i = tokens[token]
+            if scene["raise_after"] == (handle, i):
                 raise RuntimeError("iterator failed")
-            yield attr
-    vsu.iterReferringAttributes = iterReferringAttributes
-    return vsu
+            if cfg["none_attr_at"] == (handle, i):
+                return None
+            return scene["refs"][handle][i]
+
+        def NextAttributeReferencingElement(self, token):
+            calls["next"] += 1
+            handle, i = tokens[token]
+            if cfg["on_next"] is not None:
+                cfg["on_next"](vsmod, handle)
+            if cfg["raise_on_next"] == (handle, i):
+                raise RuntimeError("Next failed")
+            if cfg["repeat_at"] == (handle, i):
+                return token
+            if i + 1 >= len(scene["refs"][handle]):
+                return cfg["sentinel"]
+            nxt = token + 1
+            tokens[nxt] = (handle, i + 1)
+            return nxt
+    vsmod.g_pDataModel = DM()
+    vsmod.calls = calls
+    return vsmod
 
 
 def preflight_cpm(scene):
@@ -403,12 +450,13 @@ def preflight_cpm(scene):
     return cpm, app
 
 
-def run_preflight(o, q1, scene, probe=None, vsu="fake"):
+def run_preflight(o, q1, scene, probe=None, vsmod="fake"):
     del TOUCHED[:]
     cpm, _ = preflight_cpm(scene)
     states = iter(probe or [{"undo": "u", "head_seconds": 0.2083}, {"undo": "u", "head_seconds": 0.2083}])
+    scene["vs"] = fake_vs(scene) if vsmod == "fake" else vsmod
     return o["ot1_guarded_preflight"](cpm, q1, {"model": u"m"}, {"kind": u"token"}, lambda: next(states),
-                                      fake_vsutils(scene) if vsu == "fake" else vsu)
+                                      scene["vs"])
 
 
 def section_preflight(o, q1):
@@ -522,7 +570,9 @@ def section_direct_refs(o, q1):
         d = r["bones"][bone]["direct_refs"]
         check("D1 %s: exactly the three live relationships (operators of A, input toElement, output fromElement), "
               "enumeration complete -> pass" % bone,
-              d["pass"] is True and d["complete"] is True and d["error"] is None and
+              d["pass"] is True and d["complete"] is True and d["error"] is None and d["terminated_at_sentinel"] is True
+              and d["repeated_token"] is False and len(d["tokens"]) == 3 and d["class_entries"]["unchanged"] is True
+              and d["vsutils_module"]["unchanged"] is True and
               sorted(x["role"] for x in d["references"]) == ["animset", "input_channel", "output"] and
               sorted(x["attribute"] for x in d["references"]) == ["fromElement", "operators", "toElement"] and
               all(isinstance(x.get("owner_handle"), int) for x in d["references"]), d)
@@ -562,26 +612,82 @@ def section_direct_refs(o, q1):
         ("a replaced input channel (same name, another element)",
          lambda s: s["refs"][head(s)["expression"].h].__setitem__(
              1, FRef(FEl(u"DmeChannel", u"bip_head_scale"), "toElement")), "unexpected"),
+        ("an empty enumeration (sentinel first)", lambda s: s["refs"].__setitem__(head(s)["expression"].h, []),
+         "count"),
+        ("a fourth reference after the expected three", lambda s: s["refs"][head(s)["expression"].h].append(
+            FRef(FEl(u"DmElement", u"later"), "items")), "count"),
+        ("an iterator returning no attribute", lambda s: s["dm"].__setitem__("none_attr_at", (head(s)["expression"].h, 1)),
+         "unreadable"),
+        ("an exception after three valid rows (NextAttributeReferencingElement)", lambda s: s["dm"].__setitem__(
+            "raise_on_next", (head(s)["expression"].h, 2)), "incomplete"),
+        ("a repeated iterator token", lambda s: s["dm"].__setitem__("repeat_at", (head(s)["expression"].h, 1)),
+         "repeated"),
+        ("a class method replaced during traversal (same name, new object)", lambda s: s["dm"].__setitem__(
+            "on_next", lambda vsmod, h: h == head(s)["expression"].h and setattr(
+                vsmod.CDmElement, "__hash__", lambda self: 1)), "classes"),
+        ("an absent class entry created during traversal (Vector.__hash__)", lambda s: s["dm"].__setitem__(
+            "on_next", lambda vsmod, h: h == head(s)["expression"].h and setattr(
+                vsmod.Vector, "__hash__", lambda self: 2)), "classes"),
+        ("vsUtils loaded during traversal", lambda s: s["dm"].__setitem__(
+            "on_next", lambda vsmod, h: h == head(s)["expression"].h and sys.modules.setdefault(
+                "vsUtils", types.ModuleType("vsUtils"))), "module"),
         ("the right owner under another attribute name",
          lambda s: s["refs"][head(s)["expression"].h].__setitem__(
              2, FRef(head(s)["output"], "toElement")), "unexpected"),
     ]
     for label, mutate, kind in cases:
+        sys.modules.pop("vsUtils", None)
         r = variant(mutate)
+        sys.modules.pop("vsUtils", None)
         d = r["bones"][u"bip_head"]["direct_refs"]
-        why = {"unexpected": bool(d["unexpected"]), "count": d["matched"]["animset"] != 1,
-               "unreadable": bool(d["unreadable"]), "incomplete": d["complete"] is False and d["error"] is not None}
+        why = {"unexpected": bool(d["unexpected"]), "count": d["matched"]["animset"] != 1 or
+               len(d["references"]) != 3, "unreadable": bool(d["unreadable"]),
+               "incomplete": d["complete"] is False and d["error"] is not None and not d["terminated_at_sentinel"],
+               "repeated": d["repeated_token"] is True and d["complete"] is False,
+               "classes": d["class_entries"]["unchanged"] is False, "module": d["vsutils_module"]["unchanged"] is False}
         check("D2 %s -> fails (%s); would_pass False; the tail is unaffected" % (label, kind),
               d["pass"] is False and why[kind] and r["bones"][u"bip_head"]["would_pass"] is False
               and r["would_pass"] is False and r["bones"][u"bip_tail00"]["would_pass"] is True, d)
     r = variant(off_track)
     check("D2 the off-track reader is invisible to the channel-track scan, so only DC1 catches it",
           r["bones"][u"bip_head"]["unique"] is True and r["bones"][u"bip_head"]["direct_refs"]["pass"] is False)
-    r = run_preflight(o, q1, fscene(), vsu=None)
-    check("D3 vsUtils unavailable -> no references, would_pass False",
-          r["would_pass"] is False and r["bones"][u"bip_head"]["direct_refs"]["error"] == "vsUtils unavailable")
-    r = run_preflight(o, q1, fscene())
-    check("D4 read only with DC1 too: no write, Operate or key change", TOUCHED == [] and r["side_effects"]["unchanged"])
+    sys.modules.pop("vsUtils", None)
+    r = run_preflight(o, q1, fscene(), vsmod=None)
+    check("D3 vs unavailable -> no references, would_pass False",
+          r["would_pass"] is False and r["bones"][u"bip_head"]["direct_refs"]["error"] == "vs unavailable")
+
+    s = fscene()
+    s["dm"].update(sentinel=-1, first_token=0)
+    s["refs"] = dict((h, rows) for h, rows in s["refs"].items())
+    # token 0 + handle*100 is never falsy for real handles, so force a falsy first token for the head expression
+    h = s["graphs"][u"bip_head"]["binding"]["expression"].h
+    s["dm"]["first_token"] = -h * 100
+    r = run_preflight(o, q1, s)
+    d = r["bones"][u"bip_head"]["direct_refs"]
+    check("D7 a false-valued valid first token (0, sentinel -1) is traversed, not treated as the end",
+          d["tokens"][0] == "0" and d["pass"] is True and d["terminated_at_sentinel"] is True, d["tokens"])
+
+    for preloaded in (False, True):
+        sys.modules.pop("vsUtils", None)
+        if preloaded:
+            sys.modules["vsUtils"] = types.ModuleType("vsUtils")
+        s = fscene()
+        r = run_preflight(o, q1, s)
+        d = r["bones"][u"bip_head"]["direct_refs"]
+        check("D8 vsUtils %s: membership recorded unchanged and the observer imports nothing (pass)"
+              % ("already loaded" if preloaded else "initially absent"),
+              d["vsutils_module"] == {"before": preloaded, "after": preloaded, "unchanged": True} and d["pass"] is True
+              and ("vsUtils" in sys.modules) is preloaded, d["vsutils_module"])
+        sys.modules.pop("vsUtils", None)
+    check("D8 the class entries are recorded with an explicit absent marker",
+          d["class_entries"]["before"]["Vector.__hash__"] == "<absent>"
+          and isinstance(d["class_entries"]["before"]["CDmElement.__hash__"], dict))
+    s = fscene()
+    r = run_preflight(o, q1, s)
+    check("D9 three primitives used: one First per expression, Next until the sentinel; no write, Operate or key "
+          "change; Undo and playhead unchanged",
+          s["vs"].calls["first"] == 2 and s["vs"].calls["get"] == 6 and s["vs"].calls["next"] == 6
+          and TOUCHED == [] and r["side_effects"]["unchanged"] is True, s["vs"].calls)
 
     st = {"armed": False, "fired": 0}
     good = run_preflight(o, q1, fscene())
@@ -605,8 +711,17 @@ def section_direct_refs(o, q1):
     with open(OBSERVER, "rb") as f:
         src = f.read().decode("ascii")
     capture = src[src.index("def ot1_capture"):]
-    check("D6 BASE and ARM both run the preflight with vsUtils; ARM arms through ot1_arm after it",
-          'if step in ("BASE", "ARM"):' in capture and "ot1_vsutils()" in capture
+    tree = ast.parse(src.encode("ascii"))
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(a.name for a in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            imported.add(node.module)
+    check("D6 the observer imports no vsUtils (no import statement, no __import__/importlib)",
+          "vsUtils" not in imported and "__import__" not in src and "importlib" not in src, sorted(imported))
+    check("D6 BASE and ARM both run the preflight on the vs DataModel; ARM arms through ot1_arm after it",
+          'if step in ("BASE", "ARM"):' in capture and "ot1_guarded_preflight(cpm, q1, identity, token, probe, vs)" in capture
           and capture.index("ot1_guarded_preflight(") < capture.index("ot1_arm(st, data[\"preflight\"])")
           and "st[\"armed\"] = True" not in capture)
 

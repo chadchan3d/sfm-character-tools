@@ -20,8 +20,7 @@ correction and replay), `F01_Q1_RESULTS_ERRATUM_1.md` (the corrected refresh-bef
 | Registries (unchanged) | pose `f445d5ef…`, body `22dcd159…` |
 | Published installation (restored after the trial) | v1.0.0, CPM `ccbed9d7…` |
 | Trial suite | `cpm/convergence/tests/test_cpm_app_f01_ordering_trial.py` `4424ab09…` |
-| Native kit (current: DC1 instrumentation, section 4.3; earlier `ac84df8` observer `66a4f485…`, `59414aa` observer `93e9fbf3…`) | `real_sfm_qualification/f01_ot1_ordering_trial/`: `PROCEDURE.md`, `ot1.template.json` `40b4b11a…`, `observer/F01_OT1_Observe.py` **`403ea56642249559c4e74d2a9d0e5c6adea6773a7aa6910d8cd96464e24143e2`** (loads the pinned Q1 observer `f2eba1e0…`), `tools/ot1_tool.py` `6f052af2…`, `tools/ot1_analyze.py` `f0bbb45b…`, `tests/test_ot1.py` `e823b955…`, `tests/test_ot1_observer.py` `b1556c5b…` |
-| SFM's shipped DC1 helper (pinned, verified by `pre`) | `<SFM game>\sdktools\python\global\Scripts\vsUtils.py` `d89f23c0599fa271abc52a3edffcfcfebd46bc381671cfad07076d7522f9767a` |
+| Native kit (current: DC2 correction, section 4.4; earlier `ac84df8` observer `66a4f485…`, `59414aa` `93e9fbf3…`, `246118e` `403ea566…` with a `vsUtils` pin, now removed) | `real_sfm_qualification/f01_ot1_ordering_trial/`: `PROCEDURE.md`, `ot1.template.json` `ea2e540f…`, `observer/F01_OT1_Observe.py` **`5a13708a743dda327e0b9cdd4666d401f8784f33165a07fc3f33fcad0fb6e0d6`** (loads the pinned Q1 observer `f2eba1e0…`), `tools/ot1_tool.py` `84769ba5…`, `tools/ot1_analyze.py` `81c13a02…`, `tests/test_ot1.py` `ef58c9bf…`, `tests/test_ot1_observer.py` `48c93091…` |
 
 ## 2. The candidate correction
 
@@ -221,6 +220,9 @@ the direct-reference inspection; it is implemented in section 4.3.
 
 ### 4.3 Astra's DC1 ruling and the direct-reference instrumentation
 
+*(The `vsUtils` import, its pin and OT1-DC2 below are superseded by section 4.4: the observer now walks the same
+iterator through `vs` and imports no `vsUtils`. The DC1 requirements stand.)*
+
 **Ruling (Astra, second ACCEPT WITH CONDITIONS; accepted by the Designer in "F-01 OT1 — Implement Astra DC1
 Instrumentation Condition"; recorded here as the assignment states it):** OT1-DC1 is resolved by instrumentation, not
 by a candidate change. At the existing BASE observation (after the peer exists) and again at ARM (before arming), the
@@ -278,6 +280,57 @@ preloaded and the class attributes before and after; the analyzer reports it as 
 unreviewed substitute (for example calling the same `IDataModel` iterator primitives without importing `vsUtils`, or
 undoing its patches) was used. Astra should accept the import as implemented, or choose one of those alternatives.
 
+### 4.4 Astra's DC2 ruling and the corrected instrument (supersedes the `vsUtils` use in 4.3)
+
+**Ruling (Astra; accepted by the Designer in "F-01 OT1 — Implement Astra DC2 Correction"; recorded as the assignment
+states it):** the observer must not import `vsUtils`. It walks the same IDataModel iterator directly through the
+existing `vs` binding: `vs.g_pDataModel.FirstAttributeReferencingElement(expression.GetHandle())`, then
+`GetAttributeFromIterator(token)` (owner and attribute name) and `NextAttributeReferencingElement(token)` while the
+token differs from `vs.DMATTRIBUTE_REFERENCE_ITERATOR_INVALID`, with explicit sentinel comparison (no truthiness),
+repeated-token detection, refusal for unreadable attributes, owners or identities, refusal for API exceptions or
+incomplete traversal, success only after reaching the sentinel, and no acceptance of the three references before
+normal termination. DC1's three live relationships, the channel-track scan, the binding checks, BASE-stops-before-
+Apply and ARM-leaves-unarmed are unchanged; the search is not broadened and validation is not weakened. Before and
+immediately after each traversal the class-dictionary entries `CDmElement.__eq__`, `CDmElement.__hash__`,
+`Vector.__hash__`, `QAngle.__hash__`, `Quaternion.__hash__` (an explicit marker when absent) are snapshotted and
+compared by object identity, and `vsUtils`' membership in `sys.modules` must be unchanged; a preloaded `vsUtils` is a
+starting-environment observation only.
+
+**Implementation:** `ot1_direct_refs(cpm, q1, vs, binding)` performs exactly that traversal (`OT1_REF_LIMIT` 4096
+tokens as a further stop), records the sentinel's and every token's representation, each row's owner identity, type,
+name and handle and the attribute name, `terminated_at_sentinel`, `repeated_token`, `class_entries` (before, after,
+`unchanged` by identity) and `vsutils_module` (before, after, `unchanged` by identity); its pass requires all of them.
+Each BASE and ARM capture records `environment.vsutils_in_sys_modules_at_capture`. The observer contains no
+`vsUtils`/`__import__`/`importlib` import (static test D6). The `vsUtils.py` pin and its `pre` check are removed (no
+longer a dependency). The analyzer re-validates every recorded row independently and additionally requires
+`terminated_at_sentinel`, no repeated token, one unique token per row, unchanged class entries and module membership,
+and the environment record at BASE and ARM; partial or contradictory evidence → INCOMPLETE.
+
+**Installed contract (checked offline against SFM's bindings):** `IDataModel.FirstAttributeReferencingElement(
+DmElementHandle_t) -> DmAttributeReferenceIterator_t`, `NextAttributeReferencingElement(iterator) -> iterator`,
+`GetAttributeFromIterator(iterator) -> CDmAttribute`, and `vs.DMATTRIBUTE_REFERENCE_ITERATOR_INVALID` exported
+(`vs/datamodel.py` lines 394, 1361–1371); `CDmAttribute.GetOwner()` and `GetName()` exist. This is the contract
+Astra described and the shipped `vsUtils` helper uses; no discrepancy was found. The sentinel's numeric value and the
+token type live in the compiled module and are not visible offline; every capture records them.
+
+**Offline verification:** `test_ot1_observer.py` **68/68 on SFM Python 2.7.5 and 3.10.6** with a fake DataModel
+implementing the three primitives: traversal of the three references to the sentinel; an empty enumeration; a
+false-valued valid first token (0, with sentinel −1) traversed, not treated as the end; a fourth reference after the
+three; an off-track reader and a non-channel owner; missing, duplicated or incorrect references; an unreadable owner,
+attribute name or attribute-less token; an exception in `NextAttributeReferencingElement` after three valid rows; a
+repeated token; `vsUtils` initially absent and already loaded (membership unchanged, nothing imported); a
+`CDmElement.__hash__` replaced by a new object of the same name, and an absent `Vector.__hash__` created, during
+traversal; `vsUtils` loaded during traversal; one `First` per expression and `Next` until the sentinel; no write,
+`Operate()` or key change; Undo state and playhead unchanged; ARM arming only after a passing preflight.
+`test_ot1.py` **91/91 on Python 3.10.6** (the DC2 defects at BASE or ARM, partial token or class-entry evidence, tokens
+not accounting for the rows, a missing environment record → INCOMPLETE; a preloaded `vsUtils` → finding, not failure).
+Separately documented limitation: on SFM Python 2.7.5 the Python 3 kit file is 61/91 (previously 55/84), all from the
+reused Q1 helper `set_field_problems` (`isinstance(name, str)` against 2.7's JSON `unicode`, which also turns V5's
+synthetic pass into INCOMPLETE); with only that helper made unicode-aware in memory it is 91/91.
+
+**Design condition OT1-DC2: resolved** by this correction (the observer no longer changes the process's element
+equality or hashing, and proves it per traversal).
+
 **Protected inventories** (the S3 tool, unchanged): `usermod\scripts`, `usermod\cfg`, the preset library, the SFM
 sessions folder; plus the published CPM, both registries absent, `.pyc` and housekeeping files; restoration verified
 by `restore`/`check` and the analyzer.
@@ -328,9 +381,8 @@ renewed adjudication; a second refresh is admissible only as Astra's separate co
 
 ## 7. Readiness recommendation
 
-**OT1-DC1 is implemented as Astra ruled (section 4.3). Ready for the Owner's authorization of the native trial once
-Astra has disposed of design condition OT1-DC2** (the `vsUtils` import's process-wide equality patch, section 4.3),
-with these conditions: run exactly `PROCEDURE.md` in one
+**OT1-DC1 and OT1-DC2 are implemented as Astra ruled (sections 4.3–4.4); no Astra design condition is open. Ready
+for the Owner's authorization of the native trial**, with these conditions: run exactly `PROCEDURE.md` in one
 SFM session from a new run folder; the candidate and qualification build as pinned (`0cea8acd…` / `0fbb4fb1…`);
 restoration and the analyzer always run; the verdict is reported as the analyzer gives it. A CANDIDATE PASS qualifies
 the ordering for review only: production repair stays on hold, the shipping behaviour (`committed-unverified`) is

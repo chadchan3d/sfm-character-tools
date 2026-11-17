@@ -69,8 +69,7 @@ def section_template():
           and t["paths"]["LEGACY_POSE"] == ua["paths"]["LEGACY_POSE"])
     with open(os.path.join(KIT, "observer", "F01_OT1_Observe.py"), "rb") as f:
         obs = f.read().decode("ascii")
-    check("T4 the shipped vsUtils.py (Astra DC1 helper) is pinned", len(t["pins"].get("vsutils_sha256", "")) == 64
-          and all(ch in "0123456789abcdef" for ch in t["pins"]["vsutils_sha256"]))
+    check("T4 no vsUtils pin remains (Astra DC2: the observer does not import vsUtils)", "vsutils_sha256" not in t["pins"])
     check("T4 the OT1 observer pins the same Q1 observer", 'Q1_OBSERVER_SHA256 = "%s"' % t["pins"]["q1_observer_sha256"]
           in obs)
 
@@ -167,9 +166,6 @@ U_UNDONE = {"can_undo": True, "can_redo": True, "undo_desc": u"CreateAnimationSe
             "redo_desc": u"Redo Apply Body Preset", "count": 5}
 
 
-VSU_PIN = "a" * 64
-
-
 def ident(kind, label, handle):
     return [kind, label, handle, handle * 8]
 
@@ -192,7 +188,10 @@ def direct(bone):
     ids = bone_ids(bone)
     rows = [ref(ids["animset"], u"operators", "animset"), ref(ids["input_channel"], u"toElement", "input_channel"),
             ref(ids["output"], u"fromElement", "output")]
-    return {"complete": True, "error": None, "references": rows, "pass": True,
+    return {"complete": True, "terminated_at_sentinel": True, "repeated_token": False, "error": None,
+            "tokens": ["%d" % (1000 + i) for i in range(len(rows))], "sentinel": "0",
+            "class_entries": {"before": {}, "after": {}, "unchanged": True},
+            "vsutils_module": {"before": False, "after": False, "unchanged": True}, "references": rows, "pass": True,
             "matched": {"animset": 1, "input_channel": 1, "output": 1}, "unexpected": [], "unreadable": []}
 
 
@@ -228,10 +227,8 @@ def passing_run():
     caps["BASE"]["hooks_installed"] = list(A.HOOKS)
     caps["BASE"]["preflight"] = preflight()
     caps["ARM"]["preflight"] = preflight()
-    for step, preloaded in (("BASE", False), ("ARM", True)):
-        caps[step]["vsutils"] = {"preloaded": preloaded, "error": None, "source_sha256": VSU_PIN, "file": u"x",
-                                 "cdm_eq_before": preloaded, "cdm_hash_before": preloaded, "cdm_eq_after": True,
-                                 "cdm_hash_after": True}
+    for step in ("BASE", "ARM"):
+        caps[step]["environment"] = {"vsutils_in_sys_modules_at_capture": False}
     caps["ARM"]["injector"] = {"armed": True, "fired": 0, "bone": u"bip_tail00"}
     caps["ABORT"]["injector"] = {"armed": False, "fired": 1}
     caps["ABORT"]["hooks_removed"] = True
@@ -264,7 +261,7 @@ def write_run(run):
     with open(os.path.join(q, "sessions", "OT1_KRYSTAL.dmx"), "wb") as f:
         f.write(run["session"])
     pins = {"candidate_cpm_sha256": CAND, "qualification_cpm_sha256": QUAL,
-            "r2_fixture_sha256": hashlib.sha256(b"OT1 session bytes").hexdigest(), "vsutils_sha256": VSU_PIN}
+            "r2_fixture_sha256": hashlib.sha256(b"OT1 session bytes").hexdigest()}
     return q, {"paths": {"Q": q}, "pins": pins, "character_dir": "krystal2020--x"}
 
 
@@ -428,9 +425,19 @@ def section_analyzer():
         ("DC1: no ARM preflight", lambda r: r["caps"]["ARM"].pop("preflight")),
         ("DC1: ARM preflight changed the state", lambda r: r["caps"]["ARM"]["preflight"]["side_effects"].__setitem__(
             "unchanged", False)),
-        ("DC1: vsUtils not the pinned shipped helper", lambda r: r["caps"]["ARM"]["vsutils"].__setitem__(
-            "source_sha256", "b" * 64)),
-        ("DC1: vsUtils import failed", lambda r: r["caps"]["BASE"]["vsutils"].__setitem__("error", "ImportError")),
+        ("DC2: traversal did not reach the sentinel", lambda r: dc1(r, "BASE", u"bip_head", lambda d: d.update(
+            terminated_at_sentinel=False))),
+        ("DC2: a repeated iterator token", lambda r: dc1(r, "ARM", u"bip_tail00", lambda d: d.update(
+            repeated_token=True))),
+        ("DC2: a class entry replaced across a traversal", lambda r: dc1(r, "BASE", u"bip_tail00", lambda d: d[
+            "class_entries"].__setitem__("unchanged", False))),
+        ("DC2: vsUtils membership changed across a traversal", lambda r: dc1(r, "ARM", u"bip_head", lambda d: d[
+            "vsutils_module"].__setitem__("unchanged", False))),
+        ("DC2: partial evidence (no token list)", lambda r: dc1(r, "BASE", u"bip_head", lambda d: d.pop("tokens"))),
+        ("DC2: tokens not accounting for the rows", lambda r: dc1(r, "ARM", u"bip_head", lambda d: d["tokens"].pop())),
+        ("DC2: partial evidence (no class-entry record)", lambda r: dc1(r, "ARM", u"bip_tail00", lambda d: d.pop(
+            "class_entries"))),
+        ("DC2: no environment record at ARM", lambda r: r["caps"]["ARM"].pop("environment")),
         ("BASE not the expected starting state", lambda r: r["caps"]["BASE"].__setitem__("settled_full_map",
                                                                                         full_map(True))),
     ]
@@ -440,9 +447,13 @@ def section_analyzer():
               (v, failed))
 
     v, gates, failed, md = analyze(passing_run())
-    check("V6 the expected three references with the valid operators-array membership pass at BASE and ARM, and the "
-          "observer-imported vsUtils is reported as a finding, not a failure", v == "CANDIDATE PASS" and
-          "dc1.BASE_three_live_references_per_expression" not in failed and "OT1-DC2" in md, failed)
+    check("V6 the expected three references with the valid operators-array membership pass at BASE and ARM",
+          v == "CANDIDATE PASS" and "dc1.BASE_three_live_references_per_expression" not in failed, failed)
+    run = passing_run()
+    run["caps"]["BASE"]["environment"]["vsutils_in_sys_modules_at_capture"] = True
+    v, gates, failed, md = analyze(run)
+    check("V6 a preloaded vsUtils is a starting-environment observation (finding), not a failure",
+          v == "CANDIDATE PASS" and "starting-environment observation" in md, failed)
 
     run = passing_run()
     q, c = write_run(run)

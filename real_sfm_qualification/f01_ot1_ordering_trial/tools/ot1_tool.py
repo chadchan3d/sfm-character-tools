@@ -12,8 +12,7 @@ UA-1's whole-library backup and exact files-and-folders cleanup.
 Own commands:
   build         the observer pins (OT1 and the Q1 observer it loads), then the K2 build: the OT1 qualification CPM
                 from the pinned trial candidate
-  pre           verify (read only) that Krystal's Body preset is the pinned record and that SFM's shipped
-                vsUtils.py (the DC1 reference helper the observer imports) is the pinned file; K2's pre (OT1_KRYSTAL.dmx;
+  pre           verify (read only) that Krystal's Body preset is the pinned record; K2's pre (OT1_KRYSTAL.dmx;
                 OT1_SPARE.dmx is copied but never opened); then the library backup
   library TAG   read-only: every preset-library file that differs from the pre-run library
   restore       UA-1's library cleanup, then the S3 restore
@@ -67,15 +66,8 @@ def cmd_build(c):
     K.cmd_build(c)
 
 
-def vsutils(c):
-    return os.path.join(S.p(c, "GAME"), "sdktools", "python", "global", "Scripts", "vsUtils.py")
-
-
 def cmd_pre(c):
     problems = []
-    if not os.path.isfile(vsutils(c)) or T.sha(vsutils(c)) != c["pins"]["vsutils_sha256"]:
-        problems.append("SFM's shipped %s is not the pinned %s (Astra DC1 helper)" % (vsutils(c),
-                                                                                   c["pins"]["vsutils_sha256"]))
     if not os.path.isfile(body_preset(c)) or T.sha(body_preset(c)) != c["pins"]["body_preset_sha256"]:
         problems.append("%s is not the pinned Body record %s" % (body_preset(c), c["pins"]["body_preset_sha256"]))
     if os.path.exists(S.q(c, "pre_run")):

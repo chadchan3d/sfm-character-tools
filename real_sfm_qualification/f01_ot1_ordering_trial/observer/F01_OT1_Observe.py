@@ -36,23 +36,24 @@ and never runs its own capture.
    - the candidate's other pre-Operate graph checks that need no plan baseline (expression type and text, the four
      endpoints, static output mode 3);
    - which animation sets list the expression in their `operators` array (reported only; not part of the candidate);
-   - Astra's DC1 condition, direct DataModel references: SFM's shipped vsUtils.iterReferringAttributes on each live
-     expression, run to the API's invalid-iterator end, recording every referring attribute's owner identity and
-     name; it must return exactly the selected animation set's `operators`, the admitted input channel's
-     `toElement` and the admitted output channel's `fromElement`, matched by live element identity (no names, no
-     saved identities). Any missing, extra, unexpected, unreadable or incomplete result fails;
+   - Astra's DC1 condition with the DC2 correction, direct DataModel references: for each live expression the
+     IDataModel iterator primitives on vs.g_pDataModel (FirstAttributeReferencingElement, GetAttributeFromIterator,
+     NextAttributeReferencingElement; vsUtils is NOT imported) are traversed until the token equals
+     vs.DMATTRIBUTE_REFERENCE_ITERATOR_INVALID (explicit comparison), recording every referring attribute's owner
+     identity and name; it must return exactly the selected animation set's `operators`, the admitted input channel's
+     `toElement` and the admitted output channel's `fromElement`, matched by live element identity (no names, no saved
+     identities). A missing, extra, unexpected or unreadable reference, a repeated token, an API exception or a
+     traversal that does not reach the sentinel fails. Before and after each traversal the class-dictionary entries
+     CDmElement.__eq__/__hash__, Vector/QAngle/Quaternion.__hash__ (an explicit marker when absent) and sys.modules'
+     vsUtils membership are snapshotted and must be identical objects;
    - "would_pass": the candidate's graph-uniqueness precondition and the direct-reference condition hold for both.
    The same preflight runs again at ARM, before arming; a failing ARM preflight leaves the injector unarmed.
-   vsUtils is imported if it is not already loaded; its module-level code patches vs.CDmElement.__eq__ and
-   __hash__ (and vector hashes) for the rest of the SFM process. The capture records whether it was preloaded, the
-   class attributes before and after, and the source file's SHA-256.
    Undo state and playhead are read before and after the preflight and recorded. Nothing is operated, written,
    refreshed or moved, and no Undo action is opened.
-   Coverage: DmeChannel elements listed in the `channels` array of DmeChannelsClip children of the shot's
-   channelTrackGroup / animSetEditorChannels track, by their fromElement and toElement. Not covered: channels in other
-   tracks, track groups, shots or nested clips, or in no clip; operators and any other element attribute or array that
-   references the expression (connection operators, constraints, rig or script elements, other expressions); the
-   operators-array report shows membership only, not data flow.
+   Coverage: the channel scan sees DmeChannel elements listed in the `channels` array of DmeChannelsClip children of
+   the shot's channelTrackGroup / animSetEditorChannels track, by their fromElement and toElement; the DC1 traversal
+   sees every direct DataModel attribute reference to each expression (any owner, element or element-array
+   attribute). Not covered: indirect relationships, Python-side references and anything outside the DataModel.
 
 Its only write is <OT1_DIR>\\observations\\OT1-<step>.json (exclusive create).
 
@@ -76,6 +77,9 @@ OT1_FAIL_TEXT = "OT1 controlled failure after the operator call"
 Q1_OBSERVER_SHA256 = "f2eba1e0abce6e1e1e68202546e750b99dc0032f105d393bf0a40111824fca58"
 OT1_PREFLIGHT_BONES = (u"bip_head", u"bip_tail00")
 OT1_REF_EXPECTED = (("animset", "operators"), ("input_channel", "toElement"), ("output", "fromElement"))
+OT1_REF_LIMIT = 4096
+OT1_CLASS_ENTRIES = (("CDmElement", "__eq__"), ("CDmElement", "__hash__"), ("Vector", "__hash__"),
+                     ("QAngle", "__hash__"), ("Quaternion", "__hash__"))
 SNAP_FIELDS = ("source", "key_value", "key_count", "expr_input", "expr_result", "physical_scale", "input_mode",
                "output_mode", "output_key_count", "output_is_empty", "output_use_default_value", "lo", "hi",
                "expression_id", "output_id", "transform_id", "input_channel_id", "control_id")
@@ -298,80 +302,130 @@ def ot1_enumerate(cpm, q1, binding):
     return out
 
 
-def ot1_vsutils():
-    """SFM's shipped vsUtils (Astra DC1 ruling: its read-only iterReferringAttributes). Importing it runs its
-    module-level code, which patches vs.CDmElement.__eq__/__hash__ (and vector hashes) for the whole process; whether
-    it was already loaded, the class attributes before and after, and the source identity are recorded."""
-    import vs
-    info = {"preloaded": "vsUtils" in sys.modules, "error": None, "file": None, "source_sha256": None,
-            "cdm_eq_before": "__eq__" in vs.CDmElement.__dict__, "cdm_hash_before": "__hash__" in vs.CDmElement.__dict__}
-    try:
-        import vsUtils
-    except Exception as exc:
-        info["error"] = repr(exc)
-        return None, info
-    info["cdm_eq_after"] = "__eq__" in vs.CDmElement.__dict__
-    info["cdm_hash_after"] = "__hash__" in vs.CDmElement.__dict__
-    try:
-        path = os.path.abspath(getattr(vsUtils, "__file__", "") or "")
-        source = path[:-1] if path.lower().endswith((".pyc", ".pyo")) else path
-        info["file"] = source
-        with open(source, "rb") as f:
-            info["source_sha256"] = hashlib.sha256(f.read()).hexdigest()
-    except Exception as exc:
-        info["error"] = "source: %r" % (exc,)
-    if not callable(getattr(vsUtils, "iterReferringAttributes", None)):
-        info["error"] = "vsUtils.iterReferringAttributes is unavailable"
-        return None, info
-    return vsUtils, info
+class _OT1Marker(object):
+    def __init__(self, label):
+        self.label = label
+
+    def __repr__(self):
+        return self.label
 
 
-def ot1_direct_refs(cpm, q1, vsu, binding):
-    """Every direct DataModel reference to the bound expression (vsUtils.iterReferringAttributes, read only), each
-    attribute's owner identity and name, matched by live element identity against exactly three relationships: the
-    selected animation set's `operators`, the admitted input channel's `toElement`, the admitted output channel's
-    `fromElement`. complete is True only when the enumeration ran to the API's invalid-iterator end."""
+OT1_ABSENT = _OT1Marker("<absent>")
+OT1_UNREADABLE = _OT1Marker("<unreadable>")
+
+
+def ot1_class_entries(vsmod):
+    """The actual class-dictionary entries Astra's DC2 ruling names (OT1_ABSENT when the class has no own entry),
+    compared later by object identity."""
+    out = {}
+    for cls_name, attr in OT1_CLASS_ENTRIES:
+        key = "%s.%s" % (cls_name, attr)
+        try:
+            out[key] = getattr(vsmod, cls_name).__dict__.get(attr, OT1_ABSENT)
+        except Exception:
+            out[key] = OT1_UNREADABLE
+    return out
+
+
+def ot1_entries_plain(entries):
+    return dict((k, "<absent>" if v is OT1_ABSENT else "<unreadable>" if v is OT1_UNREADABLE else
+                 {"id": id(v), "repr": repr(v)[:160]}) for k, v in entries.items())
+
+
+def ot1_entries_same(a, b):
+    return (sorted(a) == sorted(b) and all(a[k] is b[k] for k in a) and
+            not any(v is OT1_UNREADABLE for v in list(a.values()) + list(b.values())))
+
+
+def ot1_direct_refs(cpm, q1, vsmod, binding):
+    """Astra DC1/DC2: every direct DataModel reference to the bound expression, traversed with the IDataModel
+    iterator primitives on vs.g_pDataModel (no vsUtils): FirstAttributeReferencingElement(handle), then
+    GetAttributeFromIterator and NextAttributeReferencingElement until the token equals
+    vs.DMATTRIBUTE_REFERENCE_ITERATOR_INVALID (explicit comparison, never truthiness). A repeated token, an unreadable
+    attribute, owner or identity, an API exception or exceeding OT1_REF_LIMIT refuses; the enumeration is complete
+    only after reaching the sentinel. Each reference's owner identity and attribute name are recorded and matched by
+    live element identity against exactly three relationships: the selected animation set's `operators`, the
+    admitted input channel's `toElement`, the admitted output channel's `fromElement`. The class entries in
+    OT1_CLASS_ENTRIES and sys.modules' vsUtils membership are snapshotted before and after and must be identical."""
     text, plain = q1["q1_text"], q1["q1_plain"]
     expected = {"animset": binding.get("animset"), "input_channel": binding.get("input_channel"),
                 "output": binding.get("output")}
-    out = {"complete": False, "error": None, "references": [], "pass": False}
-    if vsu is None:
-        out["error"] = "vsUtils unavailable"
-        return out
+    out = {"complete": False, "terminated_at_sentinel": False, "error": None, "references": [], "tokens": [],
+           "repeated_token": False, "sentinel": None, "pass": False}
+    entries_before = ot1_class_entries(vsmod)
+    module_before = sys.modules.get("vsUtils", OT1_ABSENT)
     try:
-        for attr in vsu.iterReferringAttributes(binding["expression"]):
+        dm = vsmod.g_pDataModel
+        sentinel = vsmod.DMATTRIBUTE_REFERENCE_ITERATOR_INVALID
+        out["sentinel"] = repr(sentinel)
+        handle = binding["expression"].GetHandle()
+        token = dm.FirstAttributeReferencingElement(handle)
+        seen = []
+        while True:
+            if token == sentinel:
+                out["terminated_at_sentinel"] = True
+                break
+            if any(token == previous for previous in seen):
+                out["repeated_token"] = True
+                raise RuntimeError("repeated iterator token %r" % (token,))
+            if len(seen) >= OT1_REF_LIMIT:
+                raise RuntimeError("reference enumeration exceeded %d tokens" % OT1_REF_LIMIT)
+            seen.append(token)
+            out["tokens"].append(repr(token))
             row = {"role": None}
+            attr = dm.GetAttributeFromIterator(token)
             owner = None
-            try:
-                owner = attr.GetOwner()
-                row.update(owner=plain(cpm.dme_id(owner)), owner_type=text(owner.GetTypeString()),
-                           owner_name=text(owner.GetName()), owner_handle=int(owner.GetHandle()))
-            except Exception as exc:
-                owner = None
-                row["unreadable"] = "owner: %r" % (exc,)
-            try:
-                row["attribute"] = text(attr.GetName())
-            except Exception as exc:
-                row["unreadable"] = "attribute: %r" % (exc,)
+            if attr is None:
+                row["unreadable"] = "attribute: none from iterator"
+            else:
+                try:
+                    owner = attr.GetOwner()
+                    if owner is None:
+                        raise RuntimeError("no owner")
+                    owner_handle = owner.GetHandle()
+                    if isinstance(owner_handle, bool):
+                        raise RuntimeError("boolean handle")
+                    row.update(owner=plain(cpm.dme_id(owner)), owner_type=text(owner.GetTypeString()),
+                               owner_name=text(owner.GetName()), owner_handle=int(owner_handle))
+                except Exception as exc:
+                    owner = None
+                    row["unreadable"] = "owner: %r" % (exc,)
+                try:
+                    name = attr.GetName()
+                    if not name:
+                        raise RuntimeError("empty attribute name")
+                    row["attribute"] = text(name)
+                except Exception as exc:
+                    row["unreadable"] = "attribute: %r" % (exc,)
             if owner is not None and "unreadable" not in row:
-                for role, name in OT1_REF_EXPECTED:
-                    if row["attribute"] == name and expected[role] is not None and cpm.same_dme(owner, expected[role]):
+                for role, attr_name in OT1_REF_EXPECTED:
+                    if row["attribute"] == attr_name and expected[role] is not None and \
+                            cpm.same_dme(owner, expected[role]):
                         row["role"] = role
             out["references"].append(row)
-        out["complete"] = True
+            token = dm.NextAttributeReferencingElement(token)
+        out["complete"] = out["terminated_at_sentinel"]
     except Exception as exc:
         out["error"] = repr(exc)
+    entries_after = ot1_class_entries(vsmod)
+    module_after = sys.modules.get("vsUtils", OT1_ABSENT)
+    out["class_entries"] = {"before": ot1_entries_plain(entries_before), "after": ot1_entries_plain(entries_after),
+                            "unchanged": ot1_entries_same(entries_before, entries_after)}
+    out["vsutils_module"] = {"before": module_before is not OT1_ABSENT, "after": module_after is not OT1_ABSENT,
+                             "unchanged": module_before is module_after}
     refs = out["references"]
     out["matched"] = dict((role, sum(1 for r in refs if r["role"] == role)) for role, _ in OT1_REF_EXPECTED)
     out["unexpected"] = [r for r in refs if r["role"] is None and "unreadable" not in r]
     out["unreadable"] = [r for r in refs if "unreadable" in r]
-    out["pass"] = bool(out["complete"] and out["error"] is None and len(refs) == len(OT1_REF_EXPECTED) and
+    out["pass"] = bool(out["complete"] and out["terminated_at_sentinel"] and out["error"] is None and
+                       not out["repeated_token"] and len(refs) == len(OT1_REF_EXPECTED) and
                        all(n == 1 for n in out["matched"].values()) and not out["unexpected"] and
-                       not out["unreadable"] and all(expected[r] is not None for r in expected))
+                       not out["unreadable"] and all(expected[r] is not None for r in expected) and
+                       out["class_entries"]["unchanged"] and out["vsutils_module"]["unchanged"])
     return out
 
 
-def ot1_preflight_bone(cpm, q1, snapshot, row, vsu=None):
+def ot1_preflight_bone(cpm, q1, snapshot, row, vsmod=None):
     text, plain = q1["q1_text"], q1["q1_plain"]
     out = {"would_pass": False, "error": None}
     if row is None:
@@ -419,14 +473,15 @@ def ot1_preflight_bone(cpm, q1, snapshot, row, vsu=None):
         out["operator_lists"] = lists
     except Exception as exc:
         out["operator_lists"] = {"error": repr(exc)}
-    out["direct_refs"] = ot1_direct_refs(cpm, q1, vsu, binding)
+    out["direct_refs"] = (ot1_direct_refs(cpm, q1, vsmod, binding) if vsmod is not None else
+                          {"complete": False, "error": "vs unavailable", "references": [], "pass": False})
     out["would_pass"] = bool(out["unique"] and out["endpoints_ok"] and out["expression_ok"] and
                              out["static_output_mode"] == 3 and not out["enumeration"]["unreadable"] and
                              out["direct_refs"]["pass"])
     return out
 
 
-def ot1_preflight(cpm, q1, identity, token, vsu=None):
+def ot1_preflight(cpm, q1, identity, token, vsmod=None):
     """The read-only BASE graph scan of the two existing scales (see the docstring, part 4)."""
     out = {"bones": {}, "error": None, "would_pass": False}
     try:
@@ -439,7 +494,7 @@ def ot1_preflight(cpm, q1, identity, token, vsu=None):
         rows = dict((q1["q1_text"](r.get("bone_name")), r) for r in snapshot["bone_index"].values())
         for bone in OT1_PREFLIGHT_BONES:
             try:
-                out["bones"][bone] = ot1_preflight_bone(cpm, q1, snapshot, rows.get(bone), vsu)
+                out["bones"][bone] = ot1_preflight_bone(cpm, q1, snapshot, rows.get(bone), vsmod)
             except Exception as exc:
                 out["bones"][bone] = {"would_pass": False, "error": repr(exc)}
     finally:
@@ -450,10 +505,10 @@ def ot1_preflight(cpm, q1, identity, token, vsu=None):
     return out
 
 
-def ot1_guarded_preflight(cpm, q1, identity, token, probe, vsu=None):
+def ot1_guarded_preflight(cpm, q1, identity, token, probe, vsmod=None):
     """The preflight between two reads of the scene state probe() returns (Undo state, playhead)."""
     before = probe()
-    result = ot1_preflight(cpm, q1, identity, token, vsu)
+    result = ot1_preflight(cpm, q1, identity, token, vsmod)
     after = probe()
     result["side_effects"] = {"before": before, "after": after, "unchanged": before == after and "error" not in before}
     return result
@@ -555,8 +610,8 @@ def ot1_capture(g):
         except Exception as exc:
             return {"error": repr(exc)}
     if step in ("BASE", "ARM"):
-        vsu, data["vsutils"] = ot1_vsutils()
-        data["preflight"] = ot1_guarded_preflight(cpm, q1, identity, token, probe, vsu)
+        data["environment"] = {"vsutils_in_sys_modules_at_capture": "vsUtils" in sys.modules}
+        data["preflight"] = ot1_guarded_preflight(cpm, q1, identity, token, probe, vs)
     if step == "BASE":
         st = ot1_install(cpm, q1)
         data["hooks_installed"] = sorted(n for n in OT1_HOOKED if getattr(getattr(cpm, n), "ot1_original", None)

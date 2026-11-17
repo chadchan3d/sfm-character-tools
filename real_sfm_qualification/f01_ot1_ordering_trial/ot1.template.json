@@ -27,11 +27,10 @@
   "r2_fixture_sha256": "259ea8a614bc9e43e5bde15afdf38e1a1295dffb50b14cf75692df4221a05a2c",
   "destination_sha256": "61df8bcd5397c78b064e102047e51b5d9e4e3c43df40394522c57944ba67e992",
   "observer_sha256": "4a358cc05449592c7ea3cd6828cb40ca2faed08fc602156c2f15a9398e67c0c4",
-  "ot1_observer_sha256": "403ea56642249559c4e74d2a9d0e5c6adea6773a7aa6910d8cd96464e24143e2",
+  "ot1_observer_sha256": "5a13708a743dda327e0b9cdd4666d401f8784f33165a07fc3f33fcad0fb6e0d6",
   "q1_observer_sha256": "f2eba1e0abce6e1e1e68202546e750b99dc0032f105d393bf0a40111824fca58",
   "body_preset_sha256": "cd31c7f1661bd36e87f54cb50b91d7ec4447e83bc6a00573a998496ce8a71f18",
-  "legacy_pose_sha256": "4916a7243193306ab7a93dec9fbc988b079c9af4c3bb0e9828a5b2d89cef3541",
-  "vsutils_sha256": "d89f23c0599fa271abc52a3edffcfcfebd46bc381671cfad07076d7522f9767a"
+  "legacy_pose_sha256": "4916a7243193306ab7a93dec9fbc988b079c9af4c3bb0e9828a5b2d89cef3541"
  },
  "character_dir": "krystal2020--7d2aee52ef3a",
  "housekeeping": [
