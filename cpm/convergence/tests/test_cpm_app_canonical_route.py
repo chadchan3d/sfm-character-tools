@@ -343,11 +343,14 @@ F01_K2UI_NEW_TOP = set([
     "prod_pose_load_sources", "prod_pose_set_source", "prod_pose_source_project", "prod_pose_sources_path",
     "prod_pose_valid_project",
 ])
-# F-01 ordering trial (Astra, ACCEPT WITH CONDITIONS; qualification only, F01_OT1_ORDERING_TRIAL_PREPARATION.md):
-# a changed, admitted, existing mode-3 Body scale operates its exclusively bound expression inside the owned
-# transaction and verifies the result before commit. Bounded to the Body existing-scale write; no other caller.
+# F-01 OT1 (Astra, ACCEPT WITH CONDITIONS; F01_OT1_ORDERING_TRIAL_PREPARATION.md, F01_OT1_PRODUCTION_GUARD.md):
+# a changed, admitted, existing mode-3 Body scale operates its bound expression inside the owned transaction and
+# verifies the result before commit; its direct DataModel references must be exactly the three planned ones, checked
+# in prod_apply before StartUndo and again before Operate(). prod_apply is already a changed top (stage C).
 F01_OT1_CHANGED_TOP = set(["prod_bs_write_existing_scale"])
-F01_OT1_NEW_TOP = set(["prod_bs_expression_channels", "prod_bs_operate_bound_expression"])
+F01_OT1_NEW_TOP = set(["prod_bs_operate_bound_expression", "PROD_BS_EXPRESSION_REFERENCE_LIMIT",
+                       "prod_bs_expression_references", "prod_bs_expression_reference_guard",
+                       "prod_bs_revalidate_operation"])
 F01_STAGEC_CHANGED_METHODS = set(["selected_or_none", "operation_default_error_copy"])
 F01_STAGEC_NEW_METHODS = set(["apply_pose", "pose_begin_verification", "pose_finish_verification", "pose_guard",
                               "pose_registry_mode", "save_pose"])

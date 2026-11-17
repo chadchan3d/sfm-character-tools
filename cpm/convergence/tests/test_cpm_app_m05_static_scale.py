@@ -75,6 +75,13 @@ class FakeAttr(object):
         Scene.current.cpm_writes.append((self.owner._name, self.name, value))
         self.value = value
 
+    # As CDmAttribute from IDataModel.GetAttributeFromIterator (OT1 production guard).
+    def GetOwner(self):
+        return self.owner
+
+    def GetName(self):
+        return self.name
+
 
 class FakeElement(object):
     _next = [1000]
@@ -274,6 +281,44 @@ class FakeDataModel(object):
         self.open = None
         self.scene.events.append("AbortUndo")
 
+    # IDataModel reference iterator (OT1 production guard): the referring attributes are derived from the scene's
+    # own element links (any attribute holding the element, or a list containing it). Tokens are positive ints;
+    # the sentinel is 0. scene.ref_fault may be "raise" (Next raises after the first row), "repeat" (Next returns
+    # the same token) or "unreadable" (the first row has no owner).
+    def FirstAttributeReferencingElement(self, handle):
+        rows = []
+        for element in self.scene.elements:
+            for attr_name in sorted(element._attrs):
+                value = element._attrs[attr_name].value
+                if getattr(value, "_handle", None) == handle or (
+                        isinstance(value, list) and any(getattr(x, "_handle", None) == handle for x in value)):
+                    rows.append(element._attrs[attr_name])
+        self.ref_calls = getattr(self, "ref_calls", 0) + 1
+        if not rows:
+            return 0
+        self.ref_lists = getattr(self, "ref_lists", {})
+        token = 1000 * self.ref_calls
+        self.ref_lists[token] = (rows, 0)
+        return token
+
+    def GetAttributeFromIterator(self, token):
+        rows, index = self.ref_lists[token]
+        if getattr(self.scene, "ref_fault", None) == "unreadable" and index == 0:
+            return None
+        return rows[index]
+
+    def NextAttributeReferencingElement(self, token):
+        rows, index = self.ref_lists[token]
+        fault = getattr(self.scene, "ref_fault", None)
+        if fault == "raise":
+            raise RuntimeError("iterator failed")
+        if fault == "repeat":
+            return token
+        if index + 1 >= len(rows):
+            return 0
+        self.ref_lists[token + 1] = (rows, index + 1)
+        return token + 1
+
     def Undo(self):
         self.undo_calls += 1
 
@@ -301,6 +346,7 @@ class Scene(object):
         self.flex_baseline = None
         self.created = []
         self.animset = FakeAnimset(u"DmeAnimationSet", u"Krystal")
+        self.animset.put("operators", self.operators)  # the selected set's operators array (a live reference)
         self.group = FakeElement(u"DmeControlGroup", u"Body", controls=[])
         self.dm = FakeDataModel(self)
         self.shot = FakeChannelsTrack(self)
@@ -427,8 +473,9 @@ TOP_EXTRACT = [
     "prod_bs_keyed_evidence", "prod_bs_static_play_evidence", "prod_bs_classify_static_scale",
     "prod_bs_static_scale_trace", "prod_bs_static_pass_trace", "prod_bs_full_bone_scale_map",
     "prod_bs_bone_record_index", "prod_bs_write_existing_scale", "prod_bs_index_snapshot",
-    # F-01 ordering trial: the bound expression's exclusivity scan and Operate() (strict DME reads)
-    "prod_bs_expression_channels", "prod_bs_operate_bound_expression", "prod_flex_strict_read",
+    # F-01 OT1 production guard: the expression's direct DataModel references and Operate()
+    "PROD_BS_EXPRESSION_REFERENCE_LIMIT", "prod_bs_expression_references", "prod_bs_expression_reference_guard",
+    "prod_bs_revalidate_operation", "prod_bs_operate_bound_expression", "prod_flex_strict_read",
     "prod_flex_strict_list", "prod_instance_strict_members", "prod_instance_strict_text",
     "prod_bs_index_log_state", "prod_bs_index_trace", "prod_bs_index_binding", "prod_bs_index_clean_fixture",
     "prod_bs_index_validate_saved_map", "prod_bs_index_build_plan", "prod_bs_index_verify_saved",
@@ -511,6 +558,8 @@ class _QtGui(object):
 
 
 class _Vs(object):
+    DMATTRIBUTE_REFERENCE_ITERATOR_INVALID = 0
+
     @staticmethod
     def CastElementAsDmeTransformControl(element):
         return element

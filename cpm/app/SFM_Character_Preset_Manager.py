@@ -25542,82 +25542,173 @@ def prod_bs_existing_binding_for_row(model_row, bone_row):
         identity
     )
 
-def prod_bs_expression_channels(binding):
-    """F-01 ordering trial (Astra, ACCEPT WITH CONDITIONS): every channel of
-    the shot's animation-set channel clips that reads from (readers) or
-    writes to (writers) the bound scale expression, read strictly. Any clip
-    of the track counts, so a peer's or another set's reference is seen; an
-    unreadable track, clip, channel list or endpoint refuses rather than
-    being treated as unrelated."""
-    expression = binding["expression"]
+PROD_BS_EXPRESSION_REFERENCE_LIMIT = 4096
+
+
+def prod_bs_expression_references(expression):
+    """F-01 OT1 production guard (Astra, final ACCEPT WITH CONDITIONS): every
+    direct DataModel attribute reference to the expression, read only through
+    the IDataModel reference iterator (no vsUtils; global element equality and
+    hashing untouched). The traversal ends only when the token equals
+    vs.DMATTRIBUTE_REFERENCE_ITERATOR_INVALID (explicit comparison); a repeated
+    token, an unreadable attribute, owner, name or identity, an API exception
+    or exceeding the limit refuses. Returns [(owner, attribute name)]."""
+    data_model = dm()
 
     try:
-        group = binding["shot"].FindTrackGroup("channelTrackGroup")
-        track = group.FindTrack("animSetEditorChannels") if group is not None else None
+        sentinel = vs.DMATTRIBUTE_REFERENCE_ITERATOR_INVALID
+        token = data_model.FirstAttributeReferencingElement(
+            expression.GetHandle()
+        )
     except Exception:
         raise RuntimeError(
-            "The scale expression's channels track is unreadable."
+            "The scale expression's references are unreadable."
         )
 
-    if track is None:
-        raise RuntimeError(
-            "The scale expression's channels track is unavailable."
-        )
+    seen = []
+    rows = []
 
-    readers = []
-    writers = []
+    while True:
+        if token == sentinel:
+            return rows
 
-    for clip in prod_instance_strict_members(
-        track,
-        "children",
-        "The shot's channels clips",
-    ):
-        if prod_instance_strict_text(
-            clip,
-            "GetTypeString",
-            "A channels-clip type",
-        ) != u"DmeChannelsClip":
-            continue
+        if any(token == previous for previous in seen):
+            raise RuntimeError(
+                "The scale expression's reference enumeration repeated."
+            )
 
-        for channel in prod_instance_strict_members(
-            clip,
-            "channels",
-            "A channels clip's channels",
+        if len(seen) >= PROD_BS_EXPRESSION_REFERENCE_LIMIT:
+            raise RuntimeError(
+                "The scale expression's reference enumeration did not end."
+            )
+
+        seen.append(token)
+
+        try:
+            attr = data_model.GetAttributeFromIterator(token)
+            owner = attr.GetOwner() if attr is not None else None
+            attr_name = u(attr.GetName()) if attr is not None else u""
+            owner_handle = owner.GetHandle() if owner is not None else None
+            token = data_model.NextAttributeReferencingElement(token)
+        except Exception:
+            raise RuntimeError(
+                "The scale expression's references are unreadable."
+            )
+
+        if (
+            owner is None
+            or not attr_name
+            or owner_handle is None
+            or isinstance(owner_handle, bool)
         ):
-            for attr_name, found in (
-                ("fromElement", readers),
-                ("toElement", writers),
-            ):
-                state, element = prod_flex_strict_read(
-                    channel,
-                    attr_name,
-                )
+            raise RuntimeError(
+                "A reference to the scale expression is unreadable."
+            )
 
-                if state == u"absent" or (state == u"present" and element is None):
-                    continue
+        rows.append(
+            (owner, attr_name)
+        )
 
-                if state != u"present":
-                    raise RuntimeError(
-                        "A channel endpoint near the scale expression is unreadable."
-                    )
 
-                if same_dme(element, expression):
-                    found.append(channel)
+def prod_bs_expression_reference_guard(item):
+    """F-01 OT1 production guard: the bound expression of an admitted, changed,
+    existing mode-3 scale must have exactly three direct references, matched
+    by live element identity: the selected animation set's `operators`, the
+    planned input channel's `toElement` and the planned output channel's
+    `fromElement`. Anything missing, additional, ambiguous or unreadable
+    refuses. Called before StartUndo and again immediately before Operate()."""
+    binding = item[
+        "binding"
+    ]
+    expected = (
+        (binding.get("animset"), u"operators"),
+        (binding.get("input_channel"), u"toElement"),
+        (binding.get("output"), u"fromElement"),
+    )
 
-    return readers, writers
+    if any(owner is None for owner, _attr in expected):
+        raise RuntimeError(
+            "Bone %s scale expression binding is incomplete." % item["bone_name"]
+        )
+
+    rows = prod_bs_expression_references(
+        binding["expression"]
+    )
+    matched = [0, 0, 0]
+
+    for owner, attr_name in rows:
+        hits = [
+            index
+            for index, (expected_owner, expected_attr) in enumerate(expected)
+            if attr_name == expected_attr and same_dme(owner, expected_owner)
+        ]
+
+        if len(hits) != 1:
+            raise RuntimeError(
+                "Bone %s scale expression is shared or ambiguous." % item["bone_name"]
+            )
+
+        matched[hits[0]] += 1
+
+    if len(rows) != 3 or matched != [1, 1, 1]:
+        raise RuntimeError(
+            "Bone %s scale expression is shared or ambiguous." % item["bone_name"]
+        )
+
+    return True
+
+
+def prod_bs_revalidate_operation(item):
+    """Immediately before Operate(): the operation context is still current and,
+    with a pinned instance, the freshly resolved selected animation set is the
+    binding's own (fail closed)."""
+    context = item.get(
+        "operation_context"
+    )
+
+    if context is not None:
+        prod_validate_context_token(
+            context
+        )
+
+    token = prod_instance_token(
+        context
+    )
+
+    if token is None:
+        return True
+
+    row = prod_resolve_instance(
+        token
+    )
+
+    if prod_strict_identity(
+        row["animset"],
+        "The selected animation set",
+    ) != prod_strict_identity(
+        item["binding"].get("animset"),
+        "The bone-scale animation set",
+    ):
+        raise RuntimeError(
+            "The selected character instance changed before its scale expression was operated."
+        )
+
+    return True
+
 
 def prod_bs_operate_bound_expression(item, native):
-    """F-01 ordering trial, qualification only (Astra, ACCEPT WITH
-    CONDITIONS): for an admitted, changed, existing mode-3 scale whose input
-    was just written inside the owned Body transaction, operate the bound
-    expression once and verify its result before commit.
+    """F-01 OT1 (Astra, ACCEPT WITH CONDITIONS): for an admitted, changed,
+    existing mode-3 scale whose input was just written inside the owned Body
+    transaction, operate the bound expression once and verify its result
+    before commit.
 
-    The expression must still be the planned one (identities, logs and limits
-    equal the plan baseline) and exclusively wired: exactly one writer, the
-    planned input channel into value, and exactly one reader, the planned
-    output channel from result into the planned transform's scale. A shared,
-    replaced or ambiguous binding refuses before Operate(). Its result alone
-    never verifies the Apply: the physical scale is still verified only after
+    Immediately before Operate(): the operation context and selected instance
+    are revalidated, the expression must still be the planned one
+    (identities, logs and limits equal the plan baseline), its endpoints
+    unchanged, and its direct DataModel references exactly the three planned
+    ones (prod_bs_expression_reference_guard). A shared, replaced or
+    ambiguous binding refuses before Operate(). Its result alone never
+    verifies the Apply: the physical scale is still verified only after
     commit by the existing deferred map."""
     binding = item[
         "binding"
@@ -25657,19 +25748,12 @@ def prod_bs_operate_bound_expression(item, native):
             "Bone %s scale expression binding changed." % bone
         )
 
-    readers, writers = prod_bs_expression_channels(
-        binding
+    prod_bs_revalidate_operation(
+        item
     )
-
-    if (
-        len(readers) != 1
-        or not same_dme(readers[0], output)
-        or len(writers) != 1
-        or not same_dme(writers[0], input_channel)
-    ):
-        raise RuntimeError(
-            "Bone %s scale expression is shared or ambiguous." % bone
-        )
+    prod_bs_expression_reference_guard(
+        item
+    )
 
     current = prod_bs_snapshot(
         binding
@@ -29612,6 +29696,22 @@ def prod_apply(
             durable_persisted=False,
             verified=True,
         )
+
+    # F-01 OT1 production guard (Astra): a foreseeable refusal of an admitted,
+    # changed, existing mode-3 scale happens here, before Undo opens or any
+    # character data is written.
+    for item in changed_existing_scales:
+        if item[
+            "binding"
+        ].get(
+            "static_output_mode"
+        ) == 3:
+            item[
+                "operation_context"
+            ] = operation_context
+            prod_bs_expression_reference_guard(
+                item
+            )
 
     dm_obj = dm()
     opened = False

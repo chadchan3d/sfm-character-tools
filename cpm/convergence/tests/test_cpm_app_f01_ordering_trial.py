@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-"""F-01 ordering trial -- focused offline qualification of the qualification-only candidate correction
-(Astra adjudication, ACCEPT WITH CONDITIONS; F01_OT1_ORDERING_TRIAL_PREPARATION.md).
+"""F-01 OT1 -- focused offline qualification of the ordering correction with its integrated production
+reference guard (Astra's final ACCEPT WITH CONDITIONS; F01_OT1_PRODUCTION_GUARD.md), through the actual prod_apply
+dispatch and transaction path, without the OT1 observer. The fake DataModel derives each element's direct references
+from the scene's own attribute links (test_cpm_app_m05_static_scale.FakeDataModel).
 
 The candidate: for an admitted, changed, existing mode-3 Body scale, after the existing input write, CPM operates the
 exclusively bound expression operator inside the owned transaction and verifies its result before commit; the
@@ -476,24 +478,74 @@ def retarget_output(scene):
 
 def section_identity(ns):
     # Pre-existing sharing the plan cannot see (another clip) or does not reject (a non-bone reader).
+    def off_track(scene):  # a channel reading the expression that is in no channels clip at all
+        m.FakeChannel(u"off_track", m.FakeLog(u"o_log", [m.FakeLayer(u"o_layer", [])]), mode=3,
+                      fromElement=scene.head_graph["expression"], fromAttribute=u"result",
+                      toElement=m.FakeElement(u"DmeTransform", u"o", scale=1.13), toAttribute=u"scale")
+
+    def non_channel(scene):  # a non-channel element holding the expression
+        m.FakeElement(u"DmeConnectionOperator", u"conn", input=scene.head_graph["expression"])
+
+    def second_list(scene):  # the expression listed in the peer's operators array too
+        m.FakeElement(u"DmeAnimationSet", u"krystal20201", operators=[scene.head_graph["expression"]])
+
     for label, setup in (("a second reader of expression.result in the same clip", extra_reader),
                          ("a reader in another animation set's channels clip", peer_reader),
-                         ("a writer into expression.value in another channels clip", peer_writer)):
+                         ("a writer into expression.value in another channels clip", peer_writer),
+                         ("an off-track reader in no channels clip", off_track),
+                         ("a non-channel reference (connection operator)", non_channel),
+                         ("the expression in a second operators array", second_list)):
         scene = reset()
         setup(scene)
         before = scene.digest()
         _, error = attempt(run_apply, ns, trial_record())
-        check("I1 %s -> refused before Operate(), verified Abort, nothing committed" % label,
-              isinstance(error, RuntimeError) and not scene.operate_log and not scene.dm.stack
-              and scene.digest() == before and u"shared or ambiguous" in abort_log()[-1]
-              and u"restored=True" in abort_log()[-1], (error, abort_log()[-1:]))
+        check("I1 %s -> refused BEFORE Undo opens: no StartUndo, no write, nothing operated" % label,
+              isinstance(error, RuntimeError) and u"shared or ambiguous" in _TEXT(error)
+              and "StartUndo" not in scene.events and not scene.cpm_writes and not scene.operate_log
+              and not scene.dm.stack and scene.digest() == before, (error, scene.events))
+
+    for fault, text in (("raise", u"unreadable"), ("repeat", u"repeated"), ("unreadable", u"unreadable")):
+        scene = reset()
+        scene.ref_fault = fault
+        before = scene.digest()
+        _, error = attempt(run_apply, ns, trial_record())
+        check("I2 reference enumeration %s (incomplete / repeated / unreadable) -> refused before Undo" % fault,
+              isinstance(error, RuntimeError) and text in _TEXT(error) and "StartUndo" not in scene.events
+              and not scene.cpm_writes and scene.digest() == before, (error, scene.events))
 
     scene = reset()
     peer_unreadable(scene)
+    result, outcome = apply_and_settle(ns, trial_record())
+    check("I2 an unrelated unreadable channel elsewhere in the shot does NOT block a valid Apply (verified)",
+          outcome is not None and outcome["phase"] == u"committed-verified" and len(scene.operate_log) == 2,
+          (result.get("phase"), outcome))
+
+    scene = reset()
+    calls = []
+    real_first = scene.dm.FirstAttributeReferencingElement
+    scene.dm.FirstAttributeReferencingElement = lambda h: (calls.append(("StartUndo" in scene.events)), real_first(h))[1]
+    result, outcome = apply_and_settle(ns, trial_record())
+    check("I2 each changed mode-3 expression is checked before StartUndo and again inside the transaction just "
+          "before Operate()", calls == [False, False, True, True] and outcome["phase"] == u"committed-verified", calls)
+
+    # Changed after the preflight: an extra reference appears once the transaction is open -> late refusal, Abort.
+    for label, mutate in (("an extra reader added after the preflight", off_track),
+                          ("a non-channel reference added after the preflight", non_channel)):
+        scene = reset()
+        before = dict((k, graph_state(g)) for k, g in (("head", scene.head_graph), ("tail", scene.tail_graph)))
+        on_open(scene, mutate)
+        _, error = attempt(run_apply, ns, trial_record())
+        after = dict((k, graph_state(g)) for k, g in (("head", scene.head_graph), ("tail", scene.tail_graph)))
+        check("I2 %s -> refused before Operate(), verified Abort, values restored" % label,
+              isinstance(error, RuntimeError) and not isinstance(error, ns["ProdRecoveryUnverifiedError"])
+              and not scene.operate_log and not scene.dm.stack and u"shared or ambiguous" in abort_log()[-1]
+              and u"restored=True" in abort_log()[-1] and after == before, (error, abort_log()[-1:]))
+    scene = reset()
+    on_open(scene, lambda s: setattr(s, "context_ok", False))
     _, error = attempt(run_apply, ns, trial_record())
-    check("I2 an unreadable channel endpoint anywhere in the shot's channels track -> refused (fail closed)",
+    check("I2 the operation context changes after the preflight -> refused before Operate(), verified Abort",
           isinstance(error, RuntimeError) and not scene.operate_log and not scene.dm.stack
-          and u"unreadable" in abort_log()[-1], (error, abort_log()[-1:]))
+          and u"changed" in abort_log()[-1] and u"restored=True" in abort_log()[-1], (error, abort_log()[-1:]))
 
     # Changed after the transaction opened (identity no longer the planned binding).
     for label, mutate, text in (("output re-pointed to another expression", repoint_output, u"binding changed"),
@@ -635,11 +687,21 @@ def section_isolation(ns):
           and [(e[0], e[1]) for e in scene.dm.stack] == [(e[0], e[1]) for e in base_scene.dm.stack],
           (result["phase"], scene.dm.stack))
 
-    trial_names = ("prod_bs_operate_bound_expression", "prod_bs_expression_channels")
+    trial_names = ("prod_bs_operate_bound_expression", "prod_bs_expression_references",
+                   "prod_bs_expression_reference_guard", "prod_bs_revalidate_operation")
     callers = sorted(n for n in m.APP.top if any(t in m.APP.top_text(n) for t in trial_names)
                      and n not in trial_names)
-    check("N6 the trial is reachable only from the Body existing-scale write (no Expression, Pose, created-graph, "
-          "shared-callback or record-format path)", callers == ["prod_bs_write_existing_scale"], callers)
+    check("N6 the correction and guard are reachable only from the Body existing-scale write and prod_apply's "
+          "pre-Undo guard (no Expression, Pose, created-graph, shared-callback or record-format path)",
+          callers == ["prod_apply", "prod_bs_write_existing_scale"], callers)
+    apply_src = m.APP.top_text("prod_apply")
+    guard_at = apply_src.index("prod_bs_expression_reference_guard(")
+    check("N6 in prod_apply the guard runs after the no-op return and before StartUndo, only for static mode-3 items",
+          apply_src.index("return prod_outcome(") < guard_at < apply_src.index("StartUndo(")
+          and u"\"static_output_mode\"" in apply_src[guard_at - 400:guard_at])
+    check("N6 no vsUtils import and no global element equality/hash change in the application",
+          not any(x in m.APP.raw.decode("utf-8") for x in (u"import vsUtils", u"from vsUtils", u"vsUtils.",
+                                                           u"CDmElement.__eq__", u"CDmElement.__hash__")))
     methods = [n for n in m.APP.methods("ProdWindow") if any(t in m.APP.method_text("ProdWindow", n)
                                                               for t in trial_names)]
     check("N6 no window method or callback references the trial", not methods, methods)

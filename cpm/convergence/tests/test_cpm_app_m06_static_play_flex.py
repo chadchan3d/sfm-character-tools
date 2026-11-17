@@ -384,6 +384,9 @@ def scene(scale=False, created=False):
     if scale:
         t = s.bone(4, u"zz_crest")
         s.head_graph = s.scale_graph(t, u"zz_crest", 0.113, output_mode=3)
+        # As in SFM (OT1 native preflight): the animation set lists its scale expression in `operators`, one of the
+        # three direct references the OT1 production guard requires.
+        s.animset.put("operators", s.animset.raw("operators") + [s.head_graph["expression"]])
     return s
 
 
