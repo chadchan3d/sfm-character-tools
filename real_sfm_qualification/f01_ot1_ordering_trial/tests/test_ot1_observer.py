@@ -426,10 +426,36 @@ def fake_vs(scene):
     return vsmod
 
 
+QUALIFIED_CPM_COMMIT = "2f4d877"
+QUALIFIED_CPM_SHA256 = "0cea8acdcf934cc69590356ba7c237c963728e118fa67e298e641fd56077fa3c"
+_QUALIFIED = []
+
+
+def qualified_app_path():
+    """The OT1 candidate this observer qualifies (0cea8acd...), read as the raw Git blob from the OT1 kit commit (the
+    working-tree CPM is now the integrated production-guard candidate, which has no channel scan), as the K2 and EF-1
+    kit tests do; refuses unless it hashes to the pin."""
+    if not _QUALIFIED:
+        import atexit
+        import hashlib
+        import subprocess
+        raw = subprocess.check_output(["git", "-C", REPO, "cat-file", "blob",
+                                       "%s:cpm/app/SFM_Character_Preset_Manager.py" % QUALIFIED_CPM_COMMIT])
+        if hashlib.sha256(raw).hexdigest() != QUALIFIED_CPM_SHA256:
+            raise AssertionError("the CPM at %s is not the OT1 candidate" % QUALIFIED_CPM_COMMIT)
+        where = tempfile.mkdtemp(prefix="ot1qualcpm")
+        atexit.register(shutil.rmtree, where, True)
+        path = os.path.join(where, "SFM_Character_Preset_Manager.py")
+        with open(path, "wb") as f:
+            f.write(raw)
+        _QUALIFIED.append(path)
+    return _QUALIFIED[0]
+
+
 def preflight_cpm(scene):
     sys.path.insert(0, os.path.join(REPO, "cpm", "convergence", "tests"))
     import test_cpm_app_canonical_route as route
-    app = route.AppSource(route.APP_PATH)
+    app = route.AppSource(qualified_app_path())
     ns = {}
     if sys.version_info[0] > 2:
         ns["unicode"], ns["long"] = str, int

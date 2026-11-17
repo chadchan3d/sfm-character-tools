@@ -38,6 +38,7 @@ def sha_file(path):
 
 
 TEMPLATE = os.path.join(KIT, "ot1.template.json")
+QUALIFIED_CPM_COMMIT = "2f4d877"
 
 
 def section_template():
@@ -50,8 +51,14 @@ def section_template():
                 if re.search(r"[A-Za-z]:[\/]", v) and not v.startswith("C:/Users/Public/")]
     check("T1 no personal or machine-specific path in the template (placeholders, %USERPROFILE% or Public only)",
           not personal, personal)
-    cand = os.path.join(REPO, "cpm", "app", "SFM_Character_Preset_Manager.py")
-    check("T2 candidate pin = the working candidate", t["pins"]["candidate_cpm_sha256"] == sha_file(cand))
+    # The OT1 kit runs the exact candidate it qualified (0cea8acd...). The integrated production-guard candidate
+    # (d719bb0) changed the working-tree CPM, so, as the K2 and EF-1 kit tests do, the candidate is read as the raw
+    # Git blob from the OT1 kit commit; the tool's own hash checks still decide at build time.
+    import subprocess
+    raw = subprocess.check_output(["git", "-C", REPO, "cat-file", "blob",
+                                   "%s:cpm/app/SFM_Character_Preset_Manager.py" % QUALIFIED_CPM_COMMIT])
+    check("T2 candidate pin = the qualified candidate at the OT1 kit commit %s" % QUALIFIED_CPM_COMMIT,
+          t["pins"]["candidate_cpm_sha256"] == hashlib.sha256(raw).hexdigest())
     for key, rel in (("profile_sha256", "cpm/pose_profiles/cpm_pose_profiles_v1.json"),
                      ("body_profile_sha256", "cpm/pose_profiles/cpm_body_profiles_v1.json"),
                      ("ot1_observer_sha256", "real_sfm_qualification/f01_ot1_ordering_trial/observer/F01_OT1_Observe.py"),
@@ -75,8 +82,6 @@ def section_template():
 
     # The one-line derivation, exactly as K2's build performs it.
     S = ot1_tool.S
-    with open(cand, "rb") as f:
-        raw = f.read()
     qual = raw.replace(S.MODE_PRODUCTION, S.MODE_QUALIFICATION)
     a, b = raw.split(b"\n"), qual.split(b"\n")
     diff = [i for i in range(len(a)) if a[i] != b[i]]

@@ -105,3 +105,35 @@ The bounded integration is ready for Designer and Owner review as a production-i
 production should be conditional on a native confirmation of this integrated candidate (Apply, Undo, Redo, final
 Undo, verified Abort, peer isolation, and the before-Undo refusal), separately authorized, and on Astra's review of
 risk 2. No installation, signing, push, merge or release has been done.
+
+## 7. Designer acceptance, compatibility policy and native smoke preparation (2026-11-17)
+
+**Designer disposition ("F-01 — OT1 Integrated Candidate: Final Qualification"):** ACCEPT WITH CONDITIONS. The
+production reference guard and its offline results are accepted; Astra's final technical condition is implemented; no
+further Astra consultation is required solely to investigate other rigs.
+
+**Compatibility policy (recorded):** Body Apply conservatively **refuses** a changed, existing, mode-3 scale whose
+expression has any direct DataModel reference beyond the three planned ones (the selected set's `operators`, the
+planned input's `toElement`, the planned output's `fromElement`), or whose references cannot be read completely. The
+refusal happens before Undo opens, with "Bone … scale expression is shared or ambiguous." (or "… references are
+unreadable."). This is Astra's approved safety restriction; support for such rigs is not broadened in this milestone.
+
+**Correction to section 3 ("Regressions … no new failure"):** that run covered the CPM convergence suites only. The
+qualification-kit tests were not rerun at `d719bb0`; two OT1 kit tests read the working-tree CPM and failed against
+the integrated candidate (`test_ot1.py` 97/99: the template's candidate pin and derived build are, correctly, those of
+`0cea8acd…`; `test_ot1_observer.py` 20/22: its preflight cases extract the removed channel scan). Test-only fix, as
+the K2 and EF-1 kit tests already do: both now read the qualified OT1 candidate as the raw Git blob from the OT1 kit
+commit `2f4d877` (refusing unless it hashes to `0cea8acd…`): `test_ot1.py` `f4ce0f5c…` 99/99,
+`test_ot1_observer.py` `687e2b5d…` 68/68 on 2.7.5 and 3.10.6. Every F-01 kit test now passes (EC-1, EF-1, S0, S3, K2,
+model survey, NQ-03, NQ-S6, PS-2, Q1 14/14 and 21/21, SFP-1 NQ, UA-1 15/15 and 12/12, W2, OT1, OT1S). No product code
+changed.
+
+**Native smoke check prepared (not run):** `real_sfm_qualification/f01_ot1_integration_smoke/` — `PROCEDURE.md`,
+`ot1s.template.json` `0f8b667c…` (integrated candidate `48ff01a3…`, qualification build `10328efe…`),
+`observer/F01_OT1S_Observe.py` `04fb02e9…` (the pinned OT1 observer's recording hooks, plus a pass-through hook on
+`prod_bs_expression_reference_guard`; the injector is never armed), `tools/smoke_tool.py` `3698aa0b…` (reuses the OT1,
+UA-1, K2 and S3 tooling), `tools/smoke_analyze.py` `5148cc39…` (reuses the OT1 analyzer's comparisons; gates GUARD,
+APPLY, UNDO, PEER, EVIDENCE), `tests/test_smoke.py` `fc9d61f2…` 43/43 (3.10.6), `tests/test_smoke_observer.py`
+`0102f840…` 11/11 (2.7.5 and 3.10.6). One SFM session on the R2 fixture copy: BASE (peer created), Apply `Body`,
+Undo, Redo, final Undo; no controlled failure and no shared-reference scene. The guard gate requires four accepted
+guard calls, two before the transaction's first scale write and one immediately before each bone's write.
