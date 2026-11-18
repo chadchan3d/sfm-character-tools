@@ -1,0 +1,412 @@
+# -*- coding: utf-8 -*-
+"""F-01 Stage 1 Fox kit: offline tests of the capture and the analyzer.
+
+The capture script runs against the real Stage 1 CPM (the stage E harness of cpm/convergence/tests: the extracted
+blocks and the fake scene built from fixtures/f01_body/fox_shot15.json). A complete two-process run is then simulated
+with CPM's real Save, Apply, Undo, Redo, no-op and injected-fault Abort on fake scenes (Fox A, a renamed and
+differently posed Fox B, and a Tails-like peer with a control-less bone), and analyzed; then each gate is broken once.
+This shows the kit's own logic, never SFM's behaviour.
+
+Usage: python -I test_s1f.py   (or <SFM python 2.7.5> -E -B test_s1f.py)
+"""
+from __future__ import print_function
+
+import copy
+import hashlib
+import io
+import json
+import os
+import shutil
+import sys
+import tempfile
+import types
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+KIT = os.path.dirname(HERE)
+REPO = os.path.abspath(os.path.join(KIT, "..", ".."))
+sys.path.insert(0, os.path.join(REPO, "cpm", "convergence", "tests"))
+sys.path.insert(0, os.path.join(KIT, "tools"))
+CAPTURE = os.path.join(KIT, "observer", "F01_S1F_Capture.py")
+RESULTS = []
+QUAL_SHA = "q" * 64
+CAND_SHA = "c" * 64
+
+
+def check(name, ok, value=None):
+    RESULTS.append((name, bool(ok)))
+    print("[%s] %s" % ("PASS" if ok else "FAIL", name))
+    if not ok and value is not None:
+        print("      value: %r" % (value,))
+
+
+_saved = sys.stdout
+sys.stdout = io.StringIO() if sys.version_info[0] >= 3 else io.BytesIO()
+try:
+    import test_cpm_app_canonical_route as route  # noqa: E402
+    import test_cpm_app_f01_structural_rig as T  # noqa: E402
+    B, FB = T.B, T.FB
+    NS = B.live_namespace(route.AppSource(route.APP_PATH))
+    REG, _ = B.registries(NS)
+    FX = T.fixture()
+finally:
+    sys.stdout = _saved
+del B.RESULTS[:]
+
+
+def load_capture():
+    g = {"__name__": "s1f_capture_under_test", "__file__": CAPTURE}
+    with open(CAPTURE, "rb") as f:
+        exec(compile(f.read(), CAPTURE, "exec"), g)
+    return g
+
+
+CAP = load_capture()
+
+
+def cpm_module():
+    m = types.ModuleType("chadchan3d_cpm_app")
+    m.__dict__.update(NS)
+    m.get_game_model = lambda animset: animset.attrs.get("gameModel")
+    m.__chadchan3d_cpm_build_sha256__ = QUAL_SHA
+    m.PROD_POSE_REGISTRY_MODE = u"qualification"
+    return m
+
+
+CPM = cpm_module()
+
+
+def make(name, prepare=None, posed=False, rig=None):
+    w = FB.World(FX)
+    w.animset.name = name
+    if rig:
+        w.rig.name = rig
+    if posed:
+        T.pose_differently(w)
+    if prepare is not None:
+        prepare(w)
+        w.evaluate()
+    return w
+
+
+def jiggle(w):
+    w.channels[u"ValveBiped.Bip01_R_Finger42_o"].set("fromElement", None)
+
+
+def capture_set(w, keys):
+    T.use(NS, w)
+    return CAP["s1f_set"](CPM, w.shot, w.animset, keys)
+
+
+class Run(object):
+    """A simulated run: three fake scenes, CPM's real operations, captures composed per step."""
+
+    def __init__(self, root):
+        self.root = root
+        self.q = os.path.join(root, "Q")
+        for d in ("staged", "sessions", "observations", os.path.join("evidence", "logs")):
+            os.makedirs(os.path.join(self.q, d))
+        self.src = make(u"foxmccouldwm1")
+        self.dst = make(u"foxmccouldwm2", posed=True, rig=u"rig_biped_foxmccouldwm2")
+        self.peer = make(u"milestailsprower1", jiggle)
+        self.caps, self.pid, self.selected = {}, 1000, None
+        self.lib = T.library(root, u"lib")
+
+    def capture(self, step):
+        data = {"format": CAP["FORMAT"], "step": step, "pid": self.pid, "cpm_build_sha256": QUAL_SHA,
+                "registry_mode": u"qualification", "qualification_fault": list(NS["PROD_POSE_QUAL_FAULT"]),
+                "names": {"source": u"foxmccouldwm1", "target": u"foxmccouldwm2", "peer": u"milestailsprower1"},
+                "errors": [], "sets": {}}
+        for role, w in (("source", self.src), ("target", self.dst), ("peer", self.peer)):
+            data["sets"][role] = capture_set(w, role == "target")
+        dm = self.dst.dm
+        data["session"] = {"undo": {"can_undo": bool(dm.CanUndo()), "can_redo": bool(dm.CanRedo()),
+                                    "undo_desc": dm.GetUndoDesc(),
+                                    # SFM names the Redo entry with CPM's own "Redo <label>" (StartUndo's second
+                                    # argument; natively shown in H1); the fake keeps the label only.
+                                    "redo_desc": (u"Redo " + dm.GetRedoDesc()) if dm.GetRedoDesc() else u""},
+                           "head_seconds": 0.2083, "timeline_mode": 2, "shot": u"shot15",
+                           "document": os.path.join(self.q, "sessions", "S1_SESSION.dmx")}
+        data["selected_pose"] = self.selected
+        self.caps[step] = data
+        T.use(NS, self.dst)
+
+    def apply(self):
+        T.use(NS, self.dst)
+        auth = T.authorize(NS, REG, u"Apply Pose", self.item)
+        result = NS["prod_body_apply"](T.IDENTITY, auth, self.item, REG)
+        if result.get(u"phase") == u"verification-pending":
+            NS["prod_pose_deferred_verify"](dict(result[u"pending"], authorization=auth))
+        return result
+
+    def go(self):
+        del NS["LOG"][:]
+        self.capture("PREP")
+        T.use(NS, self.src)
+        NS["prod_body_rig_probe"](T.ctx(NS), T.IDENTITY, REG, u"qualification")   # the Save dialog's admission
+        pose, saved, self.item = T.save(NS, REG, self.lib, u"S1 Fox")
+        r = saved[u"record"]
+        self.record = r
+        self.selected = {"name": r[u"name"], "preset_id": r[u"preset_id"], "version": 2,
+                         "adapter": r[u"pose"][u"adapter"], "regions": [u"full_body"], "model": r[u"model_ref"],
+                         "exclusions": [], "written": 0}
+        self.capture("SAVED")
+        self.pid += 1                                       # the restart
+        self.capture("BASE")
+        self.apply()
+        self.capture("APPLY")
+        self.capture("NAV")
+        self.dst.dm.Undo()
+        self.capture("UNDO")
+        self.dst.dm.Redo()
+        self.capture("REDO")
+        self.apply()
+        self.capture("NOOP")
+        self.dst.dm.Undo()
+        self.capture("UNDO2")
+        NS["PROD_POSE_QUAL_FAULT"][0] = u"after-writes"
+        self.mode_apply()
+        self.capture("ABORT")
+        self.log = list(NS["LOG"])
+
+    def mode_apply(self):
+        T.use(NS, self.dst)
+        auth = T.authorize(NS, REG, u"Apply Pose", self.item)
+        auth = dict(auth, mode=u"qualification")
+        NS["prod_body_apply"](T.IDENTITY, auth, self.item, REG)
+
+    def write(self, mutate=None):
+        caps = copy.deepcopy(self.caps)
+        files = {"log": list(self.log), "record": copy.deepcopy(self.record), "session": b"saved session",
+                 "spare": b"spare", "restore": {"restored": True}, "cleanup": None}
+        if mutate is not None:
+            mutate(caps, files)
+        q = tempfile.mkdtemp(dir=self.root)
+        for d in ("staged", "sessions", "observations", os.path.join("evidence", "logs")):
+            os.makedirs(os.path.join(q, d))
+        dump = lambda path, obj: io.open(path, "wb").write(json.dumps(obj, indent=1, sort_keys=True,  # noqa: E731
+                                                                      default=repr).encode("utf-8"))
+        dump(os.path.join(q, "staged", "IDENTITIES.json"), {"qualification_cpm_sha256": QUAL_SHA,
+                                                            "candidate_cpm_sha256": CAND_SHA})
+        for step, data in caps.items():
+            dump(os.path.join(q, "observations", "S1F-%s.json" % step), data)
+        io.open(os.path.join(q, "sessions", "S1_SESSION.dmx"), "wb").write(files["session"])
+        io.open(os.path.join(q, "sessions", "S1_SPARE.dmx"), "wb").write(files["spare"])
+        io.open(os.path.join(q, "evidence", "logs", "cpm.log"), "wb").write(
+            u"\n".join(files["log"]).encode("utf-8"))
+        rec = files["record"]
+        diffs = []
+        if rec is not None:
+            rel = u"Characters/foxmccouldwm--abc/Poses/S1 Fox--%s.json" % rec[u"preset_id"][:12]
+            path = os.path.join(q, "evidence", "library_after", *rel.split("/"))
+            os.makedirs(os.path.dirname(path))
+            io.open(path, "wb").write(json.dumps(rec).encode("utf-8"))
+            diffs.append({"path": rel, "status": "added", "sha256": hashlib.sha256(
+                json.dumps(rec).encode("utf-8")).hexdigest()})
+            diffs.append({"path": u"Characters/foxmccouldwm--abc/character.json", "status": "added"})
+        cleanup = files["cleanup"] or {"differences_kept_in_evidence": diffs, "files_equal_pre": True,
+                                       "folders_equal_pre": True}
+        dump(os.path.join(q, "evidence", "library_cleanup.json"), cleanup)
+        dump(os.path.join(q, "evidence", "restore.json"), files["restore"])
+        return q
+
+
+def analyze(q):
+    import s1f_analyze as A
+    c = {"paths": {"Q": q}, "pins": {"qualification_cpm_sha256": QUAL_SHA, "candidate_cpm_sha256": CAND_SHA,
+                                     "r2_fixture_sha256": hashlib.sha256(b"r2 fixture").hexdigest(),
+                                     "destination_sha256": hashlib.sha256(b"spare").hexdigest()}}
+    saved = sys.stdout
+    sys.stdout = io.StringIO() if sys.version_info[0] >= 3 else io.BytesIO()
+    try:
+        R = A.Report(c)
+        refused = A.evaluate(R)
+        v, gates = A.verdict(R.checks, refused)
+    finally:
+        sys.stdout = saved
+    return v, gates, [x for x in R.checks if not x["pass"]], R.info
+
+
+def section_capture(root):
+    w = make(u"foxmccouldwm1")
+    T.use(NS, w)
+    s = capture_set(w, True)
+    adm = s["admission"]
+    check("capture.records_the_structural_admission", adm.get("placement") == u"rig_root" and
+          adm.get("handles") == 22 and adm.get("constraints") == 34 and len(adm.get("written") or []) == 214 and
+          adm.get("classes") == {u"constrained": 22, u"fk": 90}, adm.get("error") or sorted(adm))
+    check("capture.records_channels_bones_handles_and_target_keys", len(s["channels"]) == len(w.channels) and
+          len(s["bones"]) == 112 and len(s["handles"]) == 22 and all("keys" in c for c in s["channels"].values())
+          and len(s["model_state"]) == 4)
+    peer = capture_set(make(u"milestailsprower1", jiggle), False)
+    check("capture.records_a_refusal_with_its_code", peer["admission"].get("code") == u"structure-unsupported" and
+          "keys" not in list(peer["channels"].values())[0], peer["admission"])
+    renamed = capture_set(make(u"foxmccouldwm2", rig=u"rig_biped_foxmccouldwm2"), False)
+    check("capture.description_digest_ignores_the_rig_name", renamed["admission"]["description_sha256"] ==
+          adm["description_sha256"] and renamed["admission"]["rig_name"] != adm["rig_name"])
+    check("capture.content_digest_is_handle_free", CAP["s1f_strip"]({u"handle": 1, u"a": [{u"handle": 2, u"b": 3}]})
+          == {u"a": [{u"b": 3}]})
+    check("capture.is_read_only", not B.scene_writes(w) and not w.dm.calls)
+    # The script entry point: refusals, exclusive create, the file it writes.
+    g = dict(CAP)
+    sfm, vs = w.modules()
+    sys.modules["sfmApp"], sys.modules["vs"] = sfm, vs
+    sys.modules["chadchan3d_cpm_app"] = CPM
+    q = tempfile.mkdtemp(dir=root)
+    os.makedirs(os.path.join(q, "observations"))
+    try:
+        g.update({"S1F_DIR": q, "S1F_STEP": "PREP", "S1F_SOURCE": u"foxmccouldwm1", "S1F_TARGET": u"foxmccouldwm1",
+                  "S1F_PEER": u"x"})
+        try:
+            CAP["s1f_capture"](g)
+            ok = False
+        except RuntimeError:
+            ok = not os.listdir(os.path.join(q, "observations"))
+        check("capture.refuses_names_that_are_not_three_different_sets", ok)
+        g.update({"S1F_TARGET": u"fox_b", "S1F_PEER": u"tails"})
+        T.use(NS, w)
+        saved = sys.stdout
+        sys.stdout = io.StringIO() if sys.version_info[0] >= 3 else io.BytesIO()
+        try:
+            data = CAP["s1f_capture"](g)
+        finally:
+            sys.stdout = saved
+        path = os.path.join(q, "observations", "S1F-PREP.json")
+        check("capture.writes_its_one_file_and_records_missing_sets", os.path.isfile(path) and
+              sorted(data["errors"]) == sorted(["target: 0 animation sets named u'fox_b'" if sys.version_info[0] == 2
+                                                else "target: 0 animation sets named 'fox_b'",
+                                                "peer: 0 animation sets named u'tails'" if sys.version_info[0] == 2
+                                                else "peer: 0 animation sets named 'tails'"]) and
+              data["sets"]["source"]["admission"].get("placement") == u"rig_root" and
+              data["registry_mode"] == u"qualification", data["errors"])
+        try:
+            CAP["s1f_capture"](g)
+            ok = False
+        except RuntimeError:
+            ok = True
+        check("capture.each_step_is_captured_once", ok)
+    finally:
+        for m in ("sfmApp", "vs", "chadchan3d_cpm_app"):
+            sys.modules.pop(m, None)
+
+
+def section_verdicts(root):
+    run = Run(root)
+    run.go()
+    v, gates, failed, info = analyze(run.write())
+    check("verdict.simulated_complete_run_is_an_automated_pass", v == "AUTOMATED PASS", (v, failed[:6]))
+    check("verdict.posture_measured_independently", info.get("posture", {}).get("bones") == 112 and
+          info["posture"]["angle_degrees"] < 0.01 and info["posture"]["by_class"]["constrained"]["bones"] == 22,
+          info.get("posture"))
+    check("verdict.abort_after_the_committed_write_count", (info.get("abort") or {}).get("committed_writes") ==
+          ((info.get("abort") or {}).get("failure") or {}).get("written"), info.get("abort"))
+
+    def variant(label, mutate, want, gate=None):
+        v, gates, failed, _ = analyze(run.write(mutate))
+        check("verdict.%s" % label, v == want and (gate is None or gates.get(gate) is False),
+              (v, [x["id"] for x in failed][:6]))
+
+    def set_bones(caps, step, role, fn):
+        for b in caps[step]["sets"][role]["bones"].values():
+            fn(b)
+
+    def tilt(b):
+        b[3] = list(FB.qnorm(FB.qmul([0.0, 0.0, 0.05, 1.0], b[3])))
+    variant("posture_off_by_a_few_degrees_fails", lambda c, f: set_bones(c, "APPLY", "target", tilt), "FAIL",
+            "POSTURE")
+
+    def moved_placement(c, f):
+        c["APPLY"]["sets"]["target"]["handles"]["rig_root"][2][0] += 5.0
+    variant("moved_placement_fails", moved_placement, "FAIL", "POSTURE")
+
+    def extra_channel(c, f):
+        n = u"rig_root_p"
+        c["APPLY"]["sets"]["target"]["channels"][n]["sha256"] = "x" * 64
+    variant("a_preserved_channel_written_fails", extra_channel, "FAIL", "APPLY")
+
+    def neighbour(c, f):
+        name = [n for n, ch in c["APPLY"]["sets"]["target"]["channels"].items()
+                if ch["sha256"] != c["BASE"]["sets"]["target"]["channels"][n]["sha256"]][0]
+        c["APPLY"]["sets"]["target"]["channels"][name]["keys"] = [[[-99999, [0.0, 0.0, 0.0, 1.0]]]]
+    variant("a_neighbouring_key_changed_fails", neighbour, "FAIL", "APPLY")
+
+    def source_changed(c, f):
+        n = sorted(c["APPLY"]["sets"]["source"]["channels"])[0]
+        c["APPLY"]["sets"]["source"]["channels"][n]["sha256"] = "y" * 64
+    variant("source_fox_changed_fails", source_changed, "FAIL", "PEER")
+
+    def undo_partial(c, f):
+        n = sorted(c["UNDO"]["sets"]["target"]["channels"])[0]
+        c["UNDO"]["sets"]["target"]["channels"][n]["sha256"] = "z" * 64
+    variant("incomplete_undo_fails", undo_partial, "FAIL", "HISTORY")
+
+    def nav_moved(c, f):
+        c["NAV"]["session"]["head_seconds"] = 0.25
+    variant("playhead_not_returned_is_incomplete", nav_moved, "INCOMPLETE", "EVIDENCE")
+
+    def abort_left(c, f):
+        n = sorted(c["ABORT"]["sets"]["target"]["channels"])[0]
+        c["ABORT"]["sets"]["target"]["channels"][n]["sha256"] = "w" * 64
+    variant("abort_leaving_a_change_fails", abort_left, "FAIL", "ABORT")
+    variant("abort_without_the_injected_failure_fails", lambda c, f: f.__setitem__("log", [
+        l for l in f["log"] if "P3-P6-failure" not in l]), "FAIL", "ABORT")
+    variant("unverified_p7_is_incomplete", lambda c, f: f["log"].append(u"PROD_POSE_BODY-P7-unverified {}"),
+            "INCOMPLETE", "EVIDENCE")
+
+    def same_process(c, f):
+        for s in c:
+            c[s]["pid"] = 1000
+    variant("no_restart_is_incomplete", same_process, "INCOMPLETE", "EVIDENCE")
+
+    def prep_not_restored(c, f):
+        n = sorted(c["BASE"]["sets"]["target"]["channels"])[0]
+        c["BASE"]["sets"]["target"]["channels"][n]["content"] = "v" * 64
+    variant("saved_session_not_reopened_as_prepared_is_incomplete", prep_not_restored, "INCOMPLETE", "PREP")
+
+    def same_pose(c, f):
+        c["PREP"]["sets"]["target"]["bones"] = copy.deepcopy(c["PREP"]["sets"]["source"]["bones"])
+        c["PREP"]["sets"]["target"]["handles"] = copy.deepcopy(c["PREP"]["sets"]["source"]["handles"])
+    variant("fox_b_not_visibly_different_is_incomplete", same_pose, "INCOMPLETE", "PREP")
+    variant("unsaved_session_is_incomplete", lambda c, f: f.__setitem__("session", b"r2 fixture"), "INCOMPLETE",
+            "EVIDENCE")
+    variant("restore_failure_is_incomplete", lambda c, f: f.__setitem__("restore", {"restored": False}),
+            "INCOMPLETE", "EVIDENCE")
+
+    def refused(c, f):
+        f["record"] = None
+        for s in list(c):
+            if s not in ("PREP", "SAVED"):
+                del c[s]
+    variant("refused_fox_save_is_refused", refused, "REFUSED")
+
+    def registry_record(c, f):
+        f["record"][u"pose"].pop(u"adapter")
+    variant("a_record_without_the_adapter_fails", registry_record, "FAIL", "SAVE")
+
+    def tails_admitted(c, f):
+        c["PREP"]["sets"]["peer"]["admission"] = dict(c["PREP"]["sets"]["source"]["admission"])
+    variant("tails_admitted_fails", tails_admitted, "FAIL", "TAILS")
+
+    def wrong_build(c, f):
+        c["APPLY"]["cpm_build_sha256"] = "p" * 64
+    variant("another_build_is_incomplete", wrong_build, "INCOMPLETE", "EVIDENCE")
+
+
+def main():
+    root = tempfile.mkdtemp(prefix="s1f_kit_")
+    try:
+        for fn in (section_capture, section_verdicts):
+            try:
+                fn(root)
+            except Exception:
+                import traceback
+                check("section.%s.completed" % fn.__name__, False, traceback.format_exc())
+    finally:
+        shutil.rmtree(root, True)
+    failed = [r for r in RESULTS if not r[1]]
+    print("RESULT: %d/%d %s (%s)" % (len(RESULTS) - len(failed), len(RESULTS),
+                                     "ALL PASS" if not failed else "SOME FAILED", sys.version.split()[0]))
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
