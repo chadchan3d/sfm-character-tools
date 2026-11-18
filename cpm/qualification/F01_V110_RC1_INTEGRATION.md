@@ -71,7 +71,7 @@ verdicts are unchanged.
 
 **Installer and updater (code unchanged from `master`):** Workshop installer `test_disposable` and `test_autoinit` 25/25
 OK against the v1.0.0 Archive A (`test_window` not run). Updater `test_production_trust` 16/19 with three historical snapshot rows (pre-existing; `updater/` is identical to
-`master`); `test_menu_launcher` has a pre-existing Python 3 bytes/str error in the test itself.
+`master`); `test_menu_launcher` 17/17 PASS on SFM's Python 2.7.5, its intended interpreter (the bytes/str error first noted was a Python 3.10 run; corrected in `F01_V110_RC1_SMOKE_PREPARATION.md`).
 
 ## 4. Package
 
