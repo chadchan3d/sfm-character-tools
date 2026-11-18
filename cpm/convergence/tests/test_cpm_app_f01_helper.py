@@ -142,8 +142,9 @@ def section_admission(ns, heavy):
     check("A.heavy_full_body_is_available", inv[u"full_body"][u"status"] == u"available" and
           inv[u"helpers"] == list(HELPERS), inv[u"full_body"])
     summary = ns["prod_scope_summary"](u"full_body", inv)
-    check("A.save_summary_names_the_permitted_helper_limitation",
-          summary.endswith(ns["PROD_SCOPE_HELPER_NOTE"]), summary)
+    check("A.save_summary_has_no_helper_sentence_rc1_ui_corrections",
+          summary == u"Facial expressions and the rootTransform are not saved." and
+          ns["PROD_SCOPE_HELPER_NOTE"] not in summary and u"Helper bones" not in summary, summary)
     check("A.header_is_read_only_through_the_named_accessors",
           [r for r in w.calls if r[0] in ("SetKeyValue", "InsertKeyAtTime", "SetValue")] == [] and not w.dm.calls)
 

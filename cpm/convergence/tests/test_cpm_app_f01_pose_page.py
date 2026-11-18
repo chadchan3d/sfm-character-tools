@@ -255,14 +255,15 @@ def section_ui_pass(window, tabs, env, boxes, QtGui):
         d = info[0] if info else {"status": window.status.text()}
         labels = d.get("labels", [])
         fields = [t for t in labels if t.endswith(u":")]
-        check("U8 Pose Info opens a read-only dialog in the Owner's order (after K2): name, type (a version 1 arm "
-              "pose is Selected parts, including Left arm), model, model path, source shot, source project (not "
-              "recorded), saved",
-              d.get("title") == u"Pose Info" and labels[:6] == [u"Name:", u"Arms Up", u"Type:", u"Selected parts",
-                                                                u"Model:", u"krystal2020.mdl"]
+        check("U8 Pose Info opens a read-only dialog in the Owner's order (RC1 UI corrections): name, type (a "
+              "version 1 arm pose is Selected parts, including Left arm), saved, includes, model, model path, source "
+              "shot, source project (not recorded)",
+              d.get("title") == u"Pose Info" and labels[:4] == [u"Name:", u"Arms Up", u"Type:", u"Selected parts"]
               and labels[labels.index(u"Includes:") + 1] == u"Left arm"
-              and fields[:7] == [u"Name:", u"Type:", u"Model:", u"Model path:", u"Source shot:", u"Source project:",
-                                 u"Saved:"]
+              and fields[:2] == [u"Name:", u"Type:"]
+              and [f for f in fields if f in (u"Saved:", u"Includes:", u"Not included:", u"Model:", u"Model path:",
+                                              u"Source shot:", u"Source project:")][:6] ==
+              [u"Saved:", u"Includes:", u"Model:", u"Model path:", u"Source shot:", u"Source project:"]
               and labels[labels.index(u"Source project:") + 1] == u"Not recorded"
               and u"Saved from:" not in labels
               and not any(t in labels for t in (u"Character:", u"Krystal", u"Pose rule:", u"Body parts:",
@@ -735,10 +736,14 @@ def section_polish(window, tabs, env, boxes, QtGui):
                 QtGui.QDialog.exec_ = real_exec
             return seen[0] if seen else {}
         one = info(u"p1")
-        check("V4 Pose Info, one part (PS-2 UI corrections): a Pose box (name, type, model, model path, dates) and a "
-              "Saved Values tree; no note",
-              one.get("labels", [])[:6] == [u"Name:", u"Wave", u"Type:", u"Selected parts", u"Model:",
-                                            u"krystal2020.mdl"]
+        check("V4 Pose Info, one part (RC1 UI corrections order): a Pose box (name, type, dates, includes, model, "
+              "model path) and a Saved Values tree; no note",
+              one.get("labels", [])[:6] == [u"Name:", u"Wave", u"Type:", u"Selected parts", u"Saved:",
+                                            one.get("labels", [u""] * 6)[5]]
+              and one["labels"].index(u"Includes:") < one["labels"].index(u"Model:") <
+              one["labels"].index(u"Model path:") < one["labels"].index(u"Source shot:") <
+              one["labels"].index(u"Source project:")
+              and one["labels"][one["labels"].index(u"Model:") + 1] == u"krystal2020.mdl"
               and one["labels"][one["labels"].index(u"Includes:") + 1] == u"Left arm"
               and u"Model path:" in one.get("labels", []) and one.get("parts") is None and one.get("note") is None
               and one.get("groups") == [u"Pose", u"Saved Values"]

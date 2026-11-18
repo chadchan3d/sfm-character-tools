@@ -217,6 +217,34 @@ def main():
           seen[u"parts"] == (False, u"generic refusal") and
           seen[u"summary"] == u"Facial expressions and the rootTransform are not saved.",
           (got, seen))
+    def compact(dialog, seen, save):
+        radios = dict((r.text(), r) for r in dialog.findChildren(QtGui.QRadioButton))
+        tree = dialog.findChild(QtGui.QTreeWidget, "pose_scope_picker")
+
+        def size():
+            SETTLE[0]()
+            return (dialog.width(), dialog.height())
+        seen[u"sizes"] = [size()]
+        radios[u"Selected parts"].setChecked(True)
+        # The picker's height enlarges the dialog in SFM (this offscreen harness does not grow top-level windows on
+        # its own, so the growth SFM performs is applied here explicitly).
+        dialog.resize(dialog.width(), max(dialog.height(), dialog.minimumSizeHint().height()) + 200)
+        seen[u"sizes"].append(size())
+        radios[u"Full body"].setChecked(True)
+        seen[u"sizes"].append(size())
+        radios[u"Selected parts"].setChecked(True)
+        dialog.resize(dialog.width(), dialog.height() + 300)
+        size()
+        radios[u"Full body"].setChecked(True)
+        seen[u"sizes"].append(size())
+        seen[u"picker_hidden"] = tree.isHidden()
+        return False
+    got, seen = drive(window, QtGui, QtCore, inventory(highlighted=()), False, compact)
+    first, picker, back, again = seen[u"sizes"]
+    print("D10 measured sizes (full body, selected parts, full body, full body again): %r" % (seen[u"sizes"],))
+    check("D10 RC1 UI corrections: back to Full body restores the original compact Save dialog",
+          got is None and picker[1] > first[1] and back == first and again == first and seen[u"picker_hidden"],
+          seen)
     try:
         window.close()
     except Exception:

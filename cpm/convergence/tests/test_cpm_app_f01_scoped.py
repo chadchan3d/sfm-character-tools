@@ -2422,7 +2422,7 @@ def section_ui_copy(ns, fx, root):
               u"Saves the bends", u"revision", u"direct_fk", u"controls (articulation", u"Unselected parts unchanged",
               u"Saved from", u"Project", u"Session")
     fields = set([u"Type:", u"Model:", u"Model path:", u"Source shot:", u"Source project:", u"Saved:", u"Updated:",
-                  u"Includes:", u"Not included:", u"Hip position:"])
+                  u"Includes:", u"Not included:"])
     for name, rec in ((u"grip", grip), (u"mixed", mixed), (u"single", single), (u"forearm", forearm), (u"body", body),
                       (u"body_face", body_face)):
         v = view(rec[u"record"])
@@ -2431,22 +2431,22 @@ def section_ui_copy(ns, fx, root):
               set(r[0] for r in v[u"rows"]) <= fields and not any(b in texts for b in banned), v)
     v = view(grip[u"record"])
     check("UI.1_selected_parts_info_type_model_path_date_and_includes",
-          v[u"rows"] == [[u"Type:", u"Selected parts", None], [u"Model:", u"analytic.mdl", None],
+          v[u"rows"] == [[u"Type:", u"Selected parts", None], [u"Saved:", u"November 8, 2026", None],
+                         [u"Includes:", u"Fingers (4 bones)", None], [u"Model:", u"analytic.mdl", None],
                          [u"Model path:", u"models/synthetic/analytic.mdl", None],
                          [u"Source shot:", grip[u"record"][u"pose"][u"source"][u"shot_name"], None],
-                         [u"Source project:", u"Not recorded", None],
-                         [u"Saved:", u"November 8, 2026", None], [u"Includes:", u"Fingers (4 bones)", None]]
+                         [u"Source project:", u"Not recorded", None]]
           and v[u"effect"] is None, v)
-    # Owner order after K2 (2026-11-14): Name (the dialog's first row), Type, Model, Model path, Source shot, Source
-    # project, Saved, Updated, then Includes / Not included / hips. The project comes only from the caller (the
+    # Owner order (RC1 UI corrections, 2026-11-18): Name (the dialog's first row), Type, Saved, Updated, Includes,
+    # Not included, Model, Model path, Source shot, Source project. The project comes only from the caller (the
     # local sidecar), never from the record.
     v = view(body[u"record"], u"E:/Projects/Scene.dmx")
     labels = [r[0] for r in v[u"rows"]]
     check("UI.1b_full_body_info_field_order_and_the_recorded_source_project",
-          labels[:6] == [u"Type:", u"Model:", u"Model path:", u"Source shot:", u"Source project:", u"Saved:"] and
-          v[u"rows"][4] == [u"Source project:", u"E:/Projects/Scene.dmx", None] and
-          labels.index(u"Not included:") > labels.index(u"Saved:") and
-          view(body[u"record"], u"relative.dmx")[u"rows"][4] == [u"Source project:", u"Not recorded", None], v)
+          labels == [u"Type:", u"Saved:", u"Includes:", u"Not included:", u"Model:", u"Model path:", u"Source shot:",
+                     u"Source project:"] and
+          v[u"rows"][-1] == [u"Source project:", u"E:/Projects/Scene.dmx", None] and
+          view(body[u"record"], u"relative.dmx")[u"rows"][-1] == [u"Source project:", u"Not recorded", None], v)
     v = view(body_face[u"record"])
     check("UI.2_consequential_exclusions_remain_visible",
           [u"Not included:", u"Face controls, facial expressions, rootTransform", None] in v[u"rows"], v)
@@ -2454,16 +2454,16 @@ def section_ui_copy(ns, fx, root):
     check("UI.3_child_movement_notice_where_it_happens",
           v[u"effect"] == u"Moving a selected bone can also move its children.", v)
     v = view(body[u"record"])
-    check("UI.4_full_body_info_type_count_exclusions_and_hips",
+    check("UI.4_full_body_info_type_count_and_exclusions_without_the_hip_explanation",
           v[u"rows"][0] == [u"Type:", u"Full body", None] and
           [u"Includes:", u"%d bones" % len(body[u"record"][u"pose"][u"scope"][u"posed"]), None] in v[u"rows"] and
           [u"Not included:", u"Facial expressions, rootTransform", None] in v[u"rows"] and
-          [u"Hip position:", u"Saved. Applying it moves the hips; the rootTransform stays where it is.", None]
-          in v[u"rows"] and v[u"effect"] is None, v)
-    # F01-DI-01 (RETAIN R3): Full body info must not imply the visible body stays where it is.
+          not [r for r in v[u"rows"] if r[0] == u"Hip position:"] and v[u"effect"] is None, v)
+    # F01-DI-01 (RETAIN R3): Full body info must not imply the visible body stays where it is (the Hip position
+    # explanation is removed by the RC1 UI corrections; no placement promise replaces it).
     texts = u" ".join(r[1] for r in v[u"rows"]).lower()
-    check("UI.DI01_full_body_info_names_the_hips_and_the_roottransform_only",
-          u"moves the hips" in texts and u"roottransform" in texts and u"scene placement" not in texts and
+    check("UI.DI01_full_body_info_names_the_roottransform_and_promises_no_placement",
+          u"roottransform" in texts and u"hips" not in texts and u"scene placement" not in texts and
           u"place in the scene" not in texts and u"stays in place" not in texts, v)
     check("UI.5_spaced_and_camel_case_group_names",
           ns["prod_scope_friendly_label"](u"LeftFingers") == u"Left fingers" and
@@ -2521,17 +2521,15 @@ def section_ui_copy(ns, fx, root):
     # Owner decision after UA-1 (2026-11-15): only two pose types; a version 1 arm pose is Selected parts and
     # includes its saved arm.
     check("UI.7_legacy_records_remain_readable_with_two_pose_types",
-          a[u"rows"] == [[u"Type:", u"Selected parts", None], [u"Model:", u"krystal2020.mdl", None],
-                         [u"Model path:", u"models/a/krystal2020.mdl", None],
-                         [u"Source shot:", u"shot10", None], [u"Source project:", u"Not recorded", None],
-                         [u"Saved:", u"November 1, 2026", None],
-                         [u"Updated:", u"November 2, 2026", None], [u"Includes:", u"Left arm", None]]
+          a[u"rows"] == [[u"Type:", u"Selected parts", None], [u"Saved:", u"November 1, 2026", None],
+                         [u"Updated:", u"November 2, 2026", None], [u"Includes:", u"Left arm", None],
+                         [u"Model:", u"krystal2020.mdl", None], [u"Model path:", u"models/a/krystal2020.mdl", None],
+                         [u"Source shot:", u"shot10", None], [u"Source project:", u"Not recorded", None]]
           and a[u"effect"] is None and
-          bb[u"rows"] == [[u"Type:", u"Full body", None], [u"Model:", u"k.mdl", None],
-                          [u"Model path:", u"models/k.mdl", None],
-                          [u"Source shot:", u"Not recorded", None], [u"Source project:", u"Not recorded", None],
-                          [u"Saved:", u"November 3, 2026", None],
-                          [u"Not included:", u"Facial expressions, rootTransform", None]] and
+          bb[u"rows"] == [[u"Type:", u"Full body", None], [u"Saved:", u"November 3, 2026", None],
+                          [u"Not included:", u"Facial expressions, rootTransform", None],
+                          [u"Model:", u"k.mdl", None], [u"Model path:", u"models/k.mdl", None],
+                          [u"Source shot:", u"Not recorded", None], [u"Source project:", u"Not recorded", None]] and
           bb[u"effect"] is None, (a, bb))
     both = dict(v1, pose=dict(v1[u"pose"], regions=dict(v1[u"pose"][u"regions"], right_arm={})))
     types = set(r[1] for rec in (grip, mixed, single, forearm, body, body_face) for r in view(rec[u"record"])[u"rows"]

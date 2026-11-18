@@ -36745,8 +36745,12 @@ class ProdWindow(QtGui.QDialog):
                         out.append(bone)
                 return sorted(out)
 
+            compact = {}
+
             def refresh(*args):
                 kind = u"selected_parts" if parts.isChecked() else u"full_body"
+                if kind == u"selected_parts" and u"size" not in compact and dialog.isVisible() and tree.isHidden():
+                    compact[u"size"] = dialog.size()   # RC1 UI corrections: the Full body size, before the picker
                 choice = {u"kind": kind, u"bones": chosen_bones(), u"exclude_highlighted": leave.isChecked()}
                 if kind == u"full_body" and body_route:
                     state = {u"save_enabled": True, u"summary": u"Facial expressions and the rootTransform are not "
@@ -36764,6 +36768,10 @@ class ProdWindow(QtGui.QDialog):
                 save_button.setEnabled(bool(state[u"save_enabled"]) and bool(u(edit.text()).strip()))
                 result[u"state"] = state
                 result[u"kind"] = kind
+                if kind == u"full_body" and u"size" in compact:
+                    # Back from Selected parts: the original compact dialog, not the picker's height.
+                    layout.activate()
+                    dialog.resize(compact[u"size"])
 
             full.toggled.connect(refresh)
             parts.toggled.connect(refresh)
@@ -45919,6 +45927,7 @@ PROD_SCOPE_HELPER_REQUIRED_FLAG = u"BONE_ALWAYS_PROCEDURAL"
 PROD_SCOPE_HELPER_EXCLUDED_FLAGS = (u"BONE_PHYSICALLY_SIMULATED", u"BONE_PHYSICS_PROCEDURAL",
                                     u"BONE_SCREEN_ALIGN_SPHERE", u"BONE_SCREEN_ALIGN_CYLINDER")
 PROD_SCOPE_HELPER_MAX_ITEMS = 1024
+# Not shown since the RC1 UI corrections (Owner, 2026-11-18); kept so the helper evidence and tests can name it.
 PROD_SCOPE_HELPER_NOTE = u"Helper bones that SFM moves automatically follow the pose and may look slightly different."
 PROD_SCOPE_KINDS = (u"full_body", u"selected_parts")
 PROD_SCOPE_COMPLETENESS = {u"full_body": u"declared_body", u"selected_parts": u"declared_scope"}
@@ -48433,8 +48442,7 @@ def prod_scope_summary(kind, inventory, bones=None, include_highlighted=True, ro
             # PS-2 UI corrections: only the meaningful exclusions. "rootTransform" (not "scene placement") so it
             # never implies the visible body can't move; the hip explanation is in Pose Info (F01-DI-01, RETAIN R3).
             text = u"Facial expressions and the rootTransform are not saved."
-        if inventory.get(u"helpers"):                # H1: a consequential, permitted limitation
-            text += u" " + PROD_SCOPE_HELPER_NOTE
+        # RC1 UI corrections (Owner, 2026-11-18): no helper-bone sentence; the H1 admission is unchanged.
         return text
     bones = list(bones or [])
     if not bones:
@@ -48515,15 +48523,15 @@ def prod_pose_info_view(record, source_project=None):
     2026-11-14; Expression Preset Info is the reference): its type, always Full body or Selected parts (a version 1
     arm pose is Selected parts and includes its saved arm; Owner decision 2026-11-15); the model file and path;
     the saved and updated dates; what it includes (how many bones, and the group for a selection); what it does not
-    include when that is consequential (recorded exclusions; for a full body, what is never saved); for a version 3
-    Full body, what happens to the hips; and a sentence only for a consequential selection effect. The saved
-    bones and values are prod_pose_info_values. Rows after the name (the dialog's first row), in the Owner's order
-    (2026-11-14, after K2): Type, Model, Model path, Source shot (the record's own pose.source.shot_name, every
+    include when that is consequential (recorded exclusions; for a full body, what is never saved); and a sentence
+    only for a consequential selection effect. The saved bones and values are prod_pose_info_values. Rows after the
+    name (the dialog's first row), in the Owner's order (RC1 UI corrections, 2026-11-18): Type, Saved, Updated (when
+    different), Includes, Not included, Model, Model path, Source shot (the record's own pose.source.shot_name, every
     version), Source project (`source_project`, from the local sidecar, never from the record or the current
-    session; "Not recorded" when unknown), Saved, Updated, then Includes, Not included and the hips note.
+    session; "Not recorded" when unknown). The Hip position explanation is no longer shown (same record and Apply).
     Returns {name, rows: [[label, text, tooltip]], effect}."""
     pose = record[u"pose"]
-    rows, effect, not_included, extra = [], None, [], []
+    rows, effect, not_included = [], None, []
     if prod_scope_is_record(record):
         sc = pose[u"scope"]
         not_included = [u"%s controls" % e[u"label"] for e in sc[u"exclusions"]]
@@ -48532,9 +48540,6 @@ def prod_pose_info_view(record, source_project=None):
             kind = u"Full body"
             includes = u"%d bones" % count
             not_included += PROD_POSE_FULL_BODY_NOT_INCLUDED[3]
-            if sc.get(u"root_translation") == u"included":
-                extra.append([u"Hip position:", u"Saved. Applying it moves the hips; the rootTransform stays where "
-                                                u"it is.", None])
         else:
             kind = u"Selected parts"
             friendly = prod_scope_friendly_label(sc[u"label"])
@@ -48554,14 +48559,6 @@ def prod_pose_info_view(record, source_project=None):
             kind = u"Selected parts"
             includes = u", ".join(PROD_POSE_PART_NAMES[r] for r in regions) or None
     rows.append([u"Type:", kind, None])
-    model = u(pose[u"source"].get(u"model_ref") or u"").replace(u"\\", u"/")
-    rows.append([u"Model:", model.rsplit(u"/", 1)[-1] or u"Unknown", None])
-    rows.append([u"Model path:", model or u"Unknown", None])
-    shot = pose[u"source"].get(u"shot_name")
-    rows.append([u"Source shot:", u(shot) if isinstance(shot, prod_pose_text_types()) and shot else
-                 PROD_POSE_NOT_RECORDED, None])
-    rows.append([u"Source project:", u(source_project) if prod_pose_valid_project(source_project) else
-                 PROD_POSE_NOT_RECORDED, None])
     rows.append([u"Saved:", prod_pose_info_date(record.get(u"created_at")), None])
     updated = record.get(u"updated_at")
     if updated and updated != record.get(u"created_at"):
@@ -48571,7 +48568,14 @@ def prod_pose_info_view(record, source_project=None):
     if not_included:
         text = u", ".join(not_included)
         rows.append([u"Not included:", text[:1].upper() + text[1:], None])
-    rows += extra
+    model = u(pose[u"source"].get(u"model_ref") or u"").replace(u"\\", u"/")
+    rows.append([u"Model:", model.rsplit(u"/", 1)[-1] or u"Unknown", None])
+    rows.append([u"Model path:", model or u"Unknown", None])
+    shot = pose[u"source"].get(u"shot_name")
+    rows.append([u"Source shot:", u(shot) if isinstance(shot, prod_pose_text_types()) and shot else
+                 PROD_POSE_NOT_RECORDED, None])
+    rows.append([u"Source project:", u(source_project) if prod_pose_valid_project(source_project) else
+                 PROD_POSE_NOT_RECORDED, None])
     return {u"name": u(record[u"name"]), u"rows": rows, u"effect": effect}
 
 
