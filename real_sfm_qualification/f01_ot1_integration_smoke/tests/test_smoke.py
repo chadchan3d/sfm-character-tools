@@ -25,6 +25,7 @@ import smoke_analyze as A  # noqa: E402
 import test_ot1 as B  # noqa: E402  (synthetic capture builders)
 
 RESULTS = []
+QUALIFIED_CPM_COMMIT = "d719bb0"
 
 
 def check(name, ok, value=None):
@@ -42,11 +43,17 @@ def sha_file(path):
 def section_template():
     with open(os.path.join(KIT, "ot1s.template.json"), "rb") as f:
         t = json.loads(f.read().decode("utf-8"))
-    cand = os.path.join(REPO, "cpm", "app", "SFM_Character_Preset_Manager.py")
     check("T1 format and no placeholder pin", t["format"] == smoke_tool.FORMAT
           and not any("<" in v for v in t["pins"].values()))
-    for key, rel in (("candidate_cpm_sha256", "cpm/app/SFM_Character_Preset_Manager.py"),
-                     ("ot1s_observer_sha256", "real_sfm_qualification/f01_ot1_integration_smoke/observer/F01_OT1S_Observe.py"),
+    # The OT1S kit ran the exact integrated candidate it qualified (48ff01a3...). Later work (H1) changed the
+    # working-tree CPM, so, as the OT1, K2 and EF-1 kit tests do, the candidate is read as the raw Git blob from its
+    # commit; the tool's own hash checks still decide at build time.
+    import subprocess
+    raw = subprocess.check_output(["git", "-C", REPO, "cat-file", "blob",
+                                   "%s:cpm/app/SFM_Character_Preset_Manager.py" % QUALIFIED_CPM_COMMIT])
+    check("T2 candidate pin = the integrated candidate at commit %s" % QUALIFIED_CPM_COMMIT,
+          t["pins"]["candidate_cpm_sha256"] == hashlib.sha256(raw).hexdigest())
+    for key, rel in (("ot1s_observer_sha256", "real_sfm_qualification/f01_ot1_integration_smoke/observer/F01_OT1S_Observe.py"),
                      ("ot1_observer_sha256", "real_sfm_qualification/f01_ot1_ordering_trial/observer/F01_OT1_Observe.py"),
                      ("q1_observer_sha256", "real_sfm_qualification/f01_q1_ps2_diagnostic/observer/F01_Q1_Observe.py"),
                      ("profile_sha256", "cpm/pose_profiles/cpm_pose_profiles_v1.json"),
@@ -59,8 +66,6 @@ def section_template():
         check("T3 pin %s equals the OT1 kit's" % key, t["pins"][key] == o["pins"][key])
     check("T3 paths equal the OT1 kit's", t["paths"] == o["paths"])
     S = smoke_tool.S
-    with open(cand, "rb") as f:
-        raw = f.read()
     qual = raw.replace(S.MODE_PRODUCTION, S.MODE_QUALIFICATION)
     diff = [i for i, (x, y) in enumerate(zip(raw.split(b"\n"), qual.split(b"\n"))) if x != y]
     check("T4 one-line derivation gives the pinned qualification build", len(diff) == 1

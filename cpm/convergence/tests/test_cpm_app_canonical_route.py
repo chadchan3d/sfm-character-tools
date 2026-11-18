@@ -351,6 +351,12 @@ F01_OT1_CHANGED_TOP = set(["prod_bs_write_existing_scale"])
 F01_OT1_NEW_TOP = set(["prod_bs_operate_bound_expression", "PROD_BS_EXPRESSION_REFERENCE_LIMIT",
                        "prod_bs_expression_references", "prod_bs_expression_reference_guard",
                        "prod_bs_revalidate_operation"])
+# F-01 H1 (Blueprint R4 sections 7 and 12 H): engine-evaluated QUATINTERP helpers in a generic Full body (the
+# read-only header evidence, the admission rule, its ledger role and the Save note); the scoped compiler, authority,
+# dependency, state, inventory, preflight, P7 and summary functions it threads through are SFP-1 names already listed.
+F01_H1_NEW_TOP = set(["PROD_SCOPE_HELPER_ROLE", "PROD_SCOPE_HELPER_PROC", "PROD_SCOPE_HELPER_REQUIRED_FLAG",
+                      "PROD_SCOPE_HELPER_EXCLUDED_FLAGS", "PROD_SCOPE_HELPER_MAX_ITEMS", "PROD_SCOPE_HELPER_NOTE",
+                      "prod_scope_helper_evidence", "prod_scope_helper_admission"])
 F01_STAGEC_CHANGED_METHODS = set(["selected_or_none", "operation_default_error_copy"])
 F01_STAGEC_NEW_METHODS = set(["apply_pose", "pose_begin_verification", "pose_finish_verification", "pose_guard",
                               "pose_registry_mode", "save_pose"])
@@ -560,8 +566,8 @@ def section_derivation(app):
     check("derivation.added_top_level_is_bounded",
           added == EXPECTED_NEW_TOP | R15_NEW_TOP | ITEM6_NEW_TOP | UIPASS_NEW_TOP | LOGFIX_NEW_TOP | M05_NEW_TOP
           | M06_NEW_TOP | M06W1_NEW_TOP | F01_STAGEA_NEW_TOP | F01_STAGEB_NEW_TOP | F01_STAGEC_NEW_TOP | F01_STAGED_NEW_TOP
-          | F01_UI_NEW_TOP | F01_STAGEE_NEW_TOP | F01_SFP1_NEW_TOP | F01_K2UI_NEW_TOP | F01_OT1_NEW_TOP,
-          sorted(added))
+          | F01_UI_NEW_TOP | F01_STAGEE_NEW_TOP | F01_SFP1_NEW_TOP | F01_K2UI_NEW_TOP | F01_OT1_NEW_TOP
+          | F01_H1_NEW_TOP, sorted(added))
     check("derivation.removed_is_exactly_item6_and_item7", removed == ITEM6_REMOVED_TOP | ITEM7_REMOVED_TOP
           | LOGFIX_REMOVED_TOP, sorted(removed ^ (ITEM6_REMOVED_TOP | ITEM7_REMOVED_TOP | LOGFIX_REMOVED_TOP)))
     bm, am = baseline.methods("ProdWindow"), app.methods("ProdWindow")

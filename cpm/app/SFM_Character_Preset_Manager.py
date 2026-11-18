@@ -45902,9 +45902,26 @@ PROD_SCOPE_CARRIED_REVISION = 1
 # (prod_scope_procedural_guard), whose native contract is not established, and qualified constant-log extrapolation.
 PROD_SCOPE_CARRIED_ENABLED = [False]
 PROD_SCOPE_EXTRAPOLATION_QUALIFIED = [False]
+# H1 (Blueprint R4 sections 7 and 12 H; "F-01 H1 - Generic Procedural-Helper Compatibility"): engine-evaluated helper
+# bones in a Full body. A control-less bone is admitted, by mechanism and relationships and never by name or model,
+# only when the engine-loaded studio header declares it a QUATINTERP procedure that always runs, with no physics or
+# screen-align flag; it is a skeletal leaf (scene and header) under a direct-FK bone; no attachment or bone flex
+# driver uses it; its channels are the bone's only writers and carry no source (prod_scope_classify). CPM never writes
+# it: its authored channels, keys, defaults and configuration stay protected by the existing authored-state, scale,
+# parent and authority checks, and its SFM-evaluated transform may follow the pose (no rendered-output obligation).
+# It is never treated as constant. Recorded in the coverage ledger as PROD_SCOPE_HELPER_ROLE (Full body only), which
+# older strict readers refuse as an unknown role rather than misapply.
+PROD_SCOPE_HELPER_ROLE = u"engine-helper"
+PROD_SCOPE_HELPER_PROC = u"STUDIO_PROC_QUATINTERP"
+PROD_SCOPE_HELPER_REQUIRED_FLAG = u"BONE_ALWAYS_PROCEDURAL"
+PROD_SCOPE_HELPER_EXCLUDED_FLAGS = (u"BONE_PHYSICALLY_SIMULATED", u"BONE_PHYSICS_PROCEDURAL",
+                                    u"BONE_SCREEN_ALIGN_SPHERE", u"BONE_SCREEN_ALIGN_CYLINDER")
+PROD_SCOPE_HELPER_MAX_ITEMS = 1024
+PROD_SCOPE_HELPER_NOTE = u"Helper bones that SFM moves automatically follow the pose and may look slightly different."
 PROD_SCOPE_KINDS = (u"full_body", u"selected_parts")
 PROD_SCOPE_COMPLETENESS = {u"full_body": u"declared_body", u"selected_parts": u"declared_scope"}
-PROD_SCOPE_LEDGER_ROLES = (u"posed", u"carried", u"carried-constant", u"excluded-expression", u"outside")
+PROD_SCOPE_LEDGER_ROLES = (u"posed", u"carried", u"carried-constant", u"excluded-expression", u"outside",
+                           PROD_SCOPE_HELPER_ROLE)
 PROD_SCOPE_PROVENANCE = (u"user_confirmed", u"supported_metadata")
 PROD_SCOPE_MODEL_FRAME = u"@model"
 PROD_SCOPE_MAX_BONES = 4096
@@ -46168,6 +46185,9 @@ def prod_scope_validate(record):
             raise ProdPoseError(u"invalid-file", u"a full-body scope needs its posed root and translation")
         if any(r == u"carried-constant" for r in sc[u"ledger"].values()) and engine[u"carried_rule"] is None:
             raise ProdPoseError(u"invalid-file", u"carried constants need their rule")
+        for name, role in sc[u"ledger"].items():       # H1: an engine helper is a leaf under a posed bone
+            if role == PROD_SCOPE_HELPER_ROLE and (parents[name] not in posed or name in parents.values()):
+                raise ProdPoseError(u"invalid-file", u"engine helper %s is not a leaf under a posed bone" % name)
     else:
         if sorted(sc[u"requested"]) != sorted(posed) or sc[u"exclusions"] or sc[u"root_translation"] != u"excluded" \
                 or val[u"root_translation"] is not None:
@@ -46175,6 +46195,8 @@ def prod_scope_validate(record):
                                                  u"exclusions and no body translation")
         if any(r in (u"excluded-expression",) for r in sc[u"ledger"].values()):
             raise ProdPoseError(u"invalid-file", u"a selected-parts scope has no expression exclusions")
+        if any(r == PROD_SCOPE_HELPER_ROLE for r in sc[u"ledger"].values()):
+            raise ProdPoseError(u"invalid-file", u"a selected-parts scope has no engine helpers")
         below, pending, kids = set(), list(posed), {}
         for n, p in parents.items():
             kids.setdefault(p, []).append(n)
@@ -46814,11 +46836,13 @@ def prod_scope_request(kind, bones=None, exclusions=None):
     return {u"kind": kind, u"bones": list(bones or []), u"exclusions": [dict(e) for e in exclusions or []]}
 
 
-def prod_scope_compile(D, C, request, carried_admitted=None):
+def prod_scope_compile(D, C, request, carried_admitted=None, helpers_admitted=None):
     """One operation's sets from the declared request and the fresh classification: W (written channels with their
     value source), A (affected bones: posed and carried), D (read-only dependencies: ancestor chains, boundaries,
     model placement and scales), P (everything else), and the coverage ledger. Never adds a parent to W, never drops
-    a requested bone. carried_admitted: bones admitted by constant_channel_carried_v1 (none while it is disabled)."""
+    a requested bone. carried_admitted: bones admitted by constant_channel_carried_v1 (none while it is disabled).
+    helpers_admitted: H1 engine helpers (prod_scope_helper_admission); a Full body leaves them unwritten and outside
+    A, with the ledger role PROD_SCOPE_HELPER_ROLE. Selected parts never admits them."""
     carried_admitted = set(carried_admitted or [])
     kind = request.get(u"kind")
     if kind not in PROD_SCOPE_KINDS:
@@ -46834,11 +46858,14 @@ def prod_scope_compile(D, C, request, carried_admitted=None):
     unknown = sorted(set(excluded) - set(bones))
     if unknown or len(set(excluded)) != len(excluded):
         raise prod_scope_error(u"scope-differs", u"excluded bones unknown or repeated: %s" % unknown[:8])
+    helpers = []
     if kind == u"full_body":
         requested = list(all_bones)
+        helpers = [n for n in all_bones if n in set(helpers_admitted or []) and n not in carried_admitted and
+                   n not in excluded and bones[n][u"class"] == u"carried-candidate"]
         refusals = {}
         for name in requested:
-            if name in excluded:
+            if name in excluded or name in helpers:
                 continue
             cls = bones[name][u"class"]
             if cls == u"direct-fk" or (cls == u"carried-candidate" and name in carried_admitted):
@@ -46866,7 +46893,11 @@ def prod_scope_compile(D, C, request, carried_admitted=None):
                     n, sorted(below)[:4]))
         ledger = {}
         for n in requested:
-            ledger[n] = u"posed" if n in posed else u"carried-constant" if n in carried else u"excluded-expression"
+            ledger[n] = u"posed" if n in posed else u"carried-constant" if n in carried else \
+                PROD_SCOPE_HELPER_ROLE if n in helpers else u"excluded-expression"
+        unposed = [n for n in helpers if D[u"bones"][n][u"parent"] not in posed]
+        if unposed:                                  # a helper follows a posed bone, never an excluded one
+            raise prod_scope_error(u"exclusion-boundary", u"engine helpers below excluded bones: %s" % unposed[:8])
         preserved = [n for n in excluded if bones[n][u"class"] == u"direct-fk"]
         root_translation = u"included"
     else:
@@ -46923,7 +46954,7 @@ def prod_scope_compile(D, C, request, carried_admitted=None):
         u"excluded": excluded, u"exclusions": exclusions, u"ledger": ledger, u"written": written,
         u"written_names": names, u"affected": [n for n in all_bones if n in affected],
         u"chain": [n for n in all_bones if n in chain], u"tops": tops, u"boundaries": boundaries,
-        u"root": C[u"root"], u"root_translation": root_translation,
+        u"root": C[u"root"], u"root_translation": root_translation, u"helpers": helpers,
         u"outside": [n for n in all_bones if n not in affected and n not in chain]})
 
 
@@ -46990,14 +47021,15 @@ def prod_scope_check_authority(D, C, S):
             if source is not None and A[u"destinations"].get(u"%d:%s" % (source[u"handle"], attr)):
                 raise prod_scope_error(u"shared-input", u"a channel drives the control of %s" % w[u"channel"],
                                        parts=[w[u"bone"]])
-    for name in list(S[u"affected"]) + list(S[u"chain"]):
+    helpers = list(S.get(u"helpers") or [])
+    for name in list(S[u"affected"]) + list(S[u"chain"]) + helpers:
         b = D[u"bones"][name]
         for attr in (u"position", u"orientation", u"scale"):
             writers = A[u"destinations"].get(u"%d:%s" % (b[u"transform"], attr)) or []
             outside = [x for x in writers if x not in mine]
             if outside:
                 raise prod_scope_error(u"shared-authority", u"channels outside the instance write %s.%s" % (name, attr))
-        if name in S[u"affected"] and A[u"slave_targets"].get(u"%d" % b[u"handle"]):
+        if (name in S[u"affected"] or name in helpers) and A[u"slave_targets"].get(u"%d" % b[u"handle"]):
             raise prod_scope_error(u"shared-authority", u"a constraint drives affected bone %s" % name)
         foreign = [o for o in A[u"slave_targets"].get(u"%d" % b[u"handle"]) or [] if o not in A[u"operators"]]
         if foreign:
@@ -47094,6 +47126,107 @@ def prod_scope_carried_admission(D, C, names, snaps, authored, guard, t_chan):
             refusals[name] = why
         else:
             admitted.append(name)
+    return admitted, refusals
+
+
+# --- H1: engine-evaluated QUATINTERP helpers (read-only declaration evidence and admission) ----------------------------
+
+def prod_scope_helper_evidence(L):
+    """The engine-loaded studio header of the pinned instance's game model, read only through the supported
+    accessors used natively by NQ-S6 and NQ-03 (CDmeGameModel.GetStudioHdr; numbones, pBone(i) pszName, parent, flags,
+    proctype; numlocalattachments, pLocalAttachment(i).localbone; BoneFlexDriverCount, BoneFlexDriver(i).m_nBoneIndex)
+    and the vs.studio values of the constants the rule needs. Nothing is created, loaded, evaluated or written. Never
+    raises: anything unreadable gives status UNREADABLE, which admits no helper."""
+    try:
+        studio = getattr(vs, "studio", None)
+        if studio is None:
+            __import__("vs.studio")
+            studio = getattr(vs, "studio", None)
+        constants = {}
+        for name in (PROD_SCOPE_HELPER_PROC, PROD_SCOPE_HELPER_REQUIRED_FLAG) + PROD_SCOPE_HELPER_EXCLUDED_FLAGS:
+            value = getattr(studio, name)
+            if isinstance(value, bool) or not isinstance(value, prod_pose_int_types()):
+                raise ValueError(u"constant %s is not an integer" % name)
+            constants[name] = int(value)
+        hdr = L[u"gm"].GetStudioHdr()
+        if hdr is None:
+            raise ValueError(u"GetStudioHdr returned None")
+        count = int(hdr.numbones)
+        if not 0 < count <= PROD_SCOPE_MAX_BONES:
+            raise ValueError(u"header bone count %d out of range" % count)
+        bones = []
+        for i in range(count):
+            b = hdr.pBone(i)
+            if b is None:
+                raise ValueError(u"pBone(%d) returned None" % i)
+            bones.append({u"index": i, u"name": prod_pose_text(b.pszName()), u"parent": int(b.parent),
+                          u"flags": int(b.flags), u"proctype": int(b.proctype)})
+        n = int(hdr.numlocalattachments)
+        if not 0 <= n <= PROD_SCOPE_HELPER_MAX_ITEMS:
+            raise ValueError(u"attachment count %d out of range" % n)
+        attachments = sorted(set(int(hdr.pLocalAttachment(i).localbone) for i in range(n)))
+        n = int(hdr.BoneFlexDriverCount())
+        if not 0 <= n <= PROD_SCOPE_HELPER_MAX_ITEMS:
+            raise ValueError(u"bone flex driver count %d out of range" % n)
+        drivers = sorted(set(int(hdr.BoneFlexDriver(i).m_nBoneIndex) for i in range(n)))
+    except Exception as exc:
+        return {u"status": u"UNREADABLE", u"reason": u"%r" % (exc,)}
+    return prod_pose_roundtrip({u"status": u"READ", u"constants": constants, u"bones": bones,
+                                u"attachments": attachments, u"flex_drivers": drivers})
+
+
+def prod_scope_helper_admission(D, C, H):
+    """H1 admission of control-less bones as engine helpers. Pure: from the discovery D, the classification C and the
+    header evidence H. Returns (admitted bone names in skeletal order, refusals {bone: reason}). The header must match
+    the scene skeleton exactly by index, name and parent, or nothing is admitted. Each candidate (a carried-candidate
+    bone: control-less, source-less, its only writers) must be declared STUDIO_PROC_QUATINTERP with
+    BONE_ALWAYS_PROCEDURAL and none of the physics or screen-align flags, be a leaf in the scene and the header, have
+    a direct-FK parent, and be used by no attachment or bone flex driver."""
+    candidates = [n for n in prod_scope_bone_order(D) if C[u"bones"][n][u"class"] == u"carried-candidate"]
+    if not candidates:
+        return [], {}
+    if not isinstance(H, dict) or H.get(u"status") != u"READ":
+        why = u"the model's procedural declarations are unreadable"
+        return [], dict((n, why) for n in candidates)
+    rows = H[u"bones"]
+    by_index = dict((r[u"index"], r) for r in rows)
+    index_of = dict((n, b[u"index"]) for n, b in D[u"bones"].items())
+    mismatch = len(rows) != len(D[u"bones"]) or len(by_index) != len(rows)
+    for n, b in D[u"bones"].items():
+        if mismatch:
+            break
+        r = by_index.get(b[u"index"])
+        if r is None or r[u"name"] != n:
+            mismatch = True
+        elif b[u"parent"] is None:
+            mismatch = r[u"parent"] != -1
+        else:
+            mismatch = r[u"parent"] != index_of.get(b[u"parent"])
+    if mismatch:
+        why = u"the model's header does not match the scene skeleton"
+        return [], dict((n, why) for n in candidates)
+    k = H[u"constants"]
+    excluded_mask = 0
+    for name in PROD_SCOPE_HELPER_EXCLUDED_FLAGS:
+        excluded_mask |= k[name]
+    header_parents = set(r[u"parent"] for r in rows)
+    children = prod_scope_children(D)
+    admitted, refusals = [], {}
+    for n in candidates:
+        r = by_index[index_of[n]]
+        parent = D[u"bones"][n][u"parent"]
+        if r[u"proctype"] != k[PROD_SCOPE_HELPER_PROC]:
+            refusals[n] = u"not a declared QUATINTERP helper"
+        elif not r[u"flags"] & k[PROD_SCOPE_HELPER_REQUIRED_FLAG] or r[u"flags"] & excluded_mask:
+            refusals[n] = u"its procedural flags are not supported"
+        elif children.get(n) or r[u"index"] in header_parents:
+            refusals[n] = u"other bones depend on it"
+        elif parent is None or C[u"bones"][parent][u"class"] != u"direct-fk":
+            refusals[n] = u"its parent is not a directly controlled bone"
+        elif r[u"index"] in H[u"attachments"] or r[u"index"] in H[u"flex_drivers"]:
+            refusals[n] = u"an attachment or bone flex driver uses it"
+        else:
+            admitted.append(n)
     return admitted, refusals
 
 
@@ -47469,7 +47602,8 @@ def prod_scope_dependencies(D, S):
 
     Admission invariant: an element reached is admitted only on positive evidence.
     - Moves legitimately: an affected bone through the hierarchy or its own transform; an excluded, confined bone
-      through the hierarchy, its transform or a supported constraint (R3 4 one-way head-follow).
+      through the hierarchy, its transform or a supported constraint (R3 4 one-way head-follow); an admitted H1
+      engine helper through the hierarchy or its own transform only (returned with the confined followers).
     - Protected (refuses, shared-input): any other bone, the model, a rig handle, a control, a channel, an operator
       element, a log, layer, control group, rig element, the animation set or the channels clip of the instance,
       and any transform shared between the instance and another DAG.
@@ -47487,6 +47621,7 @@ def prod_scope_dependencies(D, S):
     affected = set(S[u"affected"])
     opaque = [n for n in S[u"excluded"] if n not in S[u"preserved"]]
     confined = set(opaque) | prod_scope_descendants(D, opaque)
+    helpers = set(S.get(u"helpers") or [])      # H1: follow only through the hierarchy or their own transform
     bone_of = {}
     for n, b in D[u"bones"].items():
         bone_of[b[u"handle"]] = n
@@ -47545,7 +47680,8 @@ def prod_scope_dependencies(D, S):
         name = bone_of.get(dest)
         if name is not None:
             if (name in affected and kind in (u"hierarchy", u"alias")) or (
-                    name in confined and kind in (u"hierarchy", u"alias", u"constraint")):
+                    name in confined and kind in (u"hierarchy", u"alias", u"constraint")) or (
+                    name in helpers and kind in (u"hierarchy", u"alias")):
                 if name not in affected:
                     edges.add((kind, via, dest))
                 move(dest, uncertain)
@@ -47637,7 +47773,7 @@ def prod_scope_dependencies(D, S):
             code = u"evidence-unreadable"
         raise prod_scope_error(code, u"the pose would reach %s, which CPM cannot keep isolated" % labels[:8],
                                parts=[x for x in labels if x in D[u"bones"] or x == u"model"] or labels)
-    return {u"confined": sorted(n for n in confined - affected if D[u"bones"][n][u"handle"] in moving),
+    return {u"confined": sorted(n for n in (confined | helpers) - affected if D[u"bones"][n][u"handle"] in moving),
             u"external": sorted(external), u"edges": sorted([list(e) for e in edges])}
 
 
@@ -47729,11 +47865,13 @@ def prod_scope_state(row, request=None, carried=None):
         D = prod_scope_discover(L, time[u"t_chan"], index)
         D[u"groups"] = prod_scope_groups(L)
         C = prod_scope_classify(D)
-        S = prod_scope_compile(D, C, request, carried) if request is not None else None
+        helpers, helper_refusals = prod_scope_helper_admission(D, C, prod_scope_helper_evidence(L))
+        S = prod_scope_compile(D, C, request, carried, helpers) if request is not None else None
         if S is not None:
             prod_scope_check_authority(D, C, S)
         return {u"L": L, u"D": D, u"C": C, u"S": S, u"time": time, u"authored": prod_pose_capture_authored(L),
-                u"observed": prod_pose_capture_observed(L), u"identity": prod_scope_identity(L)}
+                u"observed": prod_pose_capture_observed(L), u"identity": prod_scope_identity(L),
+                u"helpers": helpers, u"helper_refusals": helper_refusals}
     return prod_scope_wrap(read)
 
 
@@ -47853,21 +47991,25 @@ def prod_scope_inventory(identity, authorization):
     view = prod_scope_group_view(D, C)
     highlighted = prod_scope_highlighted(D, C, view)
     carried = prod_scope_carried_inputs(st, prod_scope_request(u"full_body"))
+    helpers = st[u"helpers"]
+    if st[u"helper_refusals"]:
+        prod_pose_log(u"SCOPE-helper-refused", {u"bones": dict(list(sorted(st[u"helper_refusals"].items()))[:16])})
     full = {u"status": u"available", u"code": None, u"message": None, u"review": []}
     try:
-        S = prod_scope_compile(D, C, prod_scope_request(u"full_body"), carried)
+        S = prod_scope_compile(D, C, prod_scope_request(u"full_body"), carried, helpers)
         prod_scope_check_authority(D, C, S)
     except ProdPoseError as exc:
         full = {u"status": u"refused", u"code": exc.code, u"message": u"%s" % exc, u"review": []}
         # Unsupported components that are only highlighted expression candidates can be left out by the artist.
         if exc.code in (u"unsupported-body", u"carried-unsupported", u"rig-driven"):
-            unsupported = [n for n, r in C[u"bones"].items() if r[u"class"] != u"direct-fk" and n not in carried]
+            unsupported = [n for n, r in C[u"bones"].items() if r[u"class"] != u"direct-fk" and n not in carried
+                           and n not in helpers]
             if unsupported and set(unsupported) <= set(highlighted):
                 full = {u"status": u"review-required", u"code": u"review-required",
                         u"message": PROD_SCOPE_MESSAGES[u"review-required"], u"review": sorted(unsupported)}
     signature = hashlib.sha256(prod_pose_canonical_bytes([st[u"identity"], C, D[u"groups"]])).hexdigest()
     return {u"view": view, u"highlighted": highlighted, u"full_body": full, u"signature": signature,
-            u"time": st[u"time"], u"root": C[u"root"], u"carried": carried,
+            u"time": st[u"time"], u"root": C[u"root"], u"carried": carried, u"helpers": list(helpers),
             u"classes": dict((n, r[u"class"]) for n, r in C[u"bones"].items()),
             u"parents": dict((n, b[u"parent"]) for n, b in D[u"bones"].items())}    # presentation only
 
@@ -47949,7 +48091,8 @@ def prod_scope_preflight(identity, authorization, item):
         prod_pose_log(u"SCOPE-external-followers", {u"count": len(dependencies[u"external"]),
                                                     u"note": u"left under their SFM relationships; not verified"})
     opaque = [n for n in S[u"excluded"] if n not in S[u"preserved"]]
-    followers = sorted(set(dependencies[u"confined"]) | set(opaque) | prod_scope_descendants(D, opaque))
+    followers = sorted(set(dependencies[u"confined"]) | set(opaque) | prod_scope_descendants(D, opaque) |
+                       set(S[u"helpers"]))
     noop = prod_scope_noop(plans, D, expected, pose, S, values, followers)
     handles = dict((n, prod_pose_h(b[u"channel"])) for n, b in bindings.items())
     return {u"state": st, u"undo": undo, u"time": st[u"time"], u"gate": gate, u"pose": pose, u"request": request,
@@ -48168,8 +48311,9 @@ def prod_scope_verify_applied(pending):
             problems.append(u"classification")
         if D[u"authority"] != pending[u"baseline"][u"authority"]:
             problems.append(u"authority changed since P1")
+        helpers = prod_scope_helper_admission(D, C, prod_scope_helper_evidence(L))[0]
         try:
-            S = prod_scope_compile(D, C, pending[u"request"], pending[u"carried"])
+            S = prod_scope_compile(D, C, pending[u"request"], pending[u"carried"], helpers)
             if S != pending[u"scope"]:
                 problems.append(u"scope")
             prod_scope_check_authority(D, C, pending[u"scope"])
@@ -48280,12 +48424,16 @@ def prod_scope_summary(kind, inventory, bones=None, include_highlighted=True, ro
         if full[u"status"] == u"review-required" and include_highlighted:
             return full[u"message"]
         if inventory[u"highlighted"] and not include_highlighted:
-            return u"The listed controls are left as they are on the character."
-        if inventory[u"highlighted"]:
-            return u"Includes the listed facial bones. Facial expressions are not saved."
-        # PS-2 UI corrections: only the meaningful exclusions. "rootTransform" (not "scene placement") so it never
-        # implies the visible body can't move; the hip explanation is in Pose Info (F01-DI-01, RETAIN R3).
-        return u"Facial expressions and the rootTransform are not saved."
+            text = u"The listed controls are left as they are on the character."
+        elif inventory[u"highlighted"]:
+            text = u"Includes the listed facial bones. Facial expressions are not saved."
+        else:
+            # PS-2 UI corrections: only the meaningful exclusions. "rootTransform" (not "scene placement") so it
+            # never implies the visible body can't move; the hip explanation is in Pose Info (F01-DI-01, RETAIN R3).
+            text = u"Facial expressions and the rootTransform are not saved."
+        if inventory.get(u"helpers"):                # H1: a consequential, permitted limitation
+            text += u" " + PROD_SCOPE_HELPER_NOTE
+        return text
     bones = list(bones or [])
     if not bones:
         return PROD_SCOPE_MESSAGES[u"empty-selection"]
@@ -48301,7 +48449,7 @@ def prod_scope_selected_parts_unavailable(reason):
     character whose version 2 Full body route is usable. Full body keeps that route; Selected parts is offered as
     unavailable with the generic refusal's own reason and can't be saved."""
     return {u"view": [], u"highlighted": [], u"signature": None, u"time": None, u"root": None, u"carried": [],
-            u"classes": {}, u"parents": {}, u"selected_parts_unavailable": u(reason),
+            u"helpers": [], u"classes": {}, u"parents": {}, u"selected_parts_unavailable": u(reason),
             u"full_body": {u"status": u"refused", u"code": u"structure-unsupported", u"message": u(reason),
                            u"review": []}}
 
