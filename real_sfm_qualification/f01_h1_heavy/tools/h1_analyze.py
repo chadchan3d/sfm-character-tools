@@ -7,7 +7,7 @@ create). It never changes the run.
 Gates:
   EVIDENCE  identities, every capture from one SFM process on H1_SESSION.dmx with the qualification build, shot and
             playhead never moved, three Heavy instances, sessions never saved, the library changed only by the one
-            saved Heavy pose, library and installation restored exactly, no Abort, recovery or unverified result in
+            saved Heavy pose (and its one pose_sources.json entry), library and installation restored exactly, no Abort, recovery or unverified result in
             the CPM log
   HEADER    the engine header was read on source and target and CPM admitted the same declared QUATINTERP helpers
             with no refusal
@@ -21,6 +21,7 @@ SAFE REFUSAL (the Heavy was refused at the header or at Save: a safe limitation,
 FAIL (complete evidence, a functional gate failed); INCOMPLETE (evidence or restoration missing or failed).
 
 usage: python -I h1_analyze.py H1.json      (or: h1_tool.py H1.json analyze)
+       python -I h1_analyze.py H1.json --replay   (H1_REPLAY_VERDICT.json/.md; the original verdict must exist)
 """
 from __future__ import print_function
 
@@ -117,16 +118,42 @@ def saved_records(R):
     return out
 
 
+def pose_sources_ok(R, x, poses):
+    """Save New's informational sidecar pose_sources.json: added in the one saved pose's own character folder, the
+    file kept in library_after is the one recorded, and it holds exactly one entry, keyed by that pose's preset_id,
+    whose only field is the project, this run's sessions/H1_SESSION.dmx."""
+    parts = x["path"].split("/")
+    if (x["status"] != "added" or len(parts) != 3 or parts[0] != "Characters" or parts[2] != "pose_sources.json" or
+            len(poses) != 1 or poses[0]["path"].split("/")[1] != parts[1]):
+        return False
+    path = R.ev("library_after", *parts)
+    if not os.path.isfile(path) or sha(path) != x.get("sha256"):
+        return False
+    data = opt_json(path)
+    pid = (opt_json(R.ev("library_after", *poses[0]["path"].split("/"))) or {}).get("preset_id")
+    norm = lambda p: p.replace("/", "\\").lower() if isinstance(p, type(u"")) else None  # noqa: E731
+    want = norm(os.path.join(R.q, "sessions", "H1_SESSION.dmx"))
+    if not isinstance(data, dict) or sorted(data) != ["entries", "record_kind", "schema_version"]:
+        return False
+    entries = data["entries"]
+    return (data["record_kind"] == u"cpm-pose-sources" and data["schema_version"] == 1 and
+            isinstance(pid, type(u"")) and isinstance(entries, dict) and list(entries) == [pid] and
+            isinstance(entries[pid], dict) and list(entries[pid]) == ["project"] and
+            norm(entries[pid]["project"]) == want)
+
+
 def library_and_restore(R, refused_run=False):
-    """The library changed only by the one saved Heavy pose (none when the Heavy was refused); restored exactly."""
+    """The library changed only by the one saved Heavy pose and its pose_sources.json entry (none when the Heavy was
+    refused); restored exactly."""
     clean = opt_json(R.ev("library_cleanup.json")) or {}
     diffs = clean.get("differences_kept_in_evidence") or []
     dirs = set(x["path"].split("/")[1] for x in diffs if x["path"].startswith("Characters/") and
                len(x["path"].split("/")) > 2)
+    poses = [x for x in diffs if "/Poses/" in x["path"]]
     allowed = lambda x: (x["status"] == "added" and x["path"].startswith("Characters/") and  # noqa: E731
                          (re.match(r"^Characters/[^/]+/Poses/[^/]+\.json$", x["path"]) or
-                          re.match(r"^Characters/[^/]+/character\.json(\.bak)?$", x["path"])))
-    poses = [x for x in diffs if "/Poses/" in x["path"]]
+                          re.match(r"^Characters/[^/]+/character\.json(\.bak)?$", x["path"]) or
+                          pose_sources_ok(R, x, poses)))
     unexpected = [x for x in diffs if not allowed(x)]
     want = (len(dirs) <= 1 and not poses) if refused_run else (len(dirs) == 1 and len(poses) == 1)
     R.check("EVIDENCE", "library.changed_only_by_the_one_saved_heavy_pose",
@@ -300,16 +327,22 @@ def markdown(out):
     return "\n".join(lines) + "\n"
 
 
-def run(c):
+def run(c, replay=False):
+    """replay: a re-analysis of the same evidence by a corrected analyzer, written beside (never over) the original
+    verdict as H1_REPLAY_VERDICT.json/.md, naming the original verdict it follows."""
     R = Report(c)
     limitation = evaluate(R)
     v, gates = verdict(R.checks, limitation)
     out = {"format": "F01-H1-verdict-v1", "verdict": v, "gates": gates, "identities": R.ids, "checks": R.checks,
            "failed": [x["id"] for x in R.checks if not x["pass"]], "info": R.info, "findings": R.findings,
            "analyzer_sha256": sha(os.path.abspath(__file__))}
+    stem = "H1_VERDICT"
+    if replay:
+        stem = "H1_REPLAY_VERDICT"
+        out["replay_of_verdict_sha256"] = sha(R.ev("H1_VERDICT.json"))
     md = markdown(out)
-    for name, data in (("H1_VERDICT.json", json.dumps(out, indent=1, sort_keys=True, default=repr)),
-                       ("H1_VERDICT.md", md)):
+    for name, data in ((stem + ".json", json.dumps(out, indent=1, sort_keys=True, default=repr)),
+                       (stem + ".md", md)):
         fd = os.open(R.ev(name), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0))
         with os.fdopen(fd, "wb") as f:
             f.write(data.encode("utf-8"))
@@ -318,12 +351,12 @@ def run(c):
 
 
 def main(argv):
-    if len(argv) != 2:
+    if len(argv) not in (2, 3) or (len(argv) == 3 and argv[2] != "--replay"):
         print(__doc__)
         return 2
     sys.path.insert(0, HERE)
     import h1_tool
-    return run(h1_tool.S.load(argv[1]))
+    return run(h1_tool.S.load(argv[1]), replay=len(argv) == 3)
 
 
 if __name__ == "__main__":

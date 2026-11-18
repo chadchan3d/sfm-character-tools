@@ -178,6 +178,15 @@ def write_run(run, root):
     dump(os.path.join(q, "staged", "IDENTITIES.json"), run["ids"])
     for step, data in run["caps"].items():
         dump(os.path.join(q, "observations", "H1-%s.json" % step), data)
+    side = run.get("sidecar")
+    if side:  # Save New's pose_sources.json, kept in library_after and recorded as an added difference
+        obj = json.loads(json.dumps(side["obj"]).replace("<Q>", q.replace("\\", "\\\\")))
+        path = os.path.join(q, "evidence", "library_after", *side["rel"].split("/"))
+        os.makedirs(os.path.dirname(path))
+        dump(path, obj)
+        run["cleanup"]["differences_kept_in_evidence"].append(
+            {"status": side.get("status", "added"), "path": side["rel"],
+             "sha256": side.get("sha256") or sha_file(path)})
     dump(os.path.join(q, "evidence", "library_cleanup.json"), run["cleanup"])
     dump(os.path.join(q, "evidence", "restore.json"), run["restore"])
     if run["record"] is not None:
@@ -316,6 +325,7 @@ def section_verdicts(root):
         run["cleanup"]["differences_kept_in_evidence"].append(
             {"status": "changed", "path": u"Characters/krystal2020--7d2aee52ef3a/Body Presets/Body.json", "sha256": "z"})
     variant("an unrelated library change", extra_diff, "INCOMPLETE", "EVIDENCE")
+    section_pose_sources(root, variant)
     variant("a session saved", lambda r: r.update(tamper_session=True), "INCOMPLETE", "EVIDENCE")
     variant("an unverified result in the log", lambda r: r["logs"].append(u"PROD_POSE_SCOPE-P7-unverified {}"),
             "INCOMPLETE", "EVIDENCE")
@@ -336,6 +346,63 @@ def section_verdicts(root):
         for s in run["caps"].values():
             s["sets"]["peer"]["model"] = u"models/player/engineer.mdl"
     variant("a non-Heavy instance", not_heavy, "INCOMPLETE", "EVIDENCE")
+
+
+PID = u"4cfe409f901e23e11c247ab7b5183507"
+
+
+def with_sidecar(run, entries=None, rel=u"Characters/heavy--abc/pose_sources.json", **extra):
+    """The native shape: Save New also adds pose_sources.json with the saved pose's one source-project entry."""
+    run["record"]["preset_id"] = PID
+    obj = {"entries": entries if entries is not None else
+           {PID: {"project": u"<Q>\\sessions\\h1_session.dmx"}},
+           "record_kind": "cpm-pose-sources", "schema_version": 1}
+    run["sidecar"] = dict({"rel": rel, "obj": obj}, **extra)
+    return run
+
+
+def section_pose_sources(root, variant):
+    """P: the analyzer correction after the native run. pose_sources.json is allowed only as the one exact H1 entry."""
+    out, code, cfg = analyze(with_sidecar(good_run()), root)
+    check("P1 the pose plus its one pose_sources.json entry -> AUTOMATED PASS",
+          out["verdict"] == "AUTOMATED PASS" and code == 0, out["failed"])
+    other = u"e:\\sourcefilmmaker sessions\\other.dmx"
+    variant("pose_sources.json naming another project",
+            lambda r: with_sidecar(r, {PID: {"project": other}}), "INCOMPLETE", "EVIDENCE")
+    variant("pose_sources.json with a second entry", lambda r: with_sidecar(
+        r, {PID: {"project": u"<Q>\\sessions\\h1_session.dmx"}, u"f" * 32: {"project": other}}),
+        "INCOMPLETE", "EVIDENCE")
+    variant("pose_sources.json keyed by another pose", lambda r: with_sidecar(
+        r, {u"f" * 32: {"project": u"<Q>\\sessions\\h1_session.dmx"}}), "INCOMPLETE", "EVIDENCE")
+    variant("pose_sources.json with an extra field", lambda r: with_sidecar(
+        r, {PID: {"project": u"<Q>\\sessions\\h1_session.dmx", "note": u"x"}}), "INCOMPLETE", "EVIDENCE")
+    variant("pose_sources.json in another character folder",
+            lambda r: with_sidecar(r, rel=u"Characters/krystal2020--7d2aee52ef3a/pose_sources.json"),
+            "INCOMPLETE", "EVIDENCE")
+    variant("pose_sources.json changed, not added", lambda r: with_sidecar(r, status="changed"),
+            "INCOMPLETE", "EVIDENCE")
+    variant("pose_sources.json kept differs from the recorded difference",
+            lambda r: with_sidecar(r, sha256="0" * 64), "INCOMPLETE", "EVIDENCE")
+    run = with_sidecar(good_run())
+    run["cleanup"]["differences_kept_in_evidence"].append(
+        {"status": "added", "path": u"Characters/heavy--abc/library.json", "sha256": "z"})
+    out, _, _ = analyze(run, root)
+    check("P2 another new file beside pose_sources.json is still unexpected -> INCOMPLETE",
+          out["verdict"] == "INCOMPLETE" and "library.changed_only_by_the_one_saved_heavy_pose" in out["failed"],
+          out["failed"])
+    out, code, cfg = analyze(with_sidecar(good_run()), root)
+    original = sha_file(os.path.join(cfg["paths"]["Q"], "evidence", "H1_VERDICT.json"))
+    with open(os.devnull, "w") as null:
+        old, sys.stdout = sys.stdout, null
+        try:
+            A.run(cfg, replay=True)
+        finally:
+            sys.stdout = old
+    with open(os.path.join(cfg["paths"]["Q"], "evidence", "H1_REPLAY_VERDICT.json"), "rb") as f:
+        rep = json.loads(f.read().decode("utf-8"))
+    check("P3 a replay writes H1_REPLAY_VERDICT beside the original, naming it, and leaves it unchanged",
+          rep["replay_of_verdict_sha256"] == original and original == sha_file(
+              os.path.join(cfg["paths"]["Q"], "evidence", "H1_VERDICT.json")) and rep["verdict"] == out["verdict"])
 
 
 def main():
