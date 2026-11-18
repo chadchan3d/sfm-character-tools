@@ -581,6 +581,17 @@ class World(object):
         self.animset = Element(self, self.new_handle(), "DmeAnimationSet", "Krystal", gameModel=self.gm,
                                controls=ElementArray(self, self.controls),
                                operators=ElementArray(self, [el for op, el in self.ops if "animation_set" in op["owners"]]))
+        if fx.get("groups"):
+            # Stage 1 fixtures (f01_dmx_body_fixture.py) carry the control group tree; the S0 fixtures have none.
+            groups = {}
+            for g in fx["groups"]:
+                el = Element(self, self.new_handle(), "DmeControlGroup", g["path"][-1],
+                             controls=ElementArray(self, [self.elements[h] for h in g["controls"]]),
+                             children=ElementArray(self, []))
+                groups[tuple(g["path"])] = el
+                if len(g["path"]) > 1:
+                    groups[tuple(g["path"][:-1])].attrs["children"].items.append(el)
+            self.animset.set("rootControlGroup", groups[tuple(fx["groups"][0]["path"])])
         owned = [self.el(h) for h in fx["rig"]["elements"]]
         reg = Element(self, fx["rig"]["registration"], "DmeRigAnimSetElements", "rigElements_Krystal",
                       animationSet=self.animset, elementList=ElementArray(self, owned))
@@ -660,9 +671,18 @@ class World(object):
         for op_type, slot, el in by_slave.get(self.gm.h, []):
             self.constrain(self.gm, op_type, el, None, 1.0)
         self.walk(self.gm, (self.gm.wp, self.gm.wq), 1.0, by_slave)
+        followers = []
         for n, dag in self.handle_dag.items():
             for op_type, slot, el in by_slave.get(dag.h, []):
                 self.constrain(dag, op_type, el, None, 1.0)
+            if by_slave.get(dag.h):
+                followers.extend((dag, child) for child in dag.attrs["children"].items if child.kind == "DmeRigHandle")
+        if followers:
+            # Stage 1 (rig_biped_simple): handles under a helper (toes under a foot helper) follow the helper, then
+            # the bones they drive are evaluated again. The S0 Krystal rig has no such handles: unchanged for it.
+            for dag, child in followers:
+                handle_world(child, (dag.wp, dag.wq))
+            self.walk(self.gm, (self.gm.wp, self.gm.wq), 1.0, by_slave)
 
     def target_world(self, el):
         t = el.attrs["targets"].items[0]

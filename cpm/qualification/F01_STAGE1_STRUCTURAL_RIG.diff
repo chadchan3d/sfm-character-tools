@@ -1,0 +1,725 @@
+diff --git a/cpm/app/SFM_Character_Preset_Manager.py b/cpm/app/SFM_Character_Preset_Manager.py
+index a739a44..ed0a6b6 100644
+--- a/cpm/app/SFM_Character_Preset_Manager.py
++++ b/cpm/app/SFM_Character_Preset_Manager.py
+@@ -36225,6 +36225,8 @@ class ProdWindow(QtGui.QDialog):
+             authorize = (
+                 prod_scope_authorize
+                 if version == 3
++                else prod_body_rig_authorize            # Stage 1: a structural rig record
++                if version == 2 and prod_body_rig_is_record(fresh[u"record"])
+                 else prod_pose_authorize
+             )
+             authorization = authorize(
+@@ -36352,6 +36354,8 @@ class ProdWindow(QtGui.QDialog):
+                 and prod_scope_rule_usable(mode)
+             )
+             body_route = False
++            rig_route = False
++            rig_exclusions = []
+ 
+             if interactive:
+                 # The registry route for this character's full body, when it has one (version 2, deterministic).
+@@ -36400,14 +36404,34 @@ class ProdWindow(QtGui.QDialog):
+                         scoped,
+                     )
+                 except (ProdPoseError, ProdPoseIntegrationError) as exc:
++                    inventory_error = exc
++                else:
++                    inventory_error = None
++                # Stage 1: a rigged character without a registry profile, whose generic Full body is refused, uses
++                # the structural rig adapter when it is usable in this build and admits the instance.
++                rig_probe = None
++                if not body_route and (inventory_error is not None or
++                                       inventory[u"full_body"][u"status"] == u"refused"):
++                    rig_probe = prod_body_rig_probe(
++                        self.operation["context"],
++                        ident,
++                        reg,
++                        mode,
++                    )
++                rig_route = rig_probe is not None
++                if inventory_error is not None:
+                     # K1 (R4 section 5): generic inventory construction must not prevent an otherwise supported
+                     # version 2 route from reaching the dialog. Without a v2 route the refusal stands as before.
+-                    if not body_route:
+-                        raise
+-                    prod_pose_log(u"K1-generic-inventory-unavailable", {u"code": getattr(exc, "code", None),
+-                                                                       u"error": u"%s" % exc})
++                    if not (body_route or rig_route):
++                        raise inventory_error
++                    prod_pose_log(u"K1-generic-inventory-unavailable", {u"code": getattr(inventory_error, "code",
++                                                                                         None),
++                                                                       u"error": u"%s" % inventory_error})
+                     pinned = None
+-                    inventory = prod_scope_selected_parts_unavailable(u"%s" % exc)
++                    inventory = prod_scope_selected_parts_unavailable(u"%s" % inventory_error)
++                if rig_route:
++                    inventory = prod_body_rig_inventory(inventory, rig_probe)
++                    body_pinned = rig_probe[u"time"]
+                 choice = self.prompt_pose_scope(
+                     inventory,
+                     body_route,
+@@ -36424,7 +36448,7 @@ class ProdWindow(QtGui.QDialog):
+                 self.operation_revalidate()
+                 pose_name = choice[u"name"]
+ 
+-                if not (choice[u"kind"] == u"full_body" and body_route):
++                if not (choice[u"kind"] == u"full_body" and (body_route or rig_route)):
+                     if inventory.get(u"selected_parts_unavailable"):
+                         raise ProdPoseIntegrationError(u"structure-unsupported",
+                                                        inventory[u"selected_parts_unavailable"])
+@@ -36432,6 +36456,8 @@ class ProdWindow(QtGui.QDialog):
+                     signature = inventory[u"signature"]
+                 else:
+                     pinned = body_pinned
++                    if rig_route:
++                        rig_exclusions = (choice.get(u"request") or {}).get(u"exclusions") or []
+ 
+             if request is not None:
+                 scoped = prod_scope_authorize(
+@@ -36450,16 +36476,28 @@ class ProdWindow(QtGui.QDialog):
+                 )
+                 parts = prod_scope_parts({u"pose": pose})
+             else:
+-                # The registry route (version 1 left arm, version 2 full body), unchanged.
++                # The registry route (version 1 left arm, version 2 full body), unchanged; Stage 1: the structural
++                # rig route is the same version 2 capture under the adapter's authorization.
+                 full_body = chosen == [u"full_body"]
+-                authorization = prod_pose_authorize(
+-                    self.operation[
+-                        "context"
+-                    ],
+-                    ident,
+-                    reg,
+-                    mode,
+-                    u"Save Pose",
++                authorization = (
++                    prod_body_rig_authorize(
++                        self.operation["context"],
++                        ident,
++                        reg,
++                        mode,
++                        u"Save Pose",
++                        exclusions=rig_exclusions,
++                    )
++                    if rig_route
++                    else prod_pose_authorize(
++                        self.operation[
++                            "context"
++                        ],
++                        ident,
++                        reg,
++                        mode,
++                        u"Save Pose",
++                    )
+                 )
+ 
+                 if pose_name is None:
+@@ -37545,9 +37583,12 @@ class ProdWindow(QtGui.QDialog):
+                 u"update-refused",
+                 PROD_POSE_MESSAGES[u"update-refused"] % {u"part": parts},
+             )
++            structural = version == 2 and prod_body_rig_is_record(fresh[u"record"])
+             authorize = (
+                 prod_scope_authorize
+                 if scoped
++                else (lambda *args: prod_body_rig_authorize(*args, item=fresh))   # Stage 1
++                if structural
+                 else prod_pose_authorize
+             )
+             authorization = authorize(
+@@ -41382,8 +41423,9 @@ def prod_pose_validate(record, reg):
+         if scoped is None:
+             raise ProdPoseError(u"invalid-file", u"version 3 poses are not supported by this build")
+         return scoped(record)
+-    if reg.get(u"_body") is not None and isinstance(record, dict) and isinstance(record.get(u"pose"), dict) and             record[u"pose"].get(u"version") == 2:
+-        return prod_body_validate(record, reg)         # stage E: a complete (full-body) pose
++    v2 = isinstance(record, dict) and isinstance(record.get(u"pose"), dict) and record[u"pose"].get(u"version") == 2
++    if v2 and (reg.get(u"_body") is not None or isinstance(record[u"pose"].get(u"adapter"), dict)):
++        return prod_body_validate(record, reg)         # stage E: a complete (full-body) pose (Stage 1: structural)
+     schema = prod_pose_record_schema()
+     regions = record.get(u"pose", {}).get(u"regions") if isinstance(record, dict) and \
+         isinstance(record.get(u"pose"), dict) else None
+@@ -41425,7 +41467,8 @@ def prod_pose_parse(raw, reg):
+     record = prod_pose_strict_json(raw, body[u"_max_record_bytes"] if body is not None else 4 << 20)
+     version = record[u"pose"].get(u"version") if isinstance(record, dict) and isinstance(record.get(u"pose"), dict) \
+         else None
+-    if not (version == 3 or (body is not None and version == 2)):
++    structural = version == 2 and isinstance(record[u"pose"].get(u"adapter"), dict)   # Stage 1
++    if not (version == 3 or structural or (body is not None and version == 2)):
+         raise ProdPoseError(u"invalid-file", u"file exceeds %d bytes" % PROD_POSE_MAX_BYTES)
+     return prod_pose_validate(record, reg)
+ 
+@@ -44409,6 +44452,9 @@ PROD_BODY_MESSAGES = {
+     u"save-refused": u"The pose wasn't saved: this character's rig can't be read completely. Nothing was saved.",
+     u"update-refused": u"The pose wasn't updated: this character's rig can't be read completely. Nothing was "
+                        u"changed.",
++    # Stage 1 (structural rig adapter): the v3 wording for an unidentifiable body root.
++    u"placement-ambiguous": u"CPM can't identify this character's body root, so a full-body pose can't be used here. "
++                            u"Nothing was changed.",
+ }
+ 
+ 
+@@ -44820,7 +44866,8 @@ def prod_body_descriptor(D, C, profile):
+              u"handles": dict((n, prod_body_typed(h[u"scale"], n + u".scale")) for n, h in D[u"rig"][u"handles"].items()),
+              u"model": prod_body_typed(D[u"model"][u"scale"], u"model.scale")}
+     return prod_pose_roundtrip({
+-        u"rig_name": profile[u"rig_name"], u"model_ref": D[u"model"][u"model_ref"] or u"",
++        u"rig_name": profile.get(u"descriptor_rig_name") or profile[u"rig_name"],
++        u"model_ref": D[u"model"][u"model_ref"] or u"",
+         u"bones": bones, u"handles": dict((n, {u"parent": profile[u"handles"][n], u"class": C[u"handles"][n]})
+                                           for n in D[u"rig"][u"handles"]),
+         u"constraints": constraints, u"channels": channels, u"structural_positions": positions,
+@@ -44853,7 +44900,7 @@ def prod_body_compare_descriptor(saved, live):
+ 
+ # --- version 2 record ------------------------------------------------------------------------------------------------
+ 
+-def prod_body_region_schema():
++def prod_body_region_schema(structural=False):
+     s, i = (u"str",), (u"int", 1000000)
+     v3, q, typed = (u"vec", 3), (u"quat",), (u"typed",)
+     bone = (u"obj", {u"name": s, u"index": i, u"parent": (u"nullable", s), u"class": (u"enum", PROD_BODY_BONE_CLASSES)})
+@@ -44863,7 +44910,7 @@ def prod_body_region_schema():
+                            u"offsets": (u"obj", {u"oOffset": typed, u"vecOffset": typed})})
+     channel = (u"obj", {u"role": (u"enum", PROD_BODY_DESCRIBED_ROLES), u"owner": s, u"attribute": s,
+                         u"log_type": s, u"layer_type": s})
+-    return (u"obj", {
++    fields = {
+         u"profile_id": s, u"frame": (u"const", PROD_BODY_FRAME),
+         u"positions": (u"map", None, v3, False), u"orientations": (u"map", None, q, False),
+         u"oracle": (u"obj", {u"bones": (u"map", None, (u"obj", {u"position": v3, u"orientation": q,
+@@ -44875,22 +44922,33 @@ def prod_body_region_schema():
+             u"constraints": (u"list", constraint, 1, 512), u"channels": (u"map", None, channel, False),
+             u"structural_positions": (u"map", None, v3, False), u"structural_orientations": (u"map", None, q, False),
+             u"scale": (u"obj", {u"bones": (u"map", None, typed, False), u"handles": (u"map", None, typed, False),
+-                                u"model": typed})})})
++                                u"model": typed})})}
++    if structural:                    # Stage 1: the artist-confirmed exclusions of a structural rig record
++        fields[u"exclusions"] = (u"list", (u"obj", {
++            u"id": s, u"bones": (u"list", s, 1, 1024), u"label": s,
++            u"provenance": (u"enum", PROD_BODY_RIG_EXCLUSION_PROVENANCE)}), 0, PROD_BODY_RIG_MAX_EXCLUSIONS)
++    return (u"obj", fields)
+ 
+ 
+-def prod_body_record_schema():
++def prod_body_record_schema(structural=False):
++    """The closed version 2 record. structural (Stage 1): the adapter marker replaces the registry profile set, so
++    each form refuses the other."""
+     s = (u"str",)
++    pose = {
++        u"format": (u"const", PROD_POSE_FORMAT), u"version": (u"const", PROD_BODY_POSE_VERSION),
++        u"conventions": (u"obj", dict((k, (u"const", v)) for k, v in PROD_POSE_CONVENTIONS.items())),
++        u"source": (u"obj", {u"rig_class": s, u"model_ref": s, u"shot_name": s,
++                             u"t_doc_ticks": (u"int", 1 << 40), u"t_shot_ticks": (u"int", 1 << 40)}),
++        u"regions": (u"obj", {PROD_BODY_REGION: prod_body_region_schema(structural)})}
++    if structural:
++        pose[u"adapter"] = (u"obj", {u"rule": (u"const", PROD_BODY_RIG_RULE),
++                                     u"revision": (u"const", PROD_BODY_RIG_REVISION)})
++    else:
++        pose[u"registry"] = (u"obj", {u"profile_set": (u"const", PROD_BODY_REGISTRY_FORMAT), u"version": (u"const", 1)})
+     return (u"obj", {
+         u"schema_version": (u"const", 3), u"record_kind": (u"const", u"preset"), u"kind": (u"const", u"pose"),
+         u"character_key": s, u"model_ref": s, u"preset_id": s, u"name": s, u"created_at": s, u"updated_at": s,
+-        u"payload_sha256": s,
+-        u"pose": (u"obj", {
+-            u"format": (u"const", PROD_POSE_FORMAT), u"version": (u"const", PROD_BODY_POSE_VERSION),
+-            u"conventions": (u"obj", dict((k, (u"const", v)) for k, v in PROD_POSE_CONVENTIONS.items())),
+-            u"registry": (u"obj", {u"profile_set": (u"const", PROD_BODY_REGISTRY_FORMAT), u"version": (u"const", 1)}),
+-            u"source": (u"obj", {u"rig_class": s, u"model_ref": s, u"shot_name": s,
+-                                 u"t_doc_ticks": (u"int", 1 << 40), u"t_shot_ticks": (u"int", 1 << 40)}),
+-            u"regions": (u"obj", {PROD_BODY_REGION: prod_body_region_schema()})})})
++        u"payload_sha256": s, u"pose": (u"obj", pose)})
+ 
+ 
+ def prod_body_is_record(record):
+@@ -44902,15 +44960,19 @@ def prod_body_validate(record, reg):
+     """Validate a decoded version 2 record: the closed schema, its profile, and the internal consistency of the
+     written values, the oracle and the descriptor."""
+     body = (reg or {}).get(u"_body")
+-    if body is None:
++    structural = prod_body_rig_is_record(record)      # Stage 1: no registry profile involved
++    if body is None and not structural:
+         raise ProdPoseError(u"invalid-file", u"full-body poses need the body profile registry")
+-    prod_pose_check(prod_body_record_schema(), record, u"")
++    prod_pose_check(prod_body_record_schema(structural), record, u"")
+     if len(record[u"preset_id"]) != 32 or any(c not in u"0123456789abcdef" for c in record[u"preset_id"]):
+         raise ProdPoseError(u"invalid-file", u"preset_id is not 32 lowercase hex digits")
+     region = record[u"pose"][u"regions"][PROD_BODY_REGION]
+-    profile = body[u"profiles"].get(region[u"profile_id"])
+-    if profile is None or profile[u"region"] != PROD_BODY_REGION:
+-        raise ProdPoseError(u"invalid-file", u"the full-body region names no body profile")
++    if structural:
++        prod_body_rig_validate(record)
++    else:
++        profile = body[u"profiles"].get(region[u"profile_id"])
++        if profile is None or profile[u"region"] != PROD_BODY_REGION:
++            raise ProdPoseError(u"invalid-file", u"the full-body region names no body profile")
+     d = region[u"descriptor"]
+     names = [b[u"name"] for b in d[u"bones"]]
+     if len(set(names)) != len(names) or sorted(region[u"oracle"][u"bones"]) != sorted(names):
+@@ -44998,7 +45060,10 @@ def prod_body_payload(D, C, profile):
+ 
+ 
+ def prod_body_fk_limit(profile):
+-    """The profile's FK-position limit as one float32 value (0.0: exact)."""
++    """The profile's FK-position limit as one float32 value (0.0: exact). A drafted structural description carries
++    its own limit (Stage 1: the qualified v3 Full body limit)."""
++    if profile.get(u"fk_position_limit") is not None:
++        return prod_pose_f32(float(profile[u"fk_position_limit"]))
+     return prod_pose_f32(float(PROD_BODY_FK_POSITION_TOLERANCE.get(profile[u"_id"], 0.0)))
+ 
+ 
+@@ -45535,6 +45600,8 @@ def prod_body_state(row, profile):
+             raise prod_body_error(u"rig-differs", u"no written handle channel is present")
+         time = prod_pose_time_read(L, names)
+         D = prod_body_discover(L, time[u"t_chan"], index)
++        if profile.get(u"_structural"):
++            prod_body_rig_confirm(D, profile)          # Stage 1: the same drafted description, from this read
+         C = prod_body_classify(D, profile)
+         prod_body_check_authority(D, C)
+         return {u"L": L, u"D": D, u"C": C, u"time": time, u"descriptor": prod_body_descriptor(D, C, profile),
+@@ -45544,6 +45611,8 @@ def prod_body_state(row, profile):
+ 
+ 
+ def prod_body_resolve_profile(reg, authorization):
++    if authorization.get(u"structural"):              # Stage 1: drafted from the pinned destination itself
++        return prod_body_rig_resolve(authorization)
+     profile = prod_body_profile(reg, authorization[u"destination"][u"rig_class"])
+     if profile is None or not prod_body_usable(reg, authorization):
+         raise ProdPoseError(u"not-qualified", PROD_BODY_MESSAGES[u"unavailable"])
+@@ -45600,13 +45669,14 @@ def prod_body_capture(identity, authorization, reg, pinned_time=None, label=u"Sa
+         shot_name = prod_pose_text(row["shot"].GetName()) or u"shot"
+     except Exception:
+         shot_name = u"shot"
+-    return prod_pose_roundtrip({
++    pose = prod_pose_roundtrip({
+         u"format": PROD_POSE_FORMAT, u"version": PROD_BODY_POSE_VERSION, u"conventions": dict(PROD_POSE_CONVENTIONS),
+         u"registry": {u"profile_set": PROD_BODY_REGISTRY_FORMAT, u"version": 1},
+         u"source": {u"rig_class": authorization[u"destination"][u"rig_class"], u"model_ref": u(identity["model"]),
+                     u"shot_name": shot_name[:256], u"t_doc_ticks": st[u"time"][u"t_doc"],
+                     u"t_shot_ticks": st[u"time"][u"t_shot"]},
+         u"regions": {PROD_BODY_REGION: region}})
++    return prod_body_rig_record(pose, profile) if profile.get(u"_structural") else pose
+ 
+ 
+ def prod_body_preflight(identity, authorization, item, reg):
+@@ -45853,6 +45923,11 @@ def prod_body_verify_applied(pending):
+         if prod_pose_capture_observed(L) != pending[u"observed"]:
+             problems.append(u"constraint or operator attributes")
+         D = prod_body_discover(L, time[u"t_chan"], prod_pose_writer_index())
++        if profile.get(u"_structural"):
++            try:
++                prod_body_rig_confirm(D, profile)      # Stage 1: the description admitted at P1
++            except ProdPoseError:
++                problems.append(u"rig description")
+         # Astra S1 P7: the authority checked now must be the authority admitted at P1, from fresh discovery.
+         if prod_body_classify(D, profile) != pending[u"classes"]:
+             problems.append(u"classification")
+@@ -45883,6 +45958,397 @@ def prod_body_verify_applied(pending):
+     prod_pose_log(u"BODY-P7-verified", {u"time": pending[u"time"]})
+     return {u"phase": u"committed-verified"}
+ 
++# --- part 4: F-01 Stage 1, generic structural rig support -----------------------------------------------------------
++# Astra's compatibility adjudication (ACCEPT WITH CONDITIONS), F-01 Blueprint R4 and the Owner's Stage 1 assignment
++# ("F-01 - Stage 1: Generic Structural Rig Support", 2026-11-18; F01_BROAD_FULL_BODY_COMPATIBILITY_REVIEW.md Option 1
++# with Option 3). A rigged character without a registry profile gets its rig description drafted from the selected
++# live instance by fixed structural rules (prod_body_rig_draft). No name decides a role and no character is listed.
++# Each role is established on its own before it is admitted: the placement handle by its point and orient constraint
++# of the model transform; helper handles as followers of one bone; core handles by their own control channels; a
++# pole's orientation is kept only on a leaf handle that is nothing but an IK pole; constraints are single-target,
++# weight 1, with two-bone IK chains. The draft then passes the registry's own structural rules and the unchanged stage
++# E classifier, descriptor (the rig name normalized to its structure), planner, P1-P7 transaction and P7 skeleton
++# verification. Fox (rig_biped_simple) is the initial qualification fixture, not a supported character.
++# Records are version 2 with an explicit adapter marker in place of the registry profile set: older readers refuse
++# them as unreadable, and saved metadata never authorizes a write (the destination's own draft does, and the saved
++# descriptor must equal it exactly). Experimental: the qualification build only, until natively qualified.
++# Outside Stage 1 (refused): control-less bones (jiggle: Stage 2; procedural helpers), weighted or multiple-target
++# constraints, other operator types, reverse feet, handles parented to bones and cross-model retargeting.
++
++PROD_BODY_RIG_RULE = u"structural_rig_v1"
++PROD_BODY_RIG_REVISION = 1
++# experimental: usable in the qualification build only; production keeps the RC2 refusal of rigged characters
++# without a registry profile until the Owner accepts the native Fox qualification.
++PROD_BODY_RIG_STATUS = u"experimental"
++PROD_BODY_RIG_AUTH_SCHEMA = u"cpm-structural-rig-authorization-v1"
++PROD_BODY_RIG_NAME = u"@structural"           # the descriptor's rig name: never the instance's rig_biped_<animset>
++PROD_BODY_RIG_EXCLUSION_PROVENANCE = (u"user_confirmed",)
++PROD_BODY_RIG_MAX_EXCLUSIONS = 16
++PROD_BODY_RIG_POINT = u"DmeRigPointConstraintOperator"
++PROD_BODY_RIG_ORIENT = u"DmeRigOrientConstraintOperator"
++PROD_BODY_RIG_IK = u"DmeRigIKConstraintOperator"
++PROD_BODY_RIG_PROFILE_KEYS = (u"region", u"rig_name", u"placement_handle", u"handles", u"helper_handles",
++                              u"written_handle_channels", u"preserved_handle_channels", u"constraints",
++                              u"preserved_fk_bones", u"passive_channel_bones", u"tolerances")
++
++
++def prod_body_rig_usable(mode, rule=PROD_BODY_RIG_RULE, revision=PROD_BODY_RIG_REVISION):
++    """Whether the structural rig adapter is usable in this build mode (experimental: qualification only)."""
++    if rule != PROD_BODY_RIG_RULE or revision != PROD_BODY_RIG_REVISION:
++        return False
++    if mode == u"qualification":
++        return True
++    return mode == u"production" and PROD_BODY_RIG_STATUS == u"qualified"
++
++
++def prod_body_rig_is_record(record):
++    """A version 2 record of the structural rig adapter (an explicit adapter marker, never a registry profile)."""
++    return prod_body_is_record(record) and isinstance(record[u"pose"].get(u"adapter"), dict)
++
++
++def prod_body_rig_exclusions(exclusions):
++    """The artist-confirmed face exclusions of the Save dialog's review (the v3 Full body review, reused), normalized.
++    They only ever remove bones from the written set."""
++    out, ids = [], set()
++    for e in exclusions or []:
++        if not isinstance(e, dict) or e.get(u"provenance") not in PROD_BODY_RIG_EXCLUSION_PROVENANCE:
++            raise prod_body_error(u"structure-unsupported", u"an exclusion is not confirmed by the artist")
++        bones = e.get(u"bones")
++        if not isinstance(bones, list) or not bones or not all(
++                isinstance(b, prod_pose_text_types()) and 0 < len(b) <= 256 for b in bones):
++            raise prod_body_error(u"structure-unsupported", u"an exclusion names no bones")
++        ident = e.get(u"id") or u"face"
++        label = e.get(u"label") or u"Face"
++        if ident in ids or not isinstance(ident, prod_pose_text_types()) or not isinstance(
++                label, prod_pose_text_types()):
++            raise prod_body_error(u"structure-unsupported", u"exclusion %r is invalid or repeated" % (ident,))
++        ids.add(ident)
++        out.append({u"id": ident, u"bones": sorted(set(bones)), u"provenance": e[u"provenance"], u"label": label})
++    if len(out) > PROD_BODY_RIG_MAX_EXCLUSIONS:
++        raise prod_body_error(u"structure-unsupported", u"too many exclusions")
++    return out
++
++
++def prod_body_rig_check(profile):
++    """The drafted description must pass every structural rule of a registry profile (prod_body_registry_parse, on a
++    one-profile document): schema, hierarchy, helpers, channels, constraint slots and duplicates, tolerances."""
++    doc = {u"format": PROD_BODY_REGISTRY_FORMAT, u"version": 1, u"rig_classes": {}, u"mappings": [],
++           u"profiles": {PROD_BODY_RIG_RULE: dict((k, profile[k]) for k in PROD_BODY_RIG_PROFILE_KEYS)}}
++    raw = prod_pose_canonical_bytes(doc)
++    try:
++        prod_body_registry_parse(raw, hashlib.sha256(raw).hexdigest())
++    except ProdPoseError as exc:
++        raise prod_body_error(u"structure-unsupported", u"the drafted rig description is refused: %s" % exc)
++
++
++def prod_body_rig_draft(D, exclusions=None):
++    """Stage 1: the rig description of one discovered instance (prod_body_discover's form), from structure alone, in
++    the registry profile form plus the adapter's own fields. Refuses (ProdPoseError, detail logged) whenever a role
++    cannot be established or the rig is outside Stage 1."""
++    fail = prod_body_error
++    rig, handles, bones = D[u"rig"], D[u"rig"][u"handles"], D[u"bones"]
++    exclusions = prod_body_rig_exclusions(exclusions)
++    # 1. The rig: exactly one registration of this instance.
++    if rig[u"registrations"] != 1 or len(rig[u"names"]) != 1 or not rig[u"names"][0] or not handles:
++        raise fail(u"unavailable", u"rig registrations %r (%d), %d handles" % (rig[u"names"], rig[u"registrations"],
++                                                                             len(handles)))
++    rig_name = rig[u"names"][0]
++    # 2. The handle hierarchy: each handle is a child of the rig or of another handle (bone parents: outside Stage 1).
++    by_dag = dict((h[u"handle"], n) for n, h in handles.items())
++    parents, children = {}, {}
++    for n in sorted(handles):
++        h, p = handles[n], handles[n][u"parent"]
++        if h[u"parent_count"] != 1 or p is None:
++            raise fail(u"structure-unsupported", u"rig handle %s has %d parents" % (n, h[u"parent_count"]))
++        if p[u"type"] == u"DmeRig" and p[u"name"] == rig_name:
++            parents[n] = u"@rig"
++        elif p[u"handle"] in by_dag and by_dag[p[u"handle"]] != n:
++            parents[n] = by_dag[p[u"handle"]]
++        else:
++            raise fail(u"structure-unsupported", u"rig handle %s is parented to %s %s (outside Stage 1)" % (
++                n, p[u"type"], p[u"name"]))
++        children.setdefault(parents[n], []).append(n)
++    # 3. Constraints: point, orient and two-bone IK, one target of weight 1, every element inside the instance.
++    label = {D[u"model"][u"handle"]: u"model"}
++    for n, b in bones.items():
++        label[b[u"handle"]] = u"bone:" + n
++    for n, h in handles.items():
++        label[h[u"handle"]] = u"handle:" + n
++    constraints, drives = [], {}
++    for op in D[u"operators"]:
++        kind = op[u"type"]
++        if kind in PROD_BODY_PRESERVED_OPERATORS:
++            continue
++        if kind not in (PROD_BODY_RIG_POINT, PROD_BODY_RIG_ORIENT, PROD_BODY_RIG_IK):
++            raise fail(u"structure-unsupported", u"operator %s (%s) is outside Stage 1" % (op[u"name"], kind))
++        slaves = {}
++        for slot in sorted(op[u"slaves"]):
++            s = op[u"slaves"][slot]
++            if kind == PROD_BODY_RIG_IK and slot == u"slave" and (s is None or s.get(u"target") is None):
++                continue                      # native S0: the IK operator's unused 'slave' slot
++            if s is None or s.get(u"target") not in label:
++                raise fail(u"shared-authority", u"constraint %s slot %s drives an element outside the character" % (
++                    op[u"name"], slot))
++            slaves[slot] = label[s[u"target"]]
++        want = [u"endJoint", u"midJoint", u"startJoint"] if kind == PROD_BODY_RIG_IK else [u"slave"]
++        if sorted(slaves) != want:
++            raise fail(u"structure-unsupported", u"constraint %s drives slots %s" % (op[u"name"], sorted(slaves)))
++        if len(op[u"targets"]) != 1:
++            raise fail(u"structure-unsupported", u"constraint %s has %d targets (outside Stage 1)" % (
++                op[u"name"], len(op[u"targets"])))
++        t = op[u"targets"][0]
++        weight = prod_body_field_value(t[u"weight"])
++        if isinstance(weight, bool) or not prod_pose_is_number(weight) or float(weight) != 1.0:
++            raise fail(u"structure-unsupported", u"constraint %s is weighted %r (outside Stage 1)" % (op[u"name"],
++                                                                                                    weight))
++        if t[u"target"] not in label:
++            raise fail(u"shared-authority", u"constraint %s follows an element outside the character" % op[u"name"])
++        target, pole = label[t[u"target"]], None
++        if kind == PROD_BODY_RIG_IK:
++            pole = label.get(op[u"pole"]) if op[u"pole"] is not None else None
++            chain = [slaves[u"startJoint"], slaves[u"midJoint"], slaves[u"endJoint"]]
++            if pole is None or not pole.startswith(u"handle:") or not target.startswith(u"handle:"):
++                raise fail(u"structure-unsupported", u"IK %s target or pole is not a rig handle" % op[u"name"])
++            if not all(x.startswith(u"bone:") for x in chain) or \
++                    bones[chain[1][5:]][u"parent"] != chain[0][5:] or bones[chain[2][5:]][u"parent"] != chain[1][5:]:
++                raise fail(u"structure-unsupported", u"IK %s is not a two-bone chain" % op[u"name"])
++        elif op[u"pole"] is not None:
++            raise fail(u"structure-unsupported", u"constraint %s has a pole" % op[u"name"])
++        constraints.append({u"type": kind, u"slaves": slaves, u"targets": [target], u"pole": pole})
++        for slot, x in slaves.items():
++            drives.setdefault(x, []).append(u"position" if kind == PROD_BODY_RIG_POINT else u"orientation"
++                                            if kind == PROD_BODY_RIG_ORIENT else u"ik-" + slot)
++    for x in sorted(drives):
++        roles = drives[x]
++        if len(roles) != len(set(roles)) or len([r for r in roles if r.startswith(u"ik-")]) > 1 or (
++                u"orientation" in roles and (u"ik-startJoint" in roles or u"ik-midJoint" in roles)):
++            raise fail(u"structure-unsupported", u"%s has conflicting rig drivers %s" % (x, sorted(roles)))
++    keyed = sorted(((json.dumps(c, sort_keys=True), c) for c in constraints), key=lambda kc: kc[0])
++    if len(set(k for k, _ in keyed)) != len(keyed):
++        raise fail(u"structure-unsupported", u"a constraint is repeated")
++    constraints = [c for _, c in keyed]
++    slaved = set(drives)
++    targets = set(c[u"targets"][0] for c in constraints)
++    poles = set(c[u"pole"] for c in constraints if c[u"pole"])
++    # 4. Placement: the one rig handle that both point- and orient-constrains the model transform.
++    model = [c for c in constraints if u"model" in c[u"slaves"].values()]
++    found = set(c[u"targets"][0] for c in model)
++    if sorted(c[u"type"] for c in model) != sorted([PROD_BODY_RIG_POINT, PROD_BODY_RIG_ORIENT]) or len(found) != 1 \
++            or not list(found)[0].startswith(u"handle:"):
++        raise fail(u"placement-ambiguous", u"the model transform is constrained by %s" % sorted(
++            (c[u"type"], c[u"targets"][0]) for c in model))
++    placement = list(found)[0][7:]
++    if parents[placement] != u"@rig" or (u"handle:" + placement) in slaved:
++        raise fail(u"placement-ambiguous", u"placement handle %s is not a free child of the rig" % placement)
++    # 5. Helper handles: a handle a constraint drives follows exactly one bone (one point and one orient constraint),
++    #    and is never itself a target or pole (dependent handles, such as toes under a foot helper, stay its children).
++    helpers = []
++    for n in sorted(handles):
++        lab = u"handle:" + n
++        if lab not in slaved:
++            continue
++        own = [c for c in constraints if lab in c[u"slaves"].values()]
++        followed = set(c[u"targets"][0] for c in own)
++        if sorted(c[u"type"] for c in own) != sorted([PROD_BODY_RIG_POINT, PROD_BODY_RIG_ORIENT]) or \
++                len(followed) != 1 or not list(followed)[0].startswith(u"bone:"):
++            raise fail(u"structure-unsupported", u"rig handle %s is driven other than as a helper following one "
++                                                 u"bone" % n)
++        if lab in targets or lab in poles:
++            raise fail(u"shared-authority", u"helper %s is also a constraint input" % n)
++        helpers.append(n)
++    # 6. Core handles: both own control channels; the placement handle and a pole's orientation are preserved, the
++    #    latter only for a leaf handle used as nothing but an IK pole (the solver reads its position; Krystal K2).
++    by_dest = {}
++    for cname in sorted(D[u"channels"]):
++        ch = D[u"channels"][cname]
++        if ch[u"to"] is not None:
++            by_dest.setdefault((ch[u"to"][u"handle"], ch[u"to_attribute"]), []).append(cname)
++    written, preserved = {}, {}
++    for n in sorted(handles):
++        if n in helpers:
++            continue
++        lab = u"handle:" + n
++        for attr in (u"position", u"orientation"):
++            got = by_dest.get((handles[n][u"transform"], attr), [])
++            if len(got) != 1:
++                raise fail(u"structure-unsupported", u"rig handle %s.%s has %d channels (a control is missing or "
++                                                     u"shared)" % (n, attr, len(got)))
++            keep = n == placement or (attr == u"orientation" and lab in poles and lab not in targets and
++                                      not children.get(n))
++            (preserved if keep else written)[got[0]] = [n, attr]
++    # 7. Bones: the rig drives the body; artist-confirmed face exclusions are preserved FK bones; Stage 1 admits no
++    #    control-less bone (procedural outputs such as jiggle bones: Stage 2).
++    if not [x for x in slaved if x.startswith(u"bone:")]:
++        raise fail(u"unavailable", u"the rig drives no bone")
++    controlless = sorted(n for n, b in bones.items() if (u"bone:" + n) not in slaved and any(
++        D[u"channels"][c][u"from"] is None for attr in (u"position", u"orientation")
++        for c in by_dest.get((b[u"transform"], attr), [])))
++    if controlless:
++        raise fail(u"structure-unsupported", u"control-less bones %s are outside Stage 1" % controlless[:16])
++    kept = sorted(set(b for e in exclusions for b in e[u"bones"]))
++    if [b for b in kept if b not in bones]:
++        raise fail(u"rig-differs", u"excluded bones are missing: %s" % [b for b in kept if b not in bones][:8])
++    if [b for b in kept if (u"bone:" + b) in slaved]:
++        raise fail(u"structure-unsupported", u"excluded bones are driven by the rig: %s" % [
++            b for b in kept if (u"bone:" + b) in slaved][:8])
++    profile = {u"region": PROD_BODY_REGION, u"rig_name": rig_name, u"placement_handle": placement,
++               u"handles": parents, u"helper_handles": helpers, u"written_handle_channels": written,
++               u"preserved_handle_channels": preserved, u"constraints": constraints, u"preserved_fk_bones": kept,
++               u"passive_channel_bones": [], u"tolerances": dict(PROD_SCOPE_TOLERANCES)}
++    prod_body_rig_check(profile)
++    profile.update({u"descriptor_rig_name": PROD_BODY_RIG_NAME,
++                    u"fk_position_limit": PROD_SCOPE_FK_POSITION_LIMIT[u"full_body"],
++                    u"_id": PROD_BODY_RIG_RULE, u"_structural": True, u"_exclusions": exclusions})
++    return prod_pose_roundtrip(profile)
++
++
++def prod_body_rig_confirm(D, profile):
++    """A fresh read must draft exactly the description admitted earlier (P2, Abort, P7 and every later phase)."""
++    again = prod_body_rig_draft(D, profile[u"_exclusions"])
++    if again != profile:
++        raise prod_body_error(u"rig-differs", u"the rig description changed: %s" % prod_pose_differences(
++            again, profile)[:8])
++
++
++def prod_body_rig_time_names(L):
++    """The rig handle channels of the instance (the time read of a description not yet drafted)."""
++    transforms = set(prod_pose_h(prod_pose_attr(dag, u"transform")) for dag in L[u"rig_handles"].values())
++    names = []
++    for name, ch in sorted(L[u"channels"].items()):
++        to = prod_pose_attr(ch, u"toElement")
++        if to is not None and prod_pose_h(to) in transforms:
++            names.append(name)
++    if not names:
++        raise prod_body_error(u"unavailable", u"no rig handle channel")
++    return names
++
++
++def prod_body_rig_resolve(authorization):
++    """The destination's own drafted description, read from the pinned instance (the authority for every write)."""
++    row = prod_resolve_instance(prod_instance_token(authorization[u"context"]))
++
++    def read():
++        L = prod_body_live(row, None)
++        time = prod_pose_time_read(L, prod_body_rig_time_names(L))
++        D = prod_body_discover(L, time[u"t_chan"], prod_pose_writer_index())
++        return prod_body_rig_draft(D, authorization.get(u"exclusions"))
++    return prod_body_wrap(read)
++
++
++def prod_body_rig_authorize(operation_context, identity, reg, mode, label, item=None, exclusions=None):
++    """Structural rig authorization: the same pinned selected-instance context, library identity and mode gates as
++    prod_pose_authorize, the adapter's own rule instead of a registry rig class, and the same model as the record.
++    A saved record's exclusions are carried; nothing in a record enables the adapter or authorizes a write."""
++    if label not in PROD_POSE_SCENE_LABELS:
++        raise ProdPoseIntegrationError(u"label", u"Unknown pose operation %r." % (label,))
++    if mode not in (u"production", u"qualification"):
++        raise ProdPoseIntegrationError(u"registry", u"unknown build mode %r" % (mode,))
++    if prod_instance_token(operation_context) is None or not isinstance(operation_context.get("library_identity"),
++                                                                       dict):
++        raise ProdPoseIntegrationError(u"no-instance", u"Select the character in the scene first.")
++    pinned = operation_context["library_identity"]
++    if (u(pinned.get("model")).lower() != u(identity.get("model")).lower()
++            or int(pinned.get("checksum")) != int(identity.get("checksum"))):
++        raise ProdPoseIntegrationError(u"stale", PROD_POSE_MESSAGES[u"stale"])
++    try:
++        prod_validate_context_token(operation_context)
++    except Exception:
++        raise ProdPoseIntegrationError(u"stale", PROD_POSE_MESSAGES[u"stale"])
++    record = None
++    if item is not None:
++        r = item[u"record"]
++        if not prod_body_rig_is_record(r):
++            raise ProdPoseIntegrationError(u"invalid-file", PROD_POSE_MESSAGES[u"invalid-file"])
++        adapter = r[u"pose"][u"adapter"]
++        if not prod_body_rig_usable(mode, adapter.get(u"rule"), adapter.get(u"revision")):
++            raise ProdPoseIntegrationError(u"not-qualified", PROD_BODY_MESSAGES[u"unavailable"])
++        if prod_pose_model_key(r[u"model_ref"]) != prod_pose_model_key(identity["model"]):
++            raise ProdPoseIntegrationError(u"different-model", PROD_SCOPE_MESSAGES[u"different-model"])
++        exclusions = r[u"pose"][u"regions"][PROD_BODY_REGION][u"exclusions"]
++        record = {u"character_key": r[u"character_key"], u"preset_id": r[u"preset_id"],
++                  u"revision": item[u"revision"], u"payload_sha256": r[u"payload_sha256"], u"name": r[u"name"],
++                  u"regions": sorted(r[u"pose"][u"regions"])}
++    elif label == u"Apply Pose":
++        raise ProdPoseIntegrationError(u"record-changed", PROD_POSE_MESSAGES[u"record-changed"])
++    if not prod_body_rig_usable(mode):
++        raise ProdPoseIntegrationError(u"not-qualified", PROD_BODY_MESSAGES[u"unavailable"])
++    try:
++        exclusions = prod_body_rig_exclusions(exclusions)
++    except ProdPoseError as exc:
++        raise ProdPoseIntegrationError(exc.code, u"%s" % exc)
++    return {u"schema": PROD_BODY_RIG_AUTH_SCHEMA, u"operation": label, u"mode": mode, u"structural": True,
++            u"rule": PROD_BODY_RIG_RULE, u"revision": PROD_BODY_RIG_REVISION,
++            u"mappings": [{u"region": PROD_BODY_REGION, u"from": PROD_BODY_RIG_RULE, u"to": PROD_BODY_RIG_RULE,
++                           u"status": PROD_BODY_RIG_STATUS, u"evidence": None}],
++            u"destination": {u"model": u(identity["model"]), u"checksum": int(identity["checksum"]),
++                             u"rig_class": PROD_BODY_RIG_RULE},
++            u"context": operation_context, u"record": record, u"exclusions": exclusions}
++
++
++def prod_body_rig_record(pose, profile):
++    """The adapter's record form of a captured full-body pose: the adapter marker in place of the registry profile
++    set, and the artist-confirmed exclusions beside the descriptor."""
++    out = json.loads(json.dumps(pose))
++    del out[u"registry"]
++    out[u"adapter"] = {u"rule": PROD_BODY_RIG_RULE, u"revision": PROD_BODY_RIG_REVISION}
++    out[u"regions"][PROD_BODY_REGION][u"exclusions"] = [dict(e) for e in profile[u"_exclusions"]]
++    return prod_pose_roundtrip(out)
++
++
++def prod_body_rig_validate(record):
++    """The adapter record's own consistency (after the closed schema): its rule, the normalized rig name, no passive
++    bones, exactly one placement handle, and exclusions that are exactly the preserved FK bones."""
++    pose = record[u"pose"]
++    region = pose[u"regions"][PROD_BODY_REGION]
++    d = region[u"descriptor"]
++    if region[u"profile_id"] != PROD_BODY_RIG_RULE or pose[u"source"][u"rig_class"] != PROD_BODY_RIG_RULE or \
++            d[u"rig_name"] != PROD_BODY_RIG_NAME:
++        raise ProdPoseError(u"invalid-file", u"the structural rig record does not name its rule")
++    classes = dict((b[u"name"], b[u"class"]) for b in d[u"bones"])
++    if [n for n, c in classes.items() if c == u"passive"]:
++        raise ProdPoseError(u"invalid-file", u"a structural rig record holds no passive bones")
++    if len([h for h in d[u"handles"].values() if h[u"class"] == u"placement"]) != 1:
++        raise ProdPoseError(u"invalid-file", u"a structural rig record has exactly one placement handle")
++    ids = [e[u"id"] for e in region[u"exclusions"]]
++    excluded = [b for e in region[u"exclusions"] for b in e[u"bones"]]
++    if len(set(ids)) != len(ids) or len(set(excluded)) != len(excluded) or \
++            sorted(excluded) != sorted(n for n, c in classes.items() if c == u"fk-preserved"):
++        raise ProdPoseError(u"invalid-file", u"the exclusions are not exactly the preserved bones")
++    return record
++
++
++def prod_body_rig_probe(operation_context, identity, reg, mode):
++    """Save New: whether this rigged character's Full body can use the structural adapter, from a complete read-only
++    admission (draft, classification, authority). None when the adapter is unusable here (the reason is logged);
++    clock, time and stale refusals are raised as for the registry route."""
++    if not prod_body_rig_usable(mode):
++        return None
++    try:
++        authorization = prod_body_rig_authorize(operation_context, identity, reg, mode, u"Save Pose")
++        time = prod_body_current_time(identity, authorization, reg)
++        profile = prod_body_resolve_profile(reg, authorization)
++        st = prod_body_state(prod_resolve_instance(prod_instance_token(operation_context), identity), profile)
++    except (ProdPoseError, ProdPoseIntegrationError) as exc:
++        if getattr(exc, "code", None) in (u"capture-clock", u"stale", u"time-mapping", u"editor-mode"):
++            raise
++        prod_pose_log(u"BODY-RIG-unavailable", {u"code": getattr(exc, "code", None), u"error": u"%s" % exc})
++        return None
++    prod_pose_log(u"BODY-RIG-available", {u"handles": len(profile[u"handles"]),
++                                          u"constraints": len(profile[u"constraints"]),
++                                          u"written": len(st[u"C"][u"written"])})
++    return {u"time": time, u"classes": dict(st[u"C"][u"bones"])}
++
++
++def prod_body_rig_inventory(inventory, probe):
++    """The Save dialog's inventory for the structural route: Full body available, and the face review offering only
++    the highlighted bones that are directly animated in the drafted description (rig-driven bones are body
++    posture). Selected parts is unchanged."""
++    out = dict(inventory)
++    out[u"full_body"] = {u"status": u"available", u"code": None, u"message": None, u"review": []}
++    out[u"highlighted"] = [b for b in inventory.get(u"highlighted") or [] if probe[u"classes"].get(b) == u"fk"]
++    out[u"structural_rig"] = True
++    return out
++
+ # === end of F-01 stage E block ===
+ 
+ 
+@@ -48552,6 +49018,8 @@ def prod_pose_info_view(record, source_project=None):
+         if u"full_body" in regions:
+             kind = u"Full body"
+             includes = None
++            not_included += [u"%s controls" % e[u"label"] for e in pose[u"regions"][u"full_body"].get(
++                u"exclusions") or []]                  # Stage 1: structural rig records
+             not_included += PROD_POSE_FULL_BODY_NOT_INCLUDED[2]
+         else:
+             # Owner decision after UA-1 (2026-11-15): exactly two pose types are shown. A version 1 arm pose is
