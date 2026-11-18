@@ -44361,7 +44361,9 @@ PROD_BODY_REGION = u"full_body"
 PROD_BODY_POSE_VERSION = 2
 PROD_BODY_REGISTRY_FORMAT = u"cpm-body-profiles"
 PROD_BODY_REGISTRY_FILENAME = u"cpm_body_profiles_v1.json"
-PROD_BODY_REGISTRY_SHA256 = u"22dcd1599c0556bcb71df0a9b9d14657684173b3bbf557250710a8104a6baa26"
+# v1.1.0 production integration (2026-11-18, "F-01 - Begin v1.1.0 Production Integration"): the Krystal v2 Full body
+# mapping is qualified (K2 native integration check, Owner accepted; F01_K2_KRYSTAL_V2_NATIVE_RESULTS.md).
+PROD_BODY_REGISTRY_SHA256 = u"a2254930489772c024a42d057b98a5a01e164be05096dd85df2d461aad73d622"
 PROD_BODY_MAX_RECORD_BYTES = 4 << 20
 PROD_BODY_FRAME = u"placement-relative-at-capture"
 PROD_BODY_SLAVE_SLOTS = (u"slave", u"startJoint", u"midJoint", u"endJoint")

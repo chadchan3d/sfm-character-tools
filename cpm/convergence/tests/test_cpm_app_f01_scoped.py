@@ -1437,28 +1437,37 @@ def section_window(app, ns, fx, root):
               win.statuses[-1][2] == u"recovery-blocked", (blocked, win.statuses[-1]))
         ns["PROD_POSE_RECOVERY_BLOCK"][0] = None
         win.pose_recovery_blocked = False
-        # Krystal (registry character) in the PRODUCTION build: its version 2 Full body mapping stays experimental, so
-        # there is no v2 route; Full body reaches the v3 dialog and refuses there (rig-driven), with no fallback.
+        # Krystal (registry character) in the PRODUCTION build with its version 2 Full body mapping experimental (as
+        # before v1.1.0): there is no v2 route; Full body reaches the v3 dialog and refuses there (rig-driven), with
+        # no fallback.
         k15 = fx[u"k15"]
         kw = FS.World(k15)
         use(ns, kw, k15)
         klib = library(root, u"krystal2020")
+        xwin = window(app, ns, body.experimental_body(reg), klib)
+        xwin.identity = dict(Pin.identity)
+        xwin.scopes = [{u"name": u"Krystal body", u"kind": u"full_body"}]
+        none = xwin.save_pose(None, (u"full_body",))
+        check("N.production_krystal_full_body_without_a_qualified_v2_mapping_refuses_without_fallback",
+              none is None and xwin.inventories[-1][1] is False and
+              xwin.inventories[-1][0][u"full_body"][u"status"] == u"refused" and
+              xwin.inventories[-1][0][u"full_body"][u"code"] == u"rig-driven" and
+              not os.path.isdir(os.path.join(klib[u"char_dir"], u"Poses")) and not writes(kw) and not kw.dm.calls,
+              xwin.inventories[-1][0][u"full_body"])
+        # The shipped v1.1.0 production build (mapping qualified): Krystal's Full body takes the version 2 route.
         kwin = window(app, ns, reg, klib)
         kwin.identity = dict(Pin.identity)
         kwin.scopes = [{u"name": u"Krystal body", u"kind": u"full_body"}]
-        none = kwin.save_pose(None, (u"full_body",))
-        check("N.production_krystal_full_body_has_no_v2_route_and_refuses_without_fallback",
-              none is None and kwin.inventories[-1][1] is False and
-              kwin.inventories[-1][0][u"full_body"][u"status"] == u"refused" and
-              kwin.inventories[-1][0][u"full_body"][u"code"] == u"rig-driven" and
-              not os.path.isdir(os.path.join(klib[u"char_dir"], u"Poses")) and not writes(kw) and not kw.dm.calls,
-              kwin.inventories[-1][0][u"full_body"])
+        v2 = kwin.save_pose(None, (u"full_body",))
+        check("N.production_krystal_full_body_takes_its_version_2_route", v2 is not None and
+              v2[u"record"][u"pose"][u"version"] == 2 and kwin.inventories[-1][1] is True and not writes(kw),
+              kwin.statuses[-1])
         # Krystal in the qualification build: Full body keeps the v2 route, Selected parts v3.
         ns["PROD_POSE_REGISTRY_MODE"] = u"qualification"
-        kwin.scopes = [{u"name": u"Krystal body", u"kind": u"full_body"}]
-        v2 = kwin.save_pose(None, (u"full_body",))
-        check("N.krystal_full_body_keeps_its_version_2_route", v2 is not None and
-              v2[u"record"][u"pose"][u"version"] == 2 and kwin.inventories[-1][1] is True, kwin.statuses[-1])
+        kwin.scopes = [{u"name": u"Krystal body Q", u"kind": u"full_body"}]
+        q2 = kwin.save_pose(None, (u"full_body",))
+        check("N.krystal_full_body_keeps_its_version_2_route", q2 is not None and
+              q2[u"record"][u"pose"][u"version"] == 2 and kwin.inventories[-1][1] is True, kwin.statuses[-1])
         kwin.scopes = [lambda inv: {u"name": u"Krystal hand", u"kind": u"selected_parts",
                                     u"bones": [u"bip_index_1_l", u"bip_index_2_l", u"bip_index_1_l"]}]
         v3 = kwin.save_pose(None, (u"full_body",))

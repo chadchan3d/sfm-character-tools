@@ -128,6 +128,15 @@ def profile_of(ns, reg):
     return ns["prod_body_profile"](reg, u"krystal-v1")
 
 
+def experimental_body(reg):
+    """The registries as they were before v1.1.0 integration: the Krystal v2 Full body mapping experimental, no
+    evidence (used to keep the production refusal of an unqualified mapping covered)."""
+    out = dict(reg)
+    out[u"_body"] = dict(reg[u"_body"], mappings=[dict(m, status=u"experimental", evidence=None)
+                                                   for m in reg[u"_body"][u"mappings"]])
+    return out
+
+
 def snapshots(D, names):
     """Stage A layer snapshots from the fixture's recorded keys (what prod_pose_layer_snapshot reads natively)."""
     out = {}
@@ -158,9 +167,11 @@ def section_registry(ns):
           not any(c in p[u"written_handle_channels"] for c in (u"Elbow_l_o", u"Elbow_r_o", u"Knee_l_o", u"Knee_r_o")))
     check("R.A3_passive_twist_bones_listed",
           p[u"passive_channel_bones"] == [u"bip_lowerArm_l_twist2", u"bip_lowerArm_r_twist2"])
-    check("R.full_body_mapping_is_experimental", body[u"mappings"] == [
-        {u"region": u"full_body", u"from": u"krystal-v1", u"to": u"krystal-v1", u"status": u"experimental",
-         u"evidence": None}])
+    ev = body[u"mappings"][0].get(u"evidence") if len(body[u"mappings"]) == 1 else None
+    check("R.full_body_mapping_is_qualified_with_the_k2_evidence", len(body[u"mappings"]) == 1 and
+          dict((k, v) for k, v in body[u"mappings"][0].items() if k != u"evidence") ==
+          {u"region": u"full_body", u"from": u"krystal-v1", u"to": u"krystal-v1", u"status": u"qualified"} and
+          u"K2" in (ev or u"") and u"F01_K2_KRYSTAL_V2_NATIVE_RESULTS.md" in (ev or u""), body[u"mappings"])
     raw = core.read(BODY_REGISTRY_PATH)
     refused("R.wrong_pin_refuses", outcome(lambda: ns["prod_body_registry_parse"](raw, u"0" * 64, arm)), u"registry")
 
@@ -181,19 +192,25 @@ def section_registry(ns):
             tampered(lambda p, d: p[u"written_handle_channels"].update({u"rig_root_x": [u"rig_root", u"position"]})),
             u"registry")
     refused("R.qualified_without_evidence_refuses",
-            tampered(lambda p, d: d[u"mappings"][0].update({u"status": u"qualified"})), u"registry")
+            tampered(lambda p, d: d[u"mappings"][0].update({u"evidence": None})), u"registry")
+    refused("R.experimental_with_evidence_refuses",
+            tampered(lambda p, d: d[u"mappings"][0].update({u"status": u"experimental"})), u"registry")
     refused("R.other_models_than_the_pose_registry_refuse",
             tampered(lambda p, d: d[u"rig_classes"][u"krystal-v1"][u"models"][0].update({u"model_ref": u"x.mdl"})),
             u"registry")
     refused("R.unknown_field_refuses", tampered(lambda p, d: p.update({u"extra": 1})), u"invalid-file")
     sel = ns["prod_pose_registry_select"](arm, u"production")
-    check("R.production_selection_has_no_experimental_full_body",
-          not [m for m in sel[u"mappings"] if m[u"region"] == u"full_body"]
+    check("R.production_selection_includes_the_qualified_full_body",
+          [(m[u"region"], m[u"status"]) for m in sel[u"mappings"]] == [
+              (u"left_arm", u"qualified"), (u"full_body", u"qualified")]
           and sel[u"body_registry_sha256"] == body[u"_sha256"], sel[u"mappings"])
+    sel = ns["prod_pose_registry_select"](experimental_body(arm), u"production")
+    check("R.production_selection_has_no_experimental_full_body",
+          not [m for m in sel[u"mappings"] if m[u"region"] == u"full_body"], sel[u"mappings"])
     sel = ns["prod_pose_registry_select"](arm, u"qualification")
     check("R.qualification_selection_adds_full_body",
           [(m[u"region"], m[u"status"]) for m in sel[u"mappings"]] == [
-              (u"left_arm", u"qualified"), (u"right_arm", u"experimental"), (u"full_body", u"experimental")])
+              (u"left_arm", u"qualified"), (u"right_arm", u"experimental"), (u"full_body", u"qualified")])
     plain = ns["prod_pose_registry_parse"](core.read(core.REGISTRY_PATH), ns["PROD_POSE_REGISTRY_SHA256"])
     check("R.left_arm_selection_unchanged_without_the_body_registry",
           ns["prod_pose_registry_select"](plain, u"production") == {
@@ -654,8 +671,13 @@ def section_live(ns, reg, fx, root):
             outcome(lambda: ns["prod_body_capture"](IDENTITY, auth, reg)), u"capture-clock")
     src.timeline_mode = 2
     prod_auth = authorize(ns, reg, u"Save Pose", mode=u"production")
-    refused("L.production_build_has_no_full_body_save_until_qualified",
-            outcome(lambda: ns["prod_body_capture"](IDENTITY, prod_auth, reg)), u"not-qualified")
+    got = outcome(lambda: ns["prod_body_capture"](IDENTITY, prod_auth, reg))
+    check("L.production_build_captures_the_qualified_full_body", got[0] == u"ok" and
+          got[1][u"version"] == 2 and sorted(got[1][u"regions"]) == [u"full_body"], got[:1])
+    exp = experimental_body(reg)
+    exp_auth = authorize(ns, exp, u"Save Pose", mode=u"production")
+    refused("L.production_build_has_no_full_body_save_while_experimental",
+            outcome(lambda: ns["prod_body_capture"](IDENTITY, exp_auth, exp)), u"not-qualified")
     refused("L.capture_with_a_moved_playhead_is_stale", outcome(lambda: ns["prod_body_capture"](
         IDENTITY, auth, reg, pinned_time=dict(pinned, t_chan=pinned[u"t_chan"] + 1))), u"stale")
     source_relative = placement_relative(src)
@@ -917,6 +939,13 @@ def section_window(app, ns, reg, fx, root):
            u"library_root": root, u"model_ref": MODEL, u"checksum": 1234}
     src = FB.World(fx[u"shot15"])
     use_world(ns, src)
+    exp_win = window(app, ns, experimental_body(reg), lib)
+    exp_win.prompts = [u"Window Pose"]
+    got = exp_win.save_pose(None, (u"full_body",))
+    check("W.production_save_new_refuses_while_full_body_is_experimental",
+          got is None and exp_win.statuses[-1][2] == u"not-qualified" and
+          exp_win.statuses[-1][3] == u"Full-body poses aren't available for this character yet." and
+          not os.path.isdir(os.path.join(lib[u"char_dir"], u"Poses")), exp_win.statuses[-1])
     win = window(app, ns, reg, lib)
     check("W.save_new_button_creates_complete_poses_only",
           u'self.save_pose(None, (u"full_body",))' in u"\n".join(
@@ -925,17 +954,10 @@ def section_window(app, ns, reg, fx, root):
               app.method_text("ProdWindow", m) for m in app.methods("ProdWindow")))
     mode = ns["PROD_POSE_REGISTRY_MODE"]
     check("W.shipped_build_is_production", mode == u"production")
-    win.prompts = [u"Window Pose"]
-    got = win.save_pose(None, (u"full_body",))
-    check("W.production_save_new_refuses_until_full_body_is_qualified",
-          got is None and win.statuses[-1][2] == u"not-qualified" and
-          win.statuses[-1][3] == u"Full-body poses aren't available for this character yet." and
-          not os.path.isdir(os.path.join(lib[u"char_dir"], u"Poses")), win.statuses[-1])
-    ns["PROD_POSE_REGISTRY_MODE"] = u"qualification"            # the separately built qualification CPM
-    try:
+    try:                                                        # the shipped production build (v1.1.0)
         win.prompts = [u"Window Pose"]
         saved = win.save_pose(None, (u"full_body",))
-        check("W.save_new_saves_a_version_2_complete_pose", saved is not None and
+        check("W.production_save_new_saves_a_version_2_complete_pose", saved is not None and
               saved[u"record"][u"pose"][u"version"] == 2 and
               sorted(saved[u"record"][u"pose"][u"regions"]) == [u"full_body"] and
               win.statuses[-1][1] == u"Pose saved: Window Pose.", win.statuses[-1])
@@ -1033,14 +1055,24 @@ def section_k1(app, ns, reg, fx, root):
     def refuse_generic(*a, **k):
         raise ns["ProdPoseError"](u"structure-unsupported", u"generic inventory refused")
     try:
-        # Production (the shipped build): the version 2 mapping stays experimental, so there is no body route; a
-        # generic refusal before the dialog still refuses Save as before (K1 changes nothing here).
+        # Production with the mapping experimental (before v1.1.0): there is no body route, and a generic refusal
+        # before the dialog still refuses Save.
         ns["prod_scope_inventory"] = refuse_generic
+        exp_win = window(app, ns, experimental_body(reg), lib)
+        exp_win.dialogs = []
+        exp_win.prompts = [u"Prod"]
+        got = exp_win.save_pose(None, (u"full_body",))
+        check("K1.production_without_a_qualified_v2_mapping_a_generic_refusal_still_refuses",
+              got is None and not exp_win.dialogs and exp_win.statuses[-1][2] == u"structure-unsupported" and
+              not pose_dir_files(), exp_win.statuses[-1])
+        # Production (the shipped v1.1.0 build, mapping qualified): the v2 route saves through the dialog even when
+        # the generic v3 inventory refuses (K1 barrier 1, now in production).
+        win = window(app, ns, reg, lib)
+        win.dialogs = []
         win.prompts = [u"Prod"]
         got = win.save_pose(None, (u"full_body",))
-        check("K1.production_has_no_v2_route_and_a_generic_refusal_still_refuses",
-              got is None and not win.dialogs and win.statuses[-1][2] == u"structure-unsupported" and
-              not pose_dir_files(), win.statuses[-1])
+        check("K1.production_v2_route_saves_despite_a_generic_refusal",
+              got is not None and got[u"record"][u"pose"][u"version"] == 2 and pose_dir_files(), win.statuses[-1:])
         ns["prod_scope_inventory"] = real[u"prod_scope_inventory"]
         ns["PROD_POSE_REGISTRY_MODE"] = u"qualification"                    # the K1 qualification candidate
         # 1. The v2 route captures against its own S3-qualified body pin, not the generic v3 pin: a v3 pin that

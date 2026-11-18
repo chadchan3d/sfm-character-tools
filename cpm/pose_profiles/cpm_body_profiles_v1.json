@@ -2,10 +2,10 @@
  "format": "cpm-body-profiles",
  "mappings": [
   {
-   "evidence": null,
+   "evidence": "F-01 K2 native integration check, K1 build 37b0cce6 (candidate 3984e1e1): Full body Save New via the Save dialog, restart, Apply, Undo, Redo, Update; revised A1 replay PASS 56/56; Owner accepted; Motion Editor only; F01_K2_KRYSTAL_V2_NATIVE_RESULTS.md",
    "from": "krystal-v1",
    "region": "full_body",
-   "status": "experimental",
+   "status": "qualified",
    "to": "krystal-v1"
   }
  ],
