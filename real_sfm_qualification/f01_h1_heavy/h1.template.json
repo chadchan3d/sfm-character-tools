@@ -1,0 +1,44 @@
+{
+ "format": "F01-H1-config-v1",
+ "description": "F-01 H1: the native Heavy procedural-helper check of the H1 candidate (CPM 3d31e721...). Copy to <Q>/h1.json and replace the path placeholders; change no pin.",
+ "paths": {
+  "Q": "<RUN_DIR>",
+  "REPO": "<REPO>",
+  "GAME": "<SFM game>",
+  "LIBRARY": "%USERPROFILE%/Documents/SFM Character Preset Manager",
+  "SESSIONS": "<SFM sessions folder>",
+  "SCRIPTS_ROOT": "{GAME}/usermod/scripts",
+  "CFG_ROOT": "{GAME}/usermod/cfg",
+  "CANDIDATE": "{REPO}/cpm/app/SFM_Character_Preset_Manager.py",
+  "PROFILE": "{REPO}/cpm/pose_profiles/cpm_pose_profiles_v1.json",
+  "BODY_PROFILE": "{REPO}/cpm/pose_profiles/cpm_body_profiles_v1.json",
+  "R2_FIXTURE": "<R2_FIXTURE_DIR>/F01_R2_DISPOSABLE_<SOURCE_SESSION>.dmx",
+  "S3_RUN1": "<S3 run 1 folder (f01-full-body-s3)>",
+  "LOG_DIR": "C:/Users/Public/Documents/SFM Character Preset Manager Logs",
+  "LEGACY_POSE": "<S3 run 1 folder>/evidence/library_poses/krystal2020--7d2aee52ef3a/NQ1 Pose A--5273df2209ca.json"
+ },
+ "pins": {
+  "candidate_cpm_sha256": "3d31e72141a50fca3a9b10f5ae0970af3b7f2253a66f4f6f8a03e38c28e29d1e",
+  "qualification_cpm_sha256": "5a8c832bf7dd385188014178fcc43c80074b0d18a192320406e5322b181d0a05",
+  "profile_sha256": "f445d5ef7fb183e6bcae3099b3812ffd2363213911605134231c2a1f708d6d00",
+  "body_profile_sha256": "22dcd1599c0556bcb71df0a9b9d14657684173b3bbf557250710a8104a6baa26",
+  "published_cpm_sha256": "ccbed9d794984643fc6f7d7d9c65ef90e5812eb27f85dc4a86855a17c2d3d8df",
+  "r2_fixture_sha256": "259ea8a614bc9e43e5bde15afdf38e1a1295dffb50b14cf75692df4221a05a2c",
+  "destination_sha256": "61df8bcd5397c78b064e102047e51b5d9e4e3c43df40394522c57944ba67e992",
+  "observer_sha256": "4a358cc05449592c7ea3cd6828cb40ca2faed08fc602156c2f15a9398e67c0c4",
+  "legacy_pose_sha256": "4916a7243193306ab7a93dec9fbc988b079c9af4c3bb0e9828a5b2d89cef3541",
+  "capture_sha256": "faad5d4cb7d7084dfca635fe8df1821972edb656a87410249a4f40133ff50a5e",
+  "analyzer_sha256": "d7af5d94fc268ff56792257d3fa8cb1dc51af07f164e802bb5f7f1d13b31578a",
+  "procedure_sha256": "257d3b6d0f71a2a58ab668bc0d2621f1965cd00e6c7ee89ffb2c69fc415de186"
+ },
+ "character_dir": "krystal2020--7d2aee52ef3a",
+ "housekeeping": [
+  "cfg\\config.cfg",
+  "cfg\\ifm.txt",
+  "cfg\\server_blacklist.txt",
+  "demoheader.tmp",
+  "stats.txt",
+  "tf2_playerstats.dmx",
+  "voice_ban.dt"
+ ]
+}
