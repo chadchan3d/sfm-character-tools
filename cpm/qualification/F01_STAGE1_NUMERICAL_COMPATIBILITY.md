@@ -15,7 +15,7 @@ Findings: `F01_STAGE1_FOX_RUN2_FINDINGS.md`.
 |---|---|
 | CPM | `1753bdba…` → **`2088b4aff1a6cfe05242bd1e774ac1fd4a565a92e5c124336b1aa855b62b8df7`** (1,519,905 B; 139 lines added, 4 removed). Exact diff: `F01_STAGE1_NUMERICAL_COMPATIBILITY.diff` (`33d054fe…`, against `94f21df`) |
 | Qualification build | **`b195515f31ceb54fd306619f43aa91ad1f1e25977185ec9e79323bf6e1b0f468`** (line 42609 only, the registry mode; the same derivation reproduces run 2's `e3e863ee…` from `1753bdba…`) |
-| Kit | capture `765eefc2…`, analyzer `a8623246…`, procedure (run 3), pinned in `s1f.template.json` |
+| Kit | capture `765eefc2…`, analyzer `a8623246…`, procedure `ad619f88…` (run 3), pinned in `s1f.template.json` |
 
 ## 2. The comparison contract (CPM)
 
@@ -104,7 +104,7 @@ against the **live rig**.
 | Stage 1 `test_cpm_app_f01_structural_rig` | **243/243** on 2.7.5 and 3.10.6 (151 before; section N adds 92) |
 | Stage E body `test_cpm_app_f01_body` (Krystal registry route) | 261/261 on both, unchanged |
 | Kit `tests/test_s1f.py` | **49/49** on 2.7.5 and 3.10.6 (38 before) |
-| Full regression (`run_regressions_v110`) | see section 5 |
+| Full regression (`run_regressions_v110`, 98 result lines) | **identical** to the run 2 corrections baseline; the pre-existing historical failures are unchanged |
 
 **Section N** (Astra's minimum cases):
 
@@ -173,15 +173,16 @@ Also:
 
 ## 5. Full regression
 
-(See the ledger entry for the run's result.)
+All 59 runs give exactly the same results as the run 2 corrections baseline (Stage E body 261/261, helper, pose, scoped, page, M-05, M-06 and isolation suites unchanged; the pre-existing historical failures unchanged).
 
 ## 6. Native readiness (run 3)
 
 **Prepared.** The same procedure (`PROCEDURE.md`, now run 3), re-pinned to `2088b4af…` / `b195515f…`, in a new folder
-`E:\SFM_U0B_Scratch\f01-stage1-fox-r3`, with two fresh stock-rigged Foxes. The only operator change is to finish all
+`E:\SFM_U0B_Scratch\f01-stage1-fox-r3`, where `build` has staged the qualification build (the installation is still the
+published `ccbed9d7…`), with two fresh stock-rigged Foxes. The only operator change is to finish all
 posing before PREP.
 
-**Next, with the Owner's authorization:** `build`, `pre`, `install` and `check`, then Processes A and B, then the
+**Next, with the Owner's authorization:** `pre`, `install` and `check`, then Processes A and B, then the
 collection, restoration and analysis.
 
 **Stopped before installation and native execution.** No Stage 2, production promotion, signing, push, merge or
