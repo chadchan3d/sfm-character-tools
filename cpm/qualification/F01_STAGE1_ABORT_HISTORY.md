@@ -141,7 +141,7 @@ discards pending Redo. It is opt-in, so every earlier test keeps its previous fa
 **M-05 D11b:** the real guard titles an unverified pose recovery **Pose operation stopped** and keeps "Recovery could
 not be verified" for Apply Body Preset.
 
-## 4. Proposed native recovery check (not prepared; Owner authorization required)
+## 4. Native recovery check (proposed here; prepared in section 7)
 
 **Purpose:**
 - confirm that the corrected CPM reports verified restoration natively when SFM clears Redo;
@@ -205,3 +205,51 @@ never opened.
 - No installation, staging or native execution.
 - No Stage 2 work, production promotion, signing, push, merge or release.
 - Runs 1 to 3 and their verdicts are unchanged.
+
+## 7. Native check prepared (2026-11-19)
+
+**Authority:** the Designer's "F-01 — Targeted Native Abort Qualification" (ACCEPT offline correction; checkpoint
+`25ba936`).
+
+**The kit, `real_sfm_qualification/f01_stage1_recovery/`:**
+
+| File | Identity | Notes |
+|---|---|---|
+| `observer/F01_S1R_Capture.py` | `100e79a4…` | Runs the Fox capture `F01_S1F_Capture.py` unchanged (`765eefc2…`, verified before use, in a private namespace) with the six steps. Then writes the sidecar `S1F-<step>.undo.json` with `IsUndoEnabled`, `CanUndo`, `CanRedo` and both descriptions, read directly and with raw types. |
+| `tools/s1r_tool.py` | | `build`, `pre`, `install`, `check`, `seed`, `library`, `collect-logs`, `restore` and `analyze`, through the Fox, K2, S3 and UA-1 tools, unchanged. `seed` (the one new command) copies run 3's `S1 Fox` record (`292bc334…`) and `pose_sources.json` (`a31ea823…`), verified, into the library. |
+| `tools/s1r_analyze.py` | `8128e162…` | Gates EVIDENCE, SETUP, APPLY, REDO_ABORT, EXACT_ABORT, OPERATIONAL and PEER, reusing the Fox analyzer's helpers. |
+| `PROCEDURE.md` | `56d03638…` | |
+| `s1r.template.json` | | All pins. The `R2_FIXTURE` path is run 3's saved session (`fcf2441c…`), so the unchanged `pre` makes the disposable copy `S1R_SESSION.dmx`. |
+| `tests/test_s1r.py` | | **61/61** on 3.10.6 and 18/18 on 2.7.5 (the wrapper and template; the analyzer and tool are Python 3 tools). |
+
+**What the tests cover:**
+- **The wrapper:** six steps; the direct sidecar; refusals of a changed capture, an unknown step and a repeated
+  capture, writing nothing; non-boolean and unreadable observations kept as such; the real Fox capture found and
+  accepting the patched steps.
+- **The analyzer,** on a simulated run:
+  - the expected run passes;
+  - the old build's run-3-like result **fails**;
+  - **FAIL** variants: no pending Redo at UNDO; Fox D not restored or evaluated differently; peer or source
+    changed; top entry, Undo availability or Undo enabled changed; Redo kept; no `redo_cleared`; fewer writes; the
+    fault slot not consumed; ABORT2 Redo-flagged, different or disabled; APPLY2 unverified or not applied; a logged
+    lockout; an extra outcome;
+  - **INCOMPLETE** variants: a missing, inconsistent, non-boolean, unreadable or foreign sidecar; a missing capture;
+    two processes; another session; a moved playhead; a saved session copy; the wrong build; extra or changed
+    library files; an incomplete restore; another pose or set names.
+- **The template:** the pins are the kit files, the candidate `7259e80a…`, the derived `39f2e355…` and run 3's
+  files.
+- **Real formats:** the analyzer's event and P6 parsing was also checked against run 3's real log.
+
+**The steps:** one SFM process, no Save, six captures (BASE, APPLY, UNDO, ABORT1, ABORT2, APPLY2), as in section 4.
+Undo enabled is observed directly at every step, not assumed.
+
+**Readiness:**
+- The run folder `E:\SFM_U0B_Scratch01-stage1-recovery` holds `s1r.json` (paths filled, pins from the template).
+- `build` has staged the qualification build `39f2e355…` (line 42630 only) with both registries.
+- The installation is still the published `ccbed9d7…`, and SFM is closed.
+- Run 3's verdict, session and library files were only read; their identities are unchanged.
+
+**Next, with the Owner's authorization:** `pre`, `install`, `check` and `seed`, then the Owner's steps, then
+`library Q`, `collect-logs`, `restore`, `check` and `analyze`.
+
+Stopped before installation. No Stage 2 work, promotion, signing, push, merge or release.
