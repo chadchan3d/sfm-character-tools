@@ -58,7 +58,7 @@ def s1f_strip(obj):
 
 def s1f_frame(stripped):
     """The handle-free authored state with key times but without key values (run 2: SFM's own session reload may
-    round a quaternion key by one float32 step; the values are compared separately, within that step only)."""
+    renormalize a quaternion key in float32; the values are compared separately, against that function)."""
     out = dict(stripped)
     out[u"layers"] = [dict(layer, keys=[k[0] for k in layer.get(u"keys") or []]) for layer in
                       stripped.get(u"layers") or []]
@@ -79,6 +79,15 @@ def s1f_admission(cpm, L):
     classes = {}
     for n, c in C[u"bones"].items():
         classes[c] = classes.get(c, 0) + 1
+    desc = cpm.prod_body_descriptor(D, C, P)
+    rotations = {}                       # information only: the three static constraint rotation offsets
+    for row in desc[u"constraints"]:
+        ident = s1f_text(cpm.prod_body_constraint_identity(row))
+        for group, name in cpm.PROD_BODY_ROTATION_FIELDS:
+            f = (row.get(group) or {}).get(name)
+            if f is not None:
+                rotations.setdefault(ident, {})[s1f_text(group + u"." + name)] = f.get(u"value") if f.get(
+                    u"present") else None
     return {"t_chan": t[u"t_chan"], "rig_name": s1f_text(P[u"rig_name"]),
             "placement": s1f_text(P[u"placement_handle"]), "helpers": [s1f_text(h) for h in P[u"helper_handles"]],
             "handles": len(P[u"handles"]), "constraints": len(P[u"constraints"]),
@@ -86,7 +95,8 @@ def s1f_admission(cpm, L):
             "classes": classes, "bone_classes": dict((s1f_text(n), c) for n, c in C[u"bones"].items()),
             "roles": dict((s1f_text(n), r) for n, r in C[u"channels"].items()),
             "written": [s1f_text(n) for n in C[u"written"]],
-            "description_sha256": s1f_digest(dict((k, v) for k, v in P.items() if k != u"rig_name"))}
+            "description_sha256": s1f_digest(dict((k, v) for k, v in P.items() if k != u"rig_name")),
+            "descriptor_sha256": s1f_digest(desc), "rotation_offsets": rotations}
 
 
 def s1f_set(cpm, shot, animset, keys):

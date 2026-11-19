@@ -1,4 +1,4 @@
-# F-01 Stage 1: native Fox structural-rig qualification, run 2 (operator procedure)
+# F-01 Stage 1: native Fox structural-rig qualification, run 3 (operator procedure)
 
 **Status:** prepared offline, **not run**. Running it, and every installation change below, needs the Owner's separate
 authorization.
@@ -6,9 +6,13 @@ authorization.
 **Authority:**
 - "F-01 Stage 1 — Native Findings Disposition" (Designer: C1, C3–C6 approved, C2 revised) and the C2 clarification
   on facial controls;
-- records `cpm/qualification/F01_STAGE1_FOX_NATIVE_FINDINGS.md` and `F01_STAGE1_RUN2_CORRECTIONS.md`.
+- Astra's numerical compatibility ruling (ACCEPT WITH CONDITIONS) and "F-01 Stage 1 — Implement Astra's Numerical
+  Compatibility Ruling";
+- records `cpm/qualification/F01_STAGE1_FOX_NATIVE_FINDINGS.md`, `F01_STAGE1_RUN2_CORRECTIONS.md`,
+  `F01_STAGE1_FOX_RUN2_FINDINGS.md` and `F01_STAGE1_NUMERICAL_COMPATIBILITY.md`.
 
-Run 1 (`f01-stage1-fox-r1`, INCOMPLETE) stays preserved as it is.
+Run 3 is the corrected Fox continuation of run 2, with the same steps, in a new folder `f01-stage1-fox-r3`. Runs 1 and 2
+(`f01-stage1-fox-r1`, `f01-stage1-fox-r2`, both INCOMPLETE) stay preserved as they are.
 
 **What it checks.** Two SFM processes on one disposable session copy.
 - **Process A:** two **fresh** Foxes are created and both rigged with the **installed** stock biped rig:
@@ -26,8 +30,8 @@ Run 1 (`f01-stage1-fox-r1`, INCOMPLETE) stays preserved as it is.
 
 | Item | Value |
 |---|---|
-| Candidate CPM | `1753bdba…` (Stage 1 with the run 1 corrections) |
-| Qualification build | `e3e863ee…` (one line, the registry mode, line 42609) |
+| Candidate CPM | `2088b4af…` (Stage 1 with the run 1 corrections and Astra's numerical compatibility ruling) |
+| Qualification build | `b195515f…` (one line, the registry mode, line 42609) |
 | Registries | `f445d5ef…` (poses), `a2254930…` (body; Krystal only, unchanged) |
 | Sessions | `S1_SESSION.dmx`: a verified copy of the R2 fixture `259ea8a6…` (shot15, 0.2083 s), the **disposable** session, prepared and saved once in Process A. `S1_SPARE.dmx` is copied by the reused pre and never opened. The R2 fixture itself is only read |
 | Capture | `observer/F01_S1F_Capture.py` (read only) |
@@ -47,8 +51,8 @@ Run 1 (`f01-stage1-fox-r1`, INCOMPLETE) stays preserved as it is.
 
 | # | Command | Expected |
 |---|---|---|
-| P0 | Copy `s1f.template.json` to `<Q>\s1f.json` (a new run folder, `f01-stage1-fox-r2`); fill every `<...>` path. Change no pin. | |
-| P1 | `build` | `BUILT: … e3e863ee… differs from the candidate in line 42609 only` |
+| P0 | Copy `s1f.template.json` to `<Q>\s1f.json` (a new run folder, `f01-stage1-fox-r3`); fill every `<...>` path. Change no pin. | |
+| P1 | `build` | `BUILT: … b195515f… differs from the candidate in line 42609 only` |
 | P2 | `pre` | `PRE PASS (K2)`, then `PRE PASS (S1F): preset library backed up` |
 | P3 | `install`, then `check` | `"installation": "qualification"`. There is no seed step; ignore the reused tool's "Next: seed" |
 
@@ -80,6 +84,10 @@ Each capture prints `S1F <step>: Fox S rig_root | Fox D rig_root | peer rig_root
      couple of rig handles (for example both hands down, head turned the other way).
 
    Do not touch the original Fox or Tails.
+
+   **Finish all posing before step 5.** From the PREP capture until you exit at A9, change no control, handle or key
+   of any character. The analyzer requires the saved session to match the PREP capture exactly (in run 2, posing
+   continued after PREP).
 5. **Capture PREP.** Open **Character Preset Manager**, choose **Refresh Models**, select **Fox S**. Submit the setup
    line, then capture **PREP**. Expected: `Fox S rig_root | Fox D rig_root | peer rig_root`, errors none. If Fox S or
    Fox D is not `rig_root`, capture nothing more, exit **without saving** and report.
@@ -166,6 +174,6 @@ A gate with no evaluated check is shown as **NOT EVALUATED**, never PASS.
 - **Posture,** independent of CPM's planner: SFM's evaluated bones of Fox D, relative to its own `rig_root`, against
   Fox S's at Save, within 0.05 units and 0.5°, with the maxima reported.
 - **Placement, offsets and peers** unchanged within 0.001 units and 0.01°.
-- **The reopened session** is compared exactly, except that quaternion key components may differ by one float32
-  step: SFM's own reload rounding, measured in run 1. Every authored-data, Undo, Abort and restoration check within
-  Process B stays exact.
+- **The reopened session** is compared exactly, except that every quaternion key must equal SFM's own load
+  renormalization of its Process A value exactly (the float32 function measured in run 2 on all 618 keys). Every
+  authored-data, Undo, Abort and restoration check within Process B stays exact.

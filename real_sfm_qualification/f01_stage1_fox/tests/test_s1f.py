@@ -155,7 +155,9 @@ class Run(object):
         T.use(NS, self.tails)                               # Tails' Save New: the structural probe refuses
         check("sim.tails_probe_refuses", NS["prod_body_rig_probe"](T.ctx(NS), T.IDENTITY, REG, u"qualification") is
               None)
-        self.pid += 1                                       # the restart
+        self.pid += 1                                       # the restart: SFM's session load renormalizes every
+        for w in (self.src, self.dst, self.peer, self.tails):  # stored quaternion (run 2's measured function)
+            T.reload_world(w)
         self.capture("BASE")
         self.apply()
         self.capture("APPLY")
@@ -390,27 +392,64 @@ def section_verdicts(root):
     variant("tails_not_refused_fails", lambda c, f: f.__setitem__("log", [
         l for l in f["log"] if "BODY-RIG-unavailable" not in l]), "FAIL", "TAILS")
 
-    # C6: the reopened session may differ from PREP by SFM's own quaternion rounding only.
-    def first_quat(c, role):
-        for n, ch in sorted(c["PREP"]["sets"][role]["channels"].items()):
-            for layer in ch["keys"]:
-                for k in layer:
+    # Astra's kit ruling: BASE equals SFM's measured load renormalization of PREP exactly, nothing else.
+    import s1f_analyze as A0
+    reload_info = info.get("reload_renormalized_keys") or {}
+    check("sim.restart_renormalized_keys_of_every_set", sorted(reload_info) == sorted(A0.ROLES) and all(
+        n > 0 for n in reload_info.values()), reload_info)
+    check("sim.descriptor_digests_reported_for_information", (info.get("descriptor_sha256") or {}).get(
+        "BASE", {}).get("target") == (info.get("descriptor_sha256") or {}).get("BASE", {}).get("source") is not None,
+        info.get("descriptor_sha256"))
+
+    def quat_keys(c, step, role, changed_by_load=None):
+        for n, ch in sorted(c[step]["sets"][role]["channels"].items()):
+            for li, layer in enumerate(ch["keys"]):
+                for ki, k in enumerate(layer):
                     if isinstance(k[1], list) and len(k[1]) == 4:
-                        return k
+                        prep = c["SAVED"]["sets"][role]["channels"][n]["keys"][li][ki][1]
+                        if changed_by_load is None or (A0.sfm_reload(prep) != prep) == changed_by_load:
+                            return n, li, ki, k
         raise AssertionError("no quaternion key")
 
-    def nudge(steps, role="peer"):
-        def fn(c, f):
-            k = first_quat(c, role)
-            k[1][0] = k[1][0] + steps * 2.0 ** -23
-        return fn
-    variant("one_float32_step_reload_rounding_is_accepted", nudge(1), "AUTOMATED PASS")
-    variant("one_step_rounding_on_the_destination_is_accepted", nudge(1, "target"), "AUTOMATED PASS")
-    variant("two_steps_are_not_reload_rounding", nudge(2), "INCOMPLETE", "PREP")
+    def base_key(fn, role="peer", changed_by_load=None):
+        def mutate(c, f):
+            fn(c, quat_keys(c, "BASE", role, changed_by_load))
+        return mutate
+
+    def step_off(c, nk):
+        nk[3][1][0] = nk[3][1][0] + 2.0 ** -23
+
+    def not_reloaded(c, nk):
+        n, li, ki, k = nk
+        k[1] = list(c["SAVED"]["sets"]["peer"]["channels"][n]["keys"][li][ki][1])
+
+    def sign_flip(c, nk):
+        nk[3][1] = [-x for x in nk[3][1]]
+    variant("a_key_one_step_off_the_load_function_is_incomplete", base_key(step_off), "INCOMPLETE", "PREP")
+    variant("a_key_one_step_off_on_the_destination_is_incomplete", base_key(step_off, "target"), "INCOMPLETE",
+            "PREP")
+    variant("a_key_the_load_would_change_left_unchanged_is_incomplete", base_key(not_reloaded, changed_by_load=True),
+            "INCOMPLETE", "PREP")
+    variant("a_sign_flipped_key_is_not_the_loader_transformation", base_key(sign_flip), "INCOMPLETE", "PREP")
 
     def key_time(c, f):
-        first_quat(c, "peer")[0] += 1
-    variant("a_changed_key_time_is_not_reload_rounding", key_time, "INCOMPLETE", "PREP")
+        quat_keys(c, "BASE", "peer")[3][0] += 1
+    variant("a_changed_key_time_is_incomplete", key_time, "INCOMPLETE", "PREP")
+
+    def key_count(c, f):
+        n, li, ki, k = quat_keys(c, "BASE", "peer")
+        c["BASE"]["sets"]["peer"]["channels"][n]["keys"][li].append(list(k))
+    variant("a_changed_key_count_is_incomplete", key_count, "INCOMPLETE", "PREP")
+
+    def vector_value(c, f):
+        for n, ch in sorted(c["BASE"]["sets"]["peer"]["channels"].items()):
+            for layer in ch["keys"]:
+                for k in layer:
+                    if isinstance(k[1], list) and len(k[1]) == 3:
+                        k[1][0] += 2.0 ** -23
+                        return
+        raise AssertionError("no vector key")
+    variant("a_changed_non_quaternion_value_is_incomplete", vector_value, "INCOMPLETE", "PREP")
 
     def missing(c, f):
         for step in ("NAV", "UNDO", "REDO", "NOOP", "UNDO2", "ABORT"):
@@ -428,10 +467,56 @@ def section_verdicts(root):
     variant("another_build_is_incomplete", wrong_build, "INCOMPLETE", "EVIDENCE")
 
 
+RUN2_KEYS = os.path.join(HERE, "run2_reload_keys.json")
+RUN2_KEYS_SHA256 = "7d2fea51c52ca006597a832bd8ad5399fb4b7aa4b1678a70662b94fa07f9bb9d"
+
+
+def section_run2_reload(root):
+    """Run 2's real save/reopen transition (SAVED and BASE of the three sets): every one of the 618 quaternion keys is
+    exactly the measured load function of its saved value; an unrelated alteration is not."""
+    import s1f_analyze as A
+    raw = io.open(RUN2_KEYS, "rb").read()
+    check("run2.reload_keys_match_their_pin", hashlib.sha256(raw).hexdigest() == RUN2_KEYS_SHA256)
+    data = json.loads(raw.decode("utf-8"))
+    total = changed = agree = 0
+    for role in A.ROLES:
+        for n, ch in data["SAVED"]["sets"][role]["channels"].items():
+            for li, layer in enumerate(ch["keys"]):
+                for ki, k in enumerate(layer):
+                    if isinstance(k[1], list) and len(k[1]) == 4:
+                        b = data["BASE"]["sets"][role]["channels"][n]["keys"][li][ki][1]
+                        total += 1
+                        changed += b != k[1]
+                        agree += A.sfm_reload(k[1]) == T.sfm_reload(k[1]) == b
+    check("run2.618_quaternion_keys_165_changed_all_exactly_the_load_function", (total, changed, agree) == (
+        618, 165, 618), (total, changed, agree))
+    results = dict((r, A.reopened_as_prepared(data["SAVED"], data["BASE"], r)) for r in A.ROLES)
+    check("run2.analyzer_accepts_the_observed_reopen", all(v[0] for v in results.values()) and sum(
+        v[1] for v in results.values()) == 165, dict((r, v[2]) for r, v in results.items()))
+    for label, where in (("quaternion", 4), ("vector", 3)):
+        bad = copy.deepcopy(data)
+        done = []
+        for n, ch in sorted(bad["BASE"]["sets"]["target"]["channels"].items()):
+            for layer in ch["keys"]:
+                for k in layer:
+                    if not done and isinstance(k[1], list) and len(k[1]) == where:
+                        k[1][1] = k[1][1] + 2.0 ** -20
+                        done.append(n)
+        ok = A.reopened_as_prepared(bad["SAVED"], bad["BASE"], "target")
+        check("run2.an_unrelated_%s_key_alteration_is_rejected" % label, done and not ok[0] and ok[2] == done,
+              (done, ok))
+    old = copy.deepcopy(data)
+    for role in A.ROLES:
+        for n, ch in old["BASE"]["sets"][role]["channels"].items():
+            ch["keys"] = copy.deepcopy(old["SAVED"]["sets"][role]["channels"][n]["keys"])
+    check("run2.an_unrenormalized_reopen_is_rejected", not all(
+        A.reopened_as_prepared(old["SAVED"], old["BASE"], r)[0] for r in A.ROLES))
+
+
 def main():
     root = tempfile.mkdtemp(prefix="s1f_kit_")
     try:
-        for fn in (section_capture, section_verdicts):
+        for fn in (section_capture, section_verdicts, section_run2_reload):
             try:
                 fn(root)
             except Exception:

@@ -21,6 +21,7 @@ import io
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -900,6 +901,440 @@ def section_window(app, ns, reg, fx, root):
         ns["PROD_POSE_REGISTRY_MODE"] = mode
 
 
+# ---------------------------------------------------------------------------
+# N. Astra's numerical compatibility ruling (run 2): bounded rotation equivalence of the three static constraint
+#    rotation offsets in the saved-record comparison, and structural constraint matching
+# ---------------------------------------------------------------------------
+
+RUN2_RECORD = os.path.join(_THIS_DIR, "fixtures", "f01_body", "fox_run2_s1_fox_record.json")
+RUN2_RECORD_SHA256 = "da8ca5283583ebb89172a1f1700e4cff4f27c43fac36d7d615db857e514579e7"
+RUN2_CANDIDATE_COMMIT = "94f21df"     # CPM 1753bdba..., the build run 2 used (qualification differs in one line)
+RUN2_CANDIDATE_SHA256 = u"1753bdbaeb1544aa98679c89b9c4cc65b51861c40fb0975d9d5f315ca8f43baa"
+# The paths of run 2's native refusal (process B log, PROD_POSE_BODY-refused, rig-differs; truncated at 16 there).
+RUN2_NATIVE_PATHS = [u"/constraints/%s/solver/%s/value/%d" % (c, f, i) for c, f in (
+    (4, u"startOffset"), (5, u"midOffset"), (6, u"midOffset"), (6, u"startOffset")) for i in range(4)]
+ROTATION_FIELDS = ((u"solver", u"startOffset"), (u"solver", u"midOffset"), (u"offsets", u"oOffset"))
+
+
+def sfm_reload(q):
+    """Test model of SFM's session load (measured on run 2, all 618 quaternion keys, independently verified by Astra):
+    q * f32(1 / f32(sqrt(q.q))), the dot product summed in order in float32. Not CPM's rule."""
+    f = B.f32
+    s = f(q[0] * q[0])
+    for c in q[1:]:
+        s = f(s + f(c * c))
+    inv = f(1.0 / f(math.sqrt(s)))
+    return [f(c * inv) for c in q]
+
+
+def reload_world(w, times=1):
+    """A session save and reopen of a fake scene: every stored quaternion (attributes and log keys) renormalized."""
+    for _ in range(times):
+        for el in list(w.elements.values()):
+            for k, v in list(el.attrs.items()):
+                if isinstance(v, FB.Quaternion):
+                    el.attrs[k] = FB.Quaternion(*sfm_reload([v.x, v.y, v.z, v.w]))
+            for key in getattr(el, "keys", None) or [] if isinstance(el, FB.Layer) else []:
+                if isinstance(key[1], FB.Quaternion):
+                    key[1] = FB.Quaternion(*sfm_reload(FB.plain(key[1])))
+    w.evaluate()
+
+
+def run2_namespace():
+    """The run 2 candidate CPM (1753bdba...) from Git, for the teeth checks."""
+    src = subprocess.check_output(["git", "-C", core._REPO_ROOT, "show", "%s:cpm/app/SFM_Character_Preset_Manager.py"
+                                   % RUN2_CANDIDATE_COMMIT])
+    fd, path = tempfile.mkstemp(suffix="_run2_cpm.py")
+    with os.fdopen(fd, "wb") as f:
+        f.write(src)
+    saved_path, saved_out = route.APP_PATH, sys.stdout
+    try:
+        route.APP_PATH = path
+        sys.stdout = io.StringIO() if sys.version_info[0] >= 3 else io.BytesIO()
+        old = B.live_namespace(route.AppSource(path))
+    finally:
+        route.APP_PATH = saved_path
+        sys.stdout = saved_out
+    return old, core.sha(core.read(path))
+
+
+def rows_fields(desc):
+    for i, row in enumerate(desc[u"constraints"]):
+        for group, name in ROTATION_FIELDS:
+            f = (row.get(group) or {}).get(name)
+            if isinstance(f, dict) and f.get(u"present"):
+                yield i, group, name, f
+
+
+def reloaded_descriptor(desc, times=1):
+    out = copy.deepcopy(desc)
+    for _ in range(times):
+        for i, group, name, f in rows_fields(out):
+            f[u"value"] = sfm_reload(f[u"value"])
+    return out
+
+
+def axis_angle(axis, degrees):
+    n = math.sqrt(sum(c * c for c in axis))
+    h = math.radians(degrees) / 2.0
+    return [axis[0] / n * math.sin(h), axis[1] / n * math.sin(h), axis[2] / n * math.sin(h), math.cos(h)]
+
+
+def compare(ns, saved, live):
+    return outcome(lambda: ns["prod_body_compare_descriptor"](saved, live))
+
+
+def last_log(ns, tag):
+    lines = [l for l in ns["LOG"] if tag in l]
+    return lines[-1] if lines else u""
+
+
+def refusal_diagnostic(ns):
+    line = last_log(ns, u"BODY-refused")
+    try:
+        detail = json.loads(line[line.index(u"{"):])[u"detail"]
+        return json.loads(detail[detail.index(u"): ") + 3:].rstrip())
+    except Exception:
+        return None
+
+
+def section_rotation(ns, reg, fx, item):
+    old, old_sha = run2_namespace()
+    check("N.teeth_build_is_the_run2_candidate", old_sha == RUN2_CANDIDATE_SHA256, old_sha)
+    raw = core.read(RUN2_RECORD)
+    check("N.run2_record_matches_its_pin", core.sha(raw) == RUN2_RECORD_SHA256, core.sha(raw))
+    record = json.loads(raw.decode("utf-8"))
+    saved = record[u"pose"][u"regions"][u"full_body"][u"descriptor"]
+    pristine = copy.deepcopy(saved)
+    limit = ns["PROD_BODY_ROTATION_LIMIT_DEG"]
+    check("N.contract_constants", limit == 0.0005 and ns["PROD_BODY_ROTATION_NORM_LIMIT"] == 2.0 ** -19 and
+          [tuple(f) for f in ns["PROD_BODY_ROTATION_FIELDS"]] == list(ROTATION_FIELDS))
+
+    # 1. Replay of run 2: SFM's load changes exactly the five offsets; the run 2 build refuses with the native paths;
+    #    the corrected comparison admits them, against the unchanged saved record.
+    live = reloaded_descriptor(saved)
+    changed = [(i, name) for (i, g, name, f), (_, _, _, h) in zip(rows_fields(saved), rows_fields(live))
+               if f[u"value"] != h[u"value"]]
+    check("N.replay_sfm_load_changes_exactly_the_five_run2_offsets", changed == [
+        (4, u"startOffset"), (5, u"midOffset"), (6, u"startOffset"), (6, u"midOffset"), (35, u"oOffset")], changed)
+    got = compare(old, saved, live)
+    paths = re.findall(r"/constraints/\d+/\w+/\w+/value/\d", got[2] if got[0] != "ok" else u"") if got[0] != "ok" \
+        else []
+    logged = re.findall(r"/constraints/\d+/\w+/\w+/value/\d", last_log(old, u"BODY-refused"))
+    check("N.replay_teeth_the_run2_build_refuses_with_the_native_paths", got[0] != "ok" and got[1] == u"rig-differs"
+          and logged == RUN2_NATIVE_PATHS, (got[:2], logged))
+    del ns["LOG"][:]
+    got = compare(ns, saved, live)
+    eq = last_log(ns, u"BODY-rotation-equivalent")
+    check("N.replay_corrected_comparison_admits_the_reloaded_rig", got[0] == "ok" and u'"count": 5' in eq and
+          u'"limit_deg": 0.0005' in eq, (got, eq))
+    angles = [ns["prod_body_rotation_angle"](f[u"value"], h[u"value"]) for (i, g, n, f), (_, _, _, h) in zip(
+        rows_fields(saved), rows_fields(live))]
+    check("N.replay_measured_angles_are_float32_rounding", 0.0 < max(angles) < 1e-4, max(angles))
+    check("N.replay_never_modifies_the_saved_record", saved == pristine)
+
+    # 2. Repeated loads (including a two-cycle), always against the original saved value; no accumulation.
+    for k in (2, 3, 6):
+        check("N.repeated_load_%d_times_is_admitted_against_the_record" % k,
+              compare(ns, saved, reloaded_descriptor(saved, k))[0] == "ok")
+    rng = __import__("random").Random(7)
+    cycle = None
+    for _ in range(20000):
+        q = axis_angle([rng.uniform(-1, 1), rng.uniform(-1, 1), rng.uniform(-1, 1)], rng.uniform(1, 179))
+        q = [B.f32(c * (1.0 + rng.gauss(0.0, 3e-7))) for c in q]
+        x1 = sfm_reload(q)
+        x2 = sfm_reload(x1)
+        if x2 != x1 and sfm_reload(x2) == x1:
+            cycle = q
+            break
+    check("N.a_real_float32_two_cycle_exists", cycle is not None)
+    if cycle is not None:
+        two = copy.deepcopy(saved)
+        two[u"constraints"][4][u"solver"][u"startOffset"][u"value"] = cycle
+        two_saved = copy.deepcopy(two)
+        ok = all(compare(ns, two_saved, reloaded_descriptor(two, k))[0] == "ok" for k in range(1, 7))
+        check("N.two_cycle_loads_admitted_against_the_original_value", ok and two == two_saved)
+    axis = [0.3, -0.5, 0.8]
+    step = axis_angle(axis, 0.0003)
+    drift = copy.deepcopy(saved)
+    target = drift[u"constraints"][4][u"solver"][u"startOffset"]
+    target[u"value"] = list(FB.qmul(step, target[u"value"]))
+    check("N.one_drift_step_within_the_bound_is_admitted", compare(ns, saved, drift)[0] == "ok")
+    target[u"value"] = list(FB.qmul(step, target[u"value"]))
+    got = compare(ns, saved, drift)
+    check("N.cumulative_drift_beyond_the_bound_refuses_against_the_record", got[0] != "ok" and
+          got[1] == u"rig-differs", got)
+
+    # 3. Sign-equivalent static offsets are the same rotation.
+    neg = copy.deepcopy(saved)
+    for i, g, n, f in rows_fields(neg):
+        f[u"value"] = [-c for c in f[u"value"]]
+    check("N.sign_equivalent_offsets_are_admitted", compare(ns, saved, neg)[0] == "ok")
+    check("N.sign_equivalent_reloaded_offsets_are_admitted", compare(ns, saved, reloaded_descriptor(neg))[0] == "ok")
+
+    # 4. The angular boundary (inclusive), the formula, and rotations near 180 degrees.
+    angle = ns["prod_body_rotation_angle"]
+    a = axis_angle([1.0, 2.0, 3.0], 40.0)
+    ref = math.degrees(2.0 * math.acos(min(1.0, abs(sum(x * y for x, y in zip(a, axis_angle([1.0, 2.0, 3.0],
+                                                                                             70.0)))))))
+    check("N.formula_matches_the_reference_angle", abs(angle(a, axis_angle([1.0, 2.0, 3.0], 70.0)) - 30.0) < 1e-9 and
+          abs(ref - 30.0) < 1e-6)
+    check("N.formula_is_stable_near_zero", 0.0 < angle(a, list(FB.qmul(axis_angle([0, 0, 1], 1e-7), a))) < 2e-7)
+
+    def with_offset(base, value):
+        d = copy.deepcopy(saved)
+        d[u"constraints"][4][u"solver"][u"startOffset"][u"value"] = base
+        e = copy.deepcopy(saved)
+        e[u"constraints"][4][u"solver"][u"startOffset"][u"value"] = value
+        return d, e
+    for base_deg, label in ((40.0, u"general"), (179.9999, u"near_180")):
+        base = axis_angle([1.0, 2.0, 3.0], base_deg)
+        for delta, want in ((0.0004999, "ok"), (0.0005001, "refused")):
+            moved = axis_angle([1.0, 2.0, 3.0], base_deg + delta)
+            if label == u"near_180":
+                moved = [-c for c in moved]            # past 180: the w >= 0 representative has the other sign
+            got = compare(ns, *with_offset(base, moved))
+            check("N.%s_rotation_%s_degrees_%s" % (label, delta, "admitted" if want == "ok" else "refused"),
+                  (got[0] == "ok") == (want == "ok") and (want == "ok" or got[1] == u"rig-differs"), got[:2])
+        exact = axis_angle([1.0, 2.0, 3.0], base_deg + 0.0005)
+        at = angle(base, exact)
+        try:
+            ns["PROD_BODY_ROTATION_LIMIT_DEG"] = at
+            inclusive = compare(ns, *with_offset(base, exact))[0] == "ok"
+            ns["PROD_BODY_ROTATION_LIMIT_DEG"] = at * (1.0 - 1e-12)
+            beyond = compare(ns, *with_offset(base, exact))[0] != "ok"
+        finally:
+            ns["PROD_BODY_ROTATION_LIMIT_DEG"] = limit
+        check("N.%s_boundary_is_inclusive" % label, inclusive and beyond and abs(at - 0.0005) < 1e-9, at)
+    for deg in (0.01, 3.0, 90.0):
+        moved = list(FB.qmul(axis_angle([0.0, 1.0, 0.0], deg), saved[u"constraints"][5][u"solver"][u"midOffset"][
+            u"value"]))
+        d = copy.deepcopy(saved)
+        d[u"constraints"][5][u"solver"][u"midOffset"][u"value"] = moved
+        got = compare(ns, saved, d)
+        check("N.materially_changed_rotation_%s_degrees_refuses" % deg, got[0] != "ok" and got[1] == u"rig-differs",
+              got[:2])
+
+    # 5. Validity: four finite numbers, near-unit length on both sides, matching presence and representation.
+    unit = saved[u"constraints"][4][u"solver"][u"startOffset"][u"value"]
+    n_unit = math.sqrt(sum(c * c for c in unit))
+    bad_values = (
+        (u"zero", [0.0, 0.0, 0.0, 0.0]), (u"nan", [float("nan"), 0.0, 0.0, 1.0]),
+        (u"infinite", [float("inf"), 0.0, 0.0, 1.0]), (u"bool", [True, 0.0, 0.0, 0.0]),
+        (u"text", [u"x", 0.0, 0.0, 1.0]), (u"three", [0.0, 0.0, 1.0]), (u"five", [0.0, 0.0, 0.0, 1.0, 0.0]),
+        (u"scalar", 1.0), (u"rescaled_same_rotation_norm_1_001", [c * 1.001 / n_unit for c in unit]),
+        (u"norm_beyond_the_envelope", [c * (1.0 + 2.0 ** -18) / n_unit for c in unit]),
+        (u"norm_below_the_envelope", [c * (1.0 - 2.0 ** -18) / n_unit for c in unit]))
+    for label, value in bad_values:
+        for side in (u"saved", u"live"):
+            d, e = copy.deepcopy(saved), copy.deepcopy(saved)
+            (d if side == u"saved" else e)[u"constraints"][4][u"solver"][u"startOffset"][u"value"] = value
+            got = compare(ns, d, e)
+            check("N.invalid_%s_on_the_%s_side_refuses" % (label, side), got[0] != "ok" and got[1] == u"rig-differs",
+                  got[:2])
+    d = copy.deepcopy(saved)
+    d[u"constraints"][4][u"solver"][u"startOffset"][u"value"] = [c * (1.0 + 2.0 ** -21) / n_unit for c in unit]
+    check("N.norm_within_the_envelope_is_admitted", compare(ns, saved, d)[0] == "ok")
+    d = copy.deepcopy(saved)
+    d[u"constraints"][4][u"solver"][u"startOffset"] = {u"present": False}
+    check("N.present_versus_absent_refuses", compare(ns, saved, d)[1] == u"rig-differs" and
+          compare(ns, d, saved)[1] == u"rig-differs")
+    check("N.both_absent_is_admitted", compare(ns, d, copy.deepcopy(d))[0] == "ok")
+    e = copy.deepcopy(saved)
+    del e[u"constraints"][4][u"solver"][u"startOffset"]
+    check("N.missing_field_refuses", compare(ns, saved, e)[1] == u"rig-differs")
+    e = copy.deepcopy(saved)
+    e[u"constraints"][4][u"solver"][u"startOffset"] = {u"value": unit}
+    check("N.malformed_field_refuses", compare(ns, saved, e)[1] == u"rig-differs")
+    e = copy.deepcopy(saved)
+    e[u"constraints"][4][u"solver"][u"startOffset"] = dict(e[u"constraints"][4][u"solver"][u"startOffset"], extra=1)
+    check("N.extra_field_member_refuses", compare(ns, saved, e)[1] == u"rig-differs")
+
+    # Diagnostics: constraint identity, field, raw values, norms, angle and limit.
+    del ns["LOG"][:]
+    d = copy.deepcopy(saved)
+    d[u"constraints"][6][u"solver"][u"midOffset"][u"value"] = list(FB.qmul(axis_angle([1, 0, 0], 2.0), d[
+        u"constraints"][6][u"solver"][u"midOffset"][u"value"]))
+    compare(ns, saved, d)
+    diag = refusal_diagnostic(ns)
+    row = diag[0] if diag else {}
+    check("N.refusal_reports_identity_field_values_norms_angle_and_limit", diag is not None and set(row) >= set([
+        u"constraint", u"field", u"saved", u"live", u"saved_norm", u"live_norm", u"angle_deg", u"limit_deg",
+        u"norm_limit", u"problem"]) and row[u"field"] == u"solver.midOffset" and u"rig_knee_R" in row[u"constraint"]
+        and abs(row[u"angle_deg"] - 2.0) < 1e-6 and row[u"limit_deg"] == 0.0005 and
+        row[u"saved"] == saved[u"constraints"][6][u"solver"][u"midOffset"][u"value"], diag)
+
+    # 6. Structural matching by (type, slaves, targets, pole).
+    perm = reloaded_descriptor(saved)
+    perm[u"constraints"].reverse()
+    check("N.permuted_constraint_enumeration_is_admitted", compare(ns, saved, perm)[0] == "ok")
+    rng.shuffle(perm[u"constraints"])
+    check("N.shuffled_constraint_enumeration_is_admitted", compare(ns, saved, perm)[0] == "ok")
+
+    # Value-dependent reordering: two rows whose full-JSON order (the descriptor's sort key) flips by a tiny change.
+    def orient(slave, x):
+        return {u"type": u"DmeRigOrientConstraintOperator", u"slaves": {u"slave": slave}, u"targets": [
+            u"handle:" + slave], u"pole": None, u"solver": {u"mode": {u"present": True, u"value": 0}},
+            u"offsets": {u"oOffset": {u"present": True, u"value": [x, 0.0, 0.0, math.sqrt(1.0 - x * x)]},
+                         u"vecOffset": {u"present": True, u"value": [0.0, 0.0, 0.0]}}}
+    key = lambda r: json.dumps(r, sort_keys=True)  # noqa: E731
+    pair_saved = dict(saved, constraints=sorted([orient(u"bone:A", 0.1), orient(u"bone:B", 0.1000001)], key=key))
+    pair_live = dict(saved, constraints=sorted([orient(u"bone:A", 0.1000002), orient(u"bone:B", 0.1000001)], key=key))
+    flipped = [r[u"slaves"][u"slave"] for r in pair_saved[u"constraints"]] != [
+        r[u"slaves"][u"slave"] for r in pair_live[u"constraints"]]
+    check("N.value_dependent_reordering_reproduced", flipped)
+    got_old = compare(old, pair_saved, pair_live)
+    check("N.value_dependent_reordering_teeth_run2_build_refuses", got_old[0] != "ok" and got_old[1] ==
+          u"rig-differs", got_old[:2])
+    check("N.value_dependent_reordering_is_admitted_by_identity", compare(ns, pair_saved, pair_live)[0] == "ok")
+
+    def mutated(fn, which=u"live"):
+        d = copy.deepcopy(saved)
+        fn(d)
+        return (saved, d) if which == u"live" else (d, saved)
+    ik = 4
+    cases = (
+        (u"duplicate_identity_live", lambda d: d[u"constraints"].append(copy.deepcopy(d[u"constraints"][ik])),
+         u"live"),
+        (u"duplicate_identity_saved", lambda d: d[u"constraints"].append(copy.deepcopy(d[u"constraints"][ik])),
+         u"saved"),
+        (u"missing_constraint", lambda d: d[u"constraints"].pop(ik), u"live"),
+        (u"extra_constraint", lambda d: d[u"constraints"].append(orient(u"bone:Extra", 0.0)), u"live"),
+        (u"changed_target", lambda d: d[u"constraints"][ik].__setitem__(u"targets", [u"handle:rig_hand_L"]),
+         u"live"),
+        (u"changed_pole", lambda d: d[u"constraints"][ik].__setitem__(u"pole", u"handle:rig_knee_R"), u"live"),
+        (u"changed_type", lambda d: d[u"constraints"][0].__setitem__(u"type", u"DmeRigPointConstraintOperator"),
+         u"live"),
+        (u"changed_slave", lambda d: d[u"constraints"][0][u"slaves"].__setitem__(u"slave", u"bone:Other"), u"live"),
+        (u"swapped_named_slave_slots", lambda d: d[u"constraints"][ik].__setitem__(u"slaves", dict(
+            (k, v) for k, v in zip(sorted(d[u"constraints"][ik][u"slaves"]), reversed([
+                d[u"constraints"][ik][u"slaves"][s] for s in sorted(d[u"constraints"][ik][u"slaves"])])))), u"live"),
+        (u"changed_pole_vector", lambda d: d[u"constraints"][ik][u"solver"].__setitem__(u"poleVector", {
+            u"present": True, u"value": [0.0, 1.0, 1e-7]}), u"live"),
+        (u"changed_mode", lambda d: d[u"constraints"][ik][u"solver"].__setitem__(u"mode", {
+            u"present": True, u"value": 1}), u"live"),
+        (u"changed_vec_offset", lambda d: d[u"constraints"][0][u"offsets"].__setitem__(u"vecOffset", {
+            u"present": True, u"value": [0.0, 5.245208740234375e-06, 1e-7]}), u"live"))
+    for label, fn, which in cases:
+        got = compare(ns, *mutated(fn, which))
+        check("N.%s_refuses" % label, got[0] != "ok" and got[1] == u"rig-differs", got[:2])
+    del ns["LOG"][:]
+    dup = copy.deepcopy(saved)
+    dup[u"constraints"].append(copy.deepcopy(dup[u"constraints"][ik]))
+    dup[u"constraints"][5][u"solver"][u"midOffset"][u"value"] = [0.0, 0.0, 0.0, 0.0]
+    got = compare(ns, saved, dup)
+    check("N.duplicates_refuse_before_any_numerical_comparison", got[0] != "ok" and u"duplicated" in
+          last_log(ns, u"BODY-refused"), last_log(ns, u"BODY-refused")[:200])
+    two_targets = copy.deepcopy(saved)
+    two_targets[u"constraints"][0][u"targets"] = [u"handle:a", u"handle:b"]
+    swapped = copy.deepcopy(two_targets)
+    swapped[u"constraints"][0][u"targets"] = [u"handle:b", u"handle:a"]
+    check("N.target_order_is_part_of_the_identity", compare(ns, two_targets, swapped)[1] == u"rig-differs")
+    check("N.the_rest_of_the_descriptor_stays_exact", compare(ns, saved, dict(saved, rig_name=u"@other"))[1] ==
+          u"rig-differs" and compare(ns, saved, dict(saved, model_ref=u"x.mdl"))[1] == u"rig-differs")
+
+    # 7. Live rigs: a reloaded destination applies and verifies; P2, Abort and P7 stay exact and independent.
+    check("N.fixture_holds_reload_unstable_offsets", any(
+        isinstance(v, FB.Quaternion) and sfm_reload([v.x, v.y, v.z, v.w]) != [v.x, v.y, v.z, v.w]
+        for el in world(fx, posed=False).elements.values() for v in el.attrs.values()))
+    source = placement_relative(use(ns, world(fx, posed=False)))
+    oreg, _ = B.registries(old)
+    w = world(fx, reload_world)
+    _, got = apply_(old, oreg, item, w)
+    refused("N.teeth_run2_build_refuses_a_reloaded_destination", got, u"rig-differs")
+    check("N.teeth_refusal_changes_nothing", no_mutation(w))
+    for times in (1, 3):
+        w = world(fx, lambda w, t=times: reload_world(w, t))
+        del ns["LOG"][:]
+        auth, got = apply_(ns, reg, item, w)
+        verdict = ns["prod_pose_deferred_verify"](dict(got[1][u"pending"], authorization=auth)) if \
+            got[0] == u"ok" and got[1].get(u"pending") else None
+        check("N.destination_reloaded_%d_times_applies_and_verifies" % times, verdict is not None and verdict.get(
+            u"phase") == u"committed-verified" and B.max_difference(placement_relative(w), source)[1] < 0.01 and any(
+            u"BODY-rotation-equivalent" in l for l in ns["LOG"]), (got[:2], verdict))
+
+    def negate_offsets(w):
+        for el in list(w.elements.values()):
+            for k in (u"startOffset", u"midOffset", u"oOffset"):
+                v = el.attrs.get(k)
+                if isinstance(v, FB.Quaternion):
+                    el.attrs[k] = FB.Quaternion(-v.x, -v.y, -v.z, -v.w)
+    w = world(fx, negate_offsets)
+    auth, got = apply_(ns, reg, item, w)
+    verdict = ns["prod_pose_deferred_verify"](dict(got[1][u"pending"], authorization=auth)) if \
+        got[0] == u"ok" and got[1].get(u"pending") else None
+    check("N.sign_flipped_destination_offsets_apply_and_verify", verdict is not None and verdict.get(u"phase") ==
+          u"committed-verified", (got[:2], verdict))
+
+    # P2: any change of a live offset after P1 (one float32 step, or even a sign flip) is stale; nothing written.
+    original = ns["prod_body_preflight"]
+    for label, change in ((u"one_float32_step", lambda v: [v.x + 2.0 ** -23, v.y, v.z, v.w]),
+                          (u"sign_flip", lambda v: [-v.x, -v.y, -v.z, -v.w])):
+        w = world(fx, reload_world)
+        ik_el = [el for op, el in w.ops if op["type"] == u"DmeRigIKConstraintOperator"][0]
+
+        def preflight_then_change(*args):
+            pre = original(*args)
+            v = ik_el.attrs[u"startOffset"]
+            ik_el.attrs[u"startOffset"] = FB.Quaternion(*change(v))
+            return pre
+        ns["prod_body_preflight"] = preflight_then_change
+        try:
+            _, got = apply_(ns, reg, item, w)
+        finally:
+            ns["prod_body_preflight"] = original
+        refused("N.p2_detects_a_%s_offset_change_after_p1" % label, got, u"stale")
+        check("N.p2_%s_writes_nothing" % label, not B.scene_writes(w))
+
+    # Abort restores the exact live baseline (the destination's own reloaded offsets, never the saved values).
+    w = world(fx, reload_world)
+    offsets = dict((el.h, dict((k, FB.plain(v)) for k, v in el.attrs.items() if isinstance(v, FB.Quaternion)))
+                   for el in w.elements.values())
+    before = B.all_keys(w)
+    w.fail_on_write = u"rig_spine_0_o"
+    _, got = apply_(ns, reg, item, w)
+    after_offsets = dict((el.h, dict((k, FB.plain(v)) for k, v in el.attrs.items() if isinstance(v, FB.Quaternion)))
+                         for el in w.elements.values())
+    check("N.abort_restores_the_exact_live_baseline", got[0] == u"ok" and got[1][u"phase"] == u"not-applied" and
+          B.all_keys(w) == before and after_offsets == offsets, got[:2])
+
+    # P7 stays an independent observation: a compatible (reloaded) rig whose evaluation is wrong is unverified.
+    w = world(fx, reload_world)
+    auth, got = apply_(ns, reg, item, w)
+    solve = w.solve_ik
+
+    def misbent(start, el, parent_world, parent_scale):
+        solve(start, el, parent_world, parent_scale)
+        w.set_world(start, start.wp, B.rotate(start.wq, [0.0, 0.0, 1.0], 10.0), parent_world, parent_scale)
+    w.solve_ik = misbent
+    w.evaluate()
+    verdict = ns["prod_pose_deferred_verify"](dict(got[1][u"pending"], authorization=auth))
+    check("N.compatible_rig_with_wrong_reproduction_is_committed_unverified", verdict.get(u"phase") ==
+          u"committed-unverified", verdict)
+
+    # Authored quaternion keys keep their exact values and signs (no rotation equivalence for keys).
+    def negate_keys(w):
+        for name in (u"rig_elbow_L_o", u"rig_hand_L_o"):
+            for k in w.channels[name].attrs["log"].layer.keys:
+                v = FB.plain(k[1])
+                k[1] = FB.Quaternion(-v[0], -v[1], -v[2], -v[3])
+    w = world(fx, lambda w: (reload_world(w), negate_keys(w)))
+    pole_before = w.keys(u"rig_elbow_L_o")
+    reference = FB.plain(w.channels[u"rig_hand_L_o"].attrs["log"].value_at(w.t_chan()))
+    others = [k for k in w.keys(u"rig_hand_L_o") if k[0] != w.t_chan()]
+    auth, got = apply_(ns, reg, item, w)
+    saved_value = item[u"record"][u"pose"][u"regions"][u"full_body"][u"orientations"][u"rig_hand_L_o"]
+    at_tick = [list(k[1]) for k in w.keys(u"rig_hand_L_o") if k[0] == w.t_chan()]
+    check("N.preserved_quaternion_keys_keep_their_exact_signs", got[0] == u"ok" and
+          w.keys(u"rig_elbow_L_o") == pole_before and
+          [k for k in w.keys(u"rig_hand_L_o") if k[0] != w.t_chan()] == others, got[:2])
+    # The written key is the saved rotation in the hemisphere of the destination's value at the tick (the qualified
+    # planner rule, prod_pose_hemisphere; unchanged): the destination's keys were negated, so it is written negated.
+    expected = list(ns["prod_pose_hemisphere"](list(saved_value), list(reference))[0])
+    check("N.written_quaternion_key_is_the_saved_value_in_the_destination_hemisphere", at_tick == [expected] and
+          expected == [-c for c in saved_value], (at_tick, saved_value, reference))
+
+
 FIXTURE_DATA = []
 KRYSTAL_RECORD = []
 
@@ -936,6 +1371,7 @@ def main():
             run("live_refusals", lambda: section_live_refusals(ns, reg, fx, lived[1]))
             run("transaction", lambda: section_transaction(ns, reg, fx, lived[1]))
             run("records", lambda: section_records(ns, reg, lived[1], legacy[0] if legacy else None))
+            run("rotation", lambda: section_rotation(ns, reg, fx, lived[1]))
         run("face", lambda: section_face(ns, reg, fx, root))
         run("window", lambda: section_window(app, ns, reg, fx, root))
     finally:

@@ -19,8 +19,8 @@ Gates:
   PREP       the recorded fixture preparation: Fox S and Fox D are the same model, both admitted by CPM's structural
              rig discovery with the same description; Fox D is posed and placed visibly differently; the saved
              session reopens with every channel of the three sets as prepared (BASE equals PREP): the same channels,
-             bindings, logs and key times, every value exact except quaternion key components, which may differ by
-             at most one float32 step (SFM's own reload rounding, measured in run 1: 1.19e-7)
+             bindings, logs, key counts and times, every non-quaternion value exact, and every quaternion key
+             exactly SFM's measured load renormalization of its SAVED value (sfm_reload; run 2, all 618 keys)
   SAVE       one version 2 structural rig record of Fox S (adapter structural_rig_v1), with the drafted written set;
              the CPM log reports the structural admission; Save read-only; the record selected in Pose Info at SAVED
              and selected again after the restart (BASE)
@@ -51,6 +51,7 @@ import json
 import math
 import os
 import re
+import struct
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -67,7 +68,10 @@ BAD_LOG = ("PROD_POSE_BODY-P7-unverified", "PROD_POSE_BODY-abort-unverified", "P
            "PROD_POSE_BODY-start-undo-uncertain", "PROD_POSE_BODY-finish-undo-uncertain", "recovery-unverified",
            "PROD_POSE_SCOPE-P7-unverified", "PROD_POSE_SCOPE-abort")
 FAULT_TEXT = "qualification fault injected at after-writes"
-RELOAD_STEP = 2.0 ** -23       # one float32 step for a quaternion component in [0.5, 1): run 1's measured rounding
+# SFM's session load (Fox run 2, verified independently by Astra on all 618 quaternion keys of the SAVED and BASE
+# observations): every stored quaternion q becomes its float32 renormalization q * f32(1 / f32(sqrt(q.q))), the dot
+# product summed in order in float32. This is a fixture-specific loader check for the one recorded save/reopen
+# transition, not CPM's rotation compatibility rule (a sign change may be the same rotation without being this).
 # Usable reproduction (the designer: faithful, usable posture, not exact matching of harmless secondary effects).
 POSTURE_POSITION, POSTURE_ANGLE = 0.05, 0.5
 # Unchanged quantities (placement, offsets, peers): the P7 observation tolerances.
@@ -190,9 +194,23 @@ def max_difference(a, b, names):
     return dp, dq
 
 
+def f32(x):
+    return struct.unpack("<f", struct.pack("<f", float(x)))[0]
+
+
+def sfm_reload(q):
+    """The measured float32 renormalization SFM applies to a stored quaternion when it loads a session."""
+    s = f32(q[0] * q[0])
+    for c in q[1:]:
+        s = f32(s + f32(c * c))
+    inv = f32(1.0 / f32(math.sqrt(s)))
+    return [f32(c * inv) for c in q]
+
+
 def reopened_as_prepared(prep, base, role):
-    """BASE against PREP across the restart: identical channels and frames (bindings, logs, key times); key values
-    exact, except quaternion components within one float32 step. Returns (ok, rounded keys, problems)."""
+    """BASE against the last Process A capture (SAVED) across the restart: identical channels and frames (bindings, logs, key counts and times);
+    every quaternion key equals SFM's measured load renormalization of its PREP value exactly; every other value
+    exact. Returns (ok, renormalized keys that changed, problems)."""
     a, b = chans(prep, role), chans(base, role)
     problems, rounded = [], 0
     if sorted(a) != sorted(b):
@@ -207,12 +225,14 @@ def reopened_as_prepared(prep, base, role):
             continue
         for la, lb in zip(ka, kb):
             for x, y in zip(la, lb):
-                if x[1] == y[1]:
-                    continue
-                if isinstance(x[1], list) and len(x[1]) == 4 and isinstance(y[1], list) and len(y[1]) == 4 and \
-                        all(abs(float(u) - float(v)) <= RELOAD_STEP for u, v in zip(x[1], y[1])):
-                    rounded += 1
-                else:
+                if isinstance(x[1], list) and len(x[1]) == 4:
+                    if not (isinstance(y[1], list) and len(y[1]) == 4 and all(
+                            not isinstance(c, bool) and isinstance(c, (int, float)) for c in x[1] + y[1]) and
+                            [float(c) for c in y[1]] == sfm_reload([float(c) for c in x[1]])):
+                        problems.append(n)
+                    elif x[1] != y[1]:
+                        rounded += 1
+                elif x[1] != y[1]:
                     problems.append(n)
     return not problems, rounded, problems[:8]
 
@@ -355,8 +375,13 @@ def evaluate(R):
        {"posture_angle": dq, "placement_distance": dist(hs[0], ht[0]), "placement_angle": angle(hs[1], ht[1])})
     if not refused:
         base = cap["BASE"]
-        reopened = dict((r, reopened_as_prepared(prep, base, r)) for r in ROLES)
-        R.info["reload_rounded_keys"] = dict((r, v[1]) for r, v in reopened.items())
+        # The save/reopen transition: SAVED (the last Process A capture; save.read_only keeps it equal to PREP)
+        # against BASE (the first capture after the restart).
+        reopened = dict((r, reopened_as_prepared(cap["SAVED"], base, r)) for r in ROLES)
+        R.info["reload_renormalized_keys"] = dict((r, v[1]) for r, v in reopened.items())
+        # Information only (never a gate): the descriptor digests, where a descriptor-level drift shows.
+        R.info["descriptor_sha256"] = dict((s, dict((r, adm(cap[s], r).get("descriptor_sha256")) for r in ROLES))
+                                           for s in steps)
         Pp("prep.saved_session_reopens_as_prepared", all(v[0] for v in reopened.values()),
            dict((r, v[2]) for r, v in reopened.items()))
 
