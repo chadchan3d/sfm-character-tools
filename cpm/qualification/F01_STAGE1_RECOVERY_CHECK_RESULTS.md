@@ -98,6 +98,29 @@ Also under `<Q>`:
 - `evidence/library_Q.json`: exactly the two seeded files;
 - `evidence/restore.json`, `seed.json` and `library_cleanup.json`.
 
+## 6. Disposition: Stage 1 CLOSED (2026-11-19)
+
+**Owner/Designer decision** ("F-01 Stage 1 — Final Qualification Disposition"): **ACCEPT. NO REPEAT TEST.**
+
+Stage 1 is **CLOSED — ACCEPTED BY OWNER/DESIGNER ADJUDICATION**, supported by:
+- run 3's successful native Save, Apply, posture, navigation, Undo/Redo and no-op evidence
+  (`F01_STAGE1_FOX_RUN3_FINDINGS.md`);
+- this check's two verified Abort cases (Redo cleared and exact);
+- the documented BASE selection exception (section 2): procedural, the selected pose confirmed before Apply;
+- exact installation and library restoration.
+
+**What stays as it was:**
+- This check's automated verdict stays **INCOMPLETE** (59/60), and run 3's stays **INCOMPLETE** (`561f1b09…`). Neither
+  is modified or reinterpreted.
+- All evidence is preserved unchanged.
+- No further Fox test was run. The analyzer and the product code were not changed for the selection discrepancy.
+
+The Owner's visual acceptance was PASS, and restoration was RESTORED.
+
+**Next milestone:** prepare Stage 2, Tails' declared JIGGLE leaf-helper compatibility, following Astra's existing
+ruling. The proposal is `F01_BROAD_FULL_BODY_COMPATIBILITY_REVIEW.md` Option 2 and question F.3. Implementation is
+not authorized.
+
 ## 5. Not done
 
 - No additional native test.
