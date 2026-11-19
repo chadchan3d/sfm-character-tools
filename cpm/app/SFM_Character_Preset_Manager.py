@@ -32969,7 +32969,11 @@ class ProdWindow(QtGui.QDialog):
                 exc,
                 ProdRecoveryUnverifiedError,
             ):
-                title = "Recovery could not be verified"
+                title = (
+                    PROD_POSE_TITLE_RECOVERY_UNVERIFIED
+                    if label in PROD_POSE_SCENE_LABELS
+                    else "Recovery could not be verified"
+                )
                 message = raw
 
             elif commit_state[
@@ -36303,6 +36307,19 @@ class ProdWindow(QtGui.QDialog):
                 self.set_status(
                     PROD_POSE_MESSAGES[u"no-op"]
                 )
+            elif phase == u"not-applied" and result.get(u"redo_cleared") is True:
+                self.set_status(
+                    PROD_POSE_MESSAGES[u"not-applied-redo-cleared"],
+                    u"error",
+                )
+                try:
+                    tool_warning_message(
+                        self,
+                        PROD_POSE_TITLE_NOT_APPLIED,
+                        PROD_POSE_MESSAGES[u"not-applied-redo-cleared"],
+                    )
+                except Exception:
+                    pass
             elif phase == u"not-applied":
                 self.set_status(
                     PROD_POSE_MESSAGES[u"not-applied"],
@@ -41966,8 +41983,9 @@ PROD_POSE_MESSAGES = {
     u"record-changed": u"This pose changed on disk. Select it again.",
     u"invalid-file": u"This pose file can't be read. It won't be applied.",
     u"not-applied": u"The pose couldn't be applied. Nothing was changed.",
-    u"recovery-unverified": u"CPM couldn't confirm the state of the scene after a problem applying \"%(name)s\". "
-                            u"Check the character's pose in SFM. Pose changes are paused until SFM is restarted.",
+    u"not-applied-redo-cleared": u"Your character was restored, but SFM cleared your Redo history.",
+    u"recovery-unverified": u"CPM couldn't confirm that all changes were undone. Check your character before "
+                            u"continuing. Restart SFM to use pose tools again.",
     u"blocked-after-recovery": u"Pose changes are paused because CPM couldn't confirm an earlier result. Check the "
                                u"character's pose in SFM, then restart SFM to use poses again.",
     u"committed-unverified": u"Pose keys were written, but CPM couldn't verify the result. Check the character's pose "
@@ -41981,6 +41999,9 @@ PROD_POSE_MESSAGES = {
     u"saved": u"Pose saved: %(name)s.",
     u"foreign-locked": u"Poses from another character's library can't be changed here.",
 }
+# Dialog titles (Designer disposition of Fox run 3).
+PROD_POSE_TITLE_NOT_APPLIED = u"Pose not applied"
+PROD_POSE_TITLE_RECOVERY_UNVERIFIED = u"Pose operation stopped"
 
 
 def prod_pose_parts_phrase(regions):
@@ -43795,6 +43816,27 @@ def prod_pose_undo_problems(u):
     return problems
 
 
+def prod_pose_abort_undo_check(undo, base):
+    """The Undo state after AbortUndoableOperation only (Designer disposition of Fox run 3): never P2, the no-op
+    check or P7, which stay exact. SFM discards a pending Redo entry when a new action starts, even one that is then
+    aborted (measured natively by OT1 and Fox run 3), so the state must be exactly the P1 baseline, or differ from it
+    only in that a Redo entry pending at P1 (can_redo true, a non-empty description) is now gone (can_redo false, an
+    empty description), with Undo enabled and its availability and top entry unchanged. Any missing or unreadable
+    observation, or any other difference, is a problem. Returns (problems, redo_cleared)."""
+    problem = [u"Undo history changed or unreadable"]
+    if not isinstance(undo, dict) or not isinstance(base, dict) or prod_pose_undo_problems(undo) or \
+            prod_pose_undo_problems(base):
+        return problem, False
+    if undo == base:
+        return [], False
+    pending = base[u"can_redo"] is True and base[u"redo_desc"] != u""
+    cleared = dict(base)
+    cleared[u"can_redo"], cleared[u"redo_desc"] = False, u""
+    if pending and undo == cleared and undo[u"redo_desc"] == u"" and undo[u"can_redo"] is False:
+        return [], True
+    return problem, False
+
+
 # --- one region, fully checked (section 5.4) -----------------------------------------------------------------------
 
 def prod_pose_region_state(row, profile):
@@ -44198,7 +44240,7 @@ def prod_pose_preflight(identity, authorization, item, reg):
     return out
 
 
-def prod_pose_same_state(identity, authorization, pre, label):
+def prod_pose_same_state(identity, authorization, pre, label, abort_record=None):
     """P2 / Abort: a fresh read equals the P1 state exactly (identities, time, authored, observed, layers, Undo).
     Returns the problems (empty: identical); unreadable evidence is a problem, never 'unchanged'."""
     problems = []
@@ -44224,9 +44266,22 @@ def prod_pose_same_state(identity, authorization, pre, label):
                 if now[f] != snap[f]:
                     problems.append(u"%s %s changed" % (cname, f))
     undo = prod_pose_undo_state(dm())
-    if prod_pose_undo_problems(undo) or undo != pre[u"undo"]:
-        problems.append(u"Undo history changed or unreadable")
+    if abort_record is None:
+        if prod_pose_undo_problems(undo) or undo != pre[u"undo"]:
+            problems.append(u"Undo history changed or unreadable")
+    else:
+        undo_problems, abort_record[u"redo_cleared"] = prod_pose_abort_undo_check(undo, pre[u"undo"])
+        problems.extend(undo_problems)
     return problems
+
+
+def prod_pose_not_applied(exc, redo_cleared):
+    """A verified Abort's result. `redo_cleared` (present only when true): the restoration was verified and SFM
+    discarded the Redo entry that was pending at P1."""
+    result = {u"phase": u"not-applied", u"reason": repr(exc)}
+    if redo_cleared:
+        result[u"redo_cleared"] = True
+    return result
 
 
 def prod_pose_apply(identity, authorization, item, reg, phase_callback=None):
@@ -44319,11 +44374,14 @@ def prod_pose_apply(identity, authorization, item, reg, phase_callback=None):
             except Exception as abort_exc:
                 prod_pose_log(u"abort-failed", {u"error": repr(abort_exc)})
                 raise ProdRecoveryUnverifiedError(PROD_POSE_MESSAGES[u"recovery-unverified"] % {u"name": name})
-            problems = prod_pose_same_state(identity, authorization, pre, u"abort")
-            prod_pose_log(u"abort-verified" if not problems else u"abort-unverified", {u"problems": problems[:16]})
+            abort_record = {}
+            problems = prod_pose_same_state(identity, authorization, pre, u"abort", abort_record=abort_record)
+            redo_cleared = not problems and abort_record.get(u"redo_cleared") is True
+            prod_pose_log(u"abort-verified" if not problems else u"abort-unverified",
+                          {u"problems": problems[:16], u"redo_cleared": redo_cleared})
             if problems:
                 raise ProdRecoveryUnverifiedError(PROD_POSE_MESSAGES[u"recovery-unverified"] % {u"name": name})
-            return {u"phase": u"not-applied", u"reason": repr(exc)}
+            return prod_pose_not_applied(exc, redo_cleared)
         # Astra S1 final: FinishUndo raised. Whether the transaction closed is unknown, and a matching Undo
         # description (possibly an older entry with the same name) is no evidence of commitment: never committed,
         # no P7, no Abort or Undo. The exception and the observed Undo state are kept as evidence.
@@ -45867,7 +45925,7 @@ def prod_body_preflight(identity, authorization, item, reg):
             u"row": row}
 
 
-def prod_body_same_state(identity, authorization, pre):
+def prod_body_same_state(identity, authorization, pre, abort_record=None):
     """P2 / Abort: a fresh read equals the P1 state exactly (identities, time, classification, authority, authored,
     observed, the planned layers, the gate, Undo) and the P1 evaluated obligations still hold: A1 against the saved
     FK positions, and every written channel's owner evaluated at the same channel value as at P1 (after an Abort:
@@ -45916,8 +45974,12 @@ def prod_body_same_state(identity, authorization, pre):
     except Exception as exc:
         problems.append(u"gate refused %r" % (exc,))
     undo = prod_pose_undo_state(dm())
-    if prod_pose_undo_problems(undo) or undo != pre[u"undo"]:
-        problems.append(u"Undo history changed or unreadable")
+    if abort_record is None:
+        if prod_pose_undo_problems(undo) or undo != pre[u"undo"]:
+            problems.append(u"Undo history changed or unreadable")
+    else:
+        undo_problems, abort_record[u"redo_cleared"] = prod_pose_abort_undo_check(undo, pre[u"undo"])
+        problems.extend(undo_problems)
     return problems
 
 
@@ -46000,12 +46062,14 @@ def prod_body_apply(identity, authorization, item, reg, phase_callback=None):
             except Exception as abort_exc:
                 prod_pose_log(u"BODY-abort-failed", {u"error": repr(abort_exc)})
                 raise ProdRecoveryUnverifiedError(PROD_POSE_MESSAGES[u"recovery-unverified"] % {u"name": name})
-            problems = prod_body_same_state(identity, authorization, pre)
+            abort_record = {}
+            problems = prod_body_same_state(identity, authorization, pre, abort_record=abort_record)
+            redo_cleared = not problems and abort_record.get(u"redo_cleared") is True
             prod_pose_log(u"BODY-abort-verified" if not problems else u"BODY-abort-unverified",
-                          {u"problems": problems[:16]})
+                          {u"problems": problems[:16], u"redo_cleared": redo_cleared})
             if problems:
                 raise ProdRecoveryUnverifiedError(PROD_POSE_MESSAGES[u"recovery-unverified"] % {u"name": name})
-            return {u"phase": u"not-applied", u"reason": repr(exc)}
+            return prod_pose_not_applied(exc, redo_cleared)
         # Astra S1 final: FinishUndo raised. Whether the transaction closed is unknown, and a matching Undo
         # description (possibly an older entry with the same name) is no evidence of commitment: never committed,
         # no P7, no Abort or Undo. The exception and the observed Undo state are kept as evidence.
@@ -48745,7 +48809,7 @@ def prod_scope_preflight(identity, authorization, item):
             u"expected_authored": prod_body_expected_authored(st[u"authored"], plans, handles), u"row": row}
 
 
-def prod_scope_same_state(identity, authorization, pre):
+def prod_scope_same_state(identity, authorization, pre, abort_record=None):
     """P2 / Abort: a fresh read equals the P1 state exactly (identities, time, classification, compiled scope,
     authority, authored, observed, every affected and dependency bone's evaluated transform and scale, the planned
     layers, the gate, Undo) and the pinned offsets are unchanged. Returns the problems; unreadable is a problem."""
@@ -48799,8 +48863,12 @@ def prod_scope_same_state(identity, authorization, pre):
     except Exception as exc:
         problems.append(u"gate refused %r" % (exc,))
     undo = prod_pose_undo_state(dm())
-    if prod_pose_undo_problems(undo) or undo != pre[u"undo"]:
-        problems.append(u"Undo history changed or unreadable")
+    if abort_record is None:
+        if prod_pose_undo_problems(undo) or undo != pre[u"undo"]:
+            problems.append(u"Undo history changed or unreadable")
+    else:
+        undo_problems, abort_record[u"redo_cleared"] = prod_pose_abort_undo_check(undo, pre[u"undo"])
+        problems.extend(undo_problems)
     return problems
 
 
@@ -48880,12 +48948,14 @@ def prod_scope_apply(identity, authorization, item, reg=None, phase_callback=Non
             except Exception as abort_exc:
                 prod_pose_log(u"SCOPE-abort-failed", {u"error": repr(abort_exc)})
                 raise ProdRecoveryUnverifiedError(PROD_POSE_MESSAGES[u"recovery-unverified"] % {u"name": name})
-            problems = prod_scope_same_state(identity, authorization, pre)
+            abort_record = {}
+            problems = prod_scope_same_state(identity, authorization, pre, abort_record=abort_record)
+            redo_cleared = not problems and abort_record.get(u"redo_cleared") is True
             prod_pose_log(u"SCOPE-abort-verified" if not problems else u"SCOPE-abort-unverified",
-                          {u"problems": problems[:16]})
+                          {u"problems": problems[:16], u"redo_cleared": redo_cleared})
             if problems:
                 raise ProdRecoveryUnverifiedError(PROD_POSE_MESSAGES[u"recovery-unverified"] % {u"name": name})
-            return {u"phase": u"not-applied", u"reason": repr(exc)}
+            return prod_pose_not_applied(exc, redo_cleared)
         prod_pose_log(u"SCOPE-finish-undo-uncertain", {u"error": repr(exc), u"undo": prod_pose_undo_state(dm_obj),
                                                        u"pre_undo": pre[u"undo"], u"label": label,
                                                        u"written": len(written)})

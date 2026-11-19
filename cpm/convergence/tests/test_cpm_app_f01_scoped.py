@@ -1209,6 +1209,72 @@ def section_transactions(ns, app, root, lib, grip):
     w = world(fail_on_write=u"finger2_o", abort_raises=True)
     got = outcome(lambda: apply(ns, reload(ns, lib, grip)))
     check("L.failed_abort_is_recovery_unverified", got[0] == "ProdRecoveryUnverifiedError", got)
+    # Designer disposition of Fox run 3: the Abort-only history exception on the Selected parts route. SFM discards
+    # a pending Redo entry when the owned action starts (FB.discard_redo_on_start); everything else stays exact.
+    def pending(fail=u"finger2_o"):
+        w = world()
+        result, verdict = apply(ns, reload(ns, lib, grip))
+        assert verdict is not None and verdict[u"phase"] == u"committed-verified", (result, verdict)
+        w.dm.Undo()
+        FB.discard_redo_on_start(w)
+        w.fail_on_write = fail
+        del w.dm.calls[:]
+        return w
+
+    def last(tag):
+        lines = [l for l in ns["LOG"] if tag in l]
+        return json.loads(lines[-1][lines[-1].index(u"{"):]) if lines else None
+    w = pending()
+    before, stack = all_keys(w), list(w.dm.stack)
+    redo = list(w.dm.redo_stack)
+    got = outcome(lambda: apply(ns, reload(ns, lib, grip)))
+    check("L.redo_cleared_abort_is_verified_with_the_flag", len(redo) == 1 and got[0] == "ok" and
+          got[1][0][u"phase"] == u"not-applied" and got[1][0].get(u"redo_cleared") is True and
+          all_keys(w) == before and w.dm.stack == stack and w.dm.redo_stack == [] and
+          last(u"SCOPE-abort-verified") == {u"problems": [], u"redo_cleared": True}, got[:2])
+    w = world(fail_on_write=u"finger2_o")
+    FB.discard_redo_on_start(w)
+    got = outcome(lambda: apply(ns, reload(ns, lib, grip)))
+    check("L.exact_abort_without_pending_redo_has_no_flag", got[0] == "ok" and got[1][0][u"phase"] ==
+          u"not-applied" and u"redo_cleared" not in got[1][0] and
+          last(u"SCOPE-abort-verified") == {u"problems": [], u"redo_cleared": False}, got[:2])
+
+    def broken(w, after=None, keep_first=False):
+        dm = w.dm
+        real = dm.AbortUndoableOperation
+
+        def abort():
+            if keep_first:
+                dm.current["items"] = dm.current["items"][1:]
+            real()
+            if after is not None:
+                after(w)
+        dm.AbortUndoableOperation = abort
+        return w
+    for label, w, undo_problem in (
+            (u"authored_difference_with_redo_cleared", broken(pending(), keep_first=True), False),
+            (u"owned_entry_left_on_top_with_redo_cleared", broken(pending(), lambda w: w.dm.stack.append(
+                {"label": u"Apply Pose Grip", "items": []})), True),
+            (u"undo_disabled_after_the_abort", broken(pending(), lambda w: setattr(w, "undo_enabled", False)), True)):
+        use(ns, w, arm)
+        got = outcome(lambda: apply(ns, reload(ns, lib, grip)))
+        problems = (last(u"SCOPE-abort-unverified") or {}).get(u"problems")
+        check("L.%s_is_recovery_unverified" % label, got[0] == "ProdRecoveryUnverifiedError" and bool(problems) and
+              (u"Undo history changed or unreadable" in problems) == undo_problem, (got, problems))
+    w = pending()
+    original = ns["prod_scope_preflight"]
+
+    def preflight_then_clear(*args):
+        pre = original(*args)
+        w.dm.redo_stack = []
+        return pre
+    ns["prod_scope_preflight"] = preflight_then_clear
+    try:
+        got = outcome(lambda: apply(ns, reload(ns, lib, grip)))
+    finally:
+        ns["prod_scope_preflight"] = original
+    refused("L.p2_a_redo_cleared_after_p1_is_stale", got, u"stale")
+    check("L.p2_stale_opens_nothing", not w.dm.calls, w.dm.calls)
     w = world()
     w.dm.push_foreign(u"Apply Pose Grip")              # an older identical history label
     w.finish_raises = True

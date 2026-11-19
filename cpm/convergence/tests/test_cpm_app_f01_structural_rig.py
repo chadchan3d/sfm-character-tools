@@ -942,9 +942,14 @@ def reload_world(w, times=1):
 
 def run2_namespace():
     """The run 2 candidate CPM (1753bdba...) from Git, for the teeth checks."""
+    return git_namespace(RUN2_CANDIDATE_COMMIT)
+
+
+def git_namespace(commit):
+    """An earlier candidate CPM from Git, in the stage E live namespace, for teeth checks."""
     src = subprocess.check_output(["git", "-C", core._REPO_ROOT, "show", "%s:cpm/app/SFM_Character_Preset_Manager.py"
-                                   % RUN2_CANDIDATE_COMMIT])
-    fd, path = tempfile.mkstemp(suffix="_run2_cpm.py")
+                                   % commit])
+    fd, path = tempfile.mkstemp(suffix="_%s_cpm.py" % commit)
     with os.fdopen(fd, "wb") as f:
         f.write(src)
     saved_path, saved_out = route.APP_PATH, sys.stdout
@@ -1339,6 +1344,294 @@ FIXTURE_DATA = []
 KRYSTAL_RECORD = []
 
 
+# ---------------------------------------------------------------------------
+# O. The Designer's disposition of Fox run 3: the Abort-only history exception (SFM discards a pending Redo entry
+#    when a new action starts, even one that is then aborted)
+# ---------------------------------------------------------------------------
+
+RUN3_EXTRACT = os.path.join(_THIS_DIR, "fixtures", "f01_body", "fox_run3_abort_extract.json")
+RUN3_EXTRACT_SHA256 = "1baff1ec89c895abaa571e25295a608633c4345a91ac1abf31e3751c7f448e45"
+RUN3_VERDICT_SHA256 = "561f1b091ca1d6404efe61371509ed6012626bf362ed551523e742d0ffcb9de0"
+RUN3_CANDIDATE_COMMIT = "e32b157"     # CPM 2088b4af..., the build run 3 used (qualification differs in one line)
+RUN3_CANDIDATE_SHA256 = u"2088b4aff1a6cfe05242bd1e774ac1fd4a565a92e5c124336b1aa855b62b8df7"
+UNDO_PROBLEM = u"Undo history changed or unreadable"
+REDO_CLEARED_COPY = u"Your character was restored, but SFM cleared your Redo history."
+UNVERIFIED_COPY = (u"CPM couldn't confirm that all changes were undone. Check your character before continuing. "
+                   u"Restart SFM to use pose tools again.")
+
+
+def log_detail(line):
+    try:
+        return json.loads(line[line.index(u"{"):])
+    except Exception:
+        return None
+
+
+def section_abort_history(app, ns, reg, fx, item, root):
+    chk = ns["prod_pose_abort_undo_check"]
+    base = {u"enabled": True, u"can_undo": True, u"can_redo": False, u"undo_desc": u"Change Recording State",
+            u"redo_desc": u""}
+    pend = dict(base, can_redo=True, redo_desc=u"Redo Apply Pose S1 Fox")
+
+    def var(d, **kw):
+        x = dict(d)
+        x.update(kw)
+        return x
+
+    def bad(got):
+        return got == ([UNDO_PROBLEM], False)
+
+    # 1. The predicate.
+    check("O.exact_history_without_pending_redo_verifies", chk(dict(base), base) == ([], False))
+    check("O.exact_history_with_pending_redo_kept_verifies", chk(dict(pend), pend) == ([], False))
+    check("O.pending_redo_cleared_by_sfm_verifies_with_the_flag", chk(dict(base), pend) == ([], True))
+    for label, p1, after in (
+            (u"redo_appearing_where_none_was_pending", base, pend),
+            (u"pending_redo_replaced_by_another_entry", pend, var(pend, redo_desc=u"Redo Something Else")),
+            (u"redo_cleared_with_an_owned_entry_left_on_top", pend, var(base, undo_desc=u"Apply Pose S1 Fox")),
+            (u"redo_cleared_with_undo_availability_changed", pend, var(base, can_undo=False)),
+            (u"redo_cleared_with_undo_disabled", pend, var(base, enabled=False)),
+            (u"redo_flag_cleared_but_description_kept", pend, var(pend, can_redo=False)),
+            (u"redo_description_cleared_but_flag_kept", pend, var(pend, redo_desc=u"")),
+            (u"a_pending_redo_without_description_at_p1", var(pend, redo_desc=u""), base),
+            (u"top_entry_changed_without_redo", base, var(base, undo_desc=u"Apply Pose S1 Fox")),
+            (u"undo_disabled_without_redo", base, var(base, enabled=False)),
+            (u"undo_disabled_at_p1", var(pend, enabled=False), var(base, enabled=False))):
+        check("O.%s_is_unverified" % label, bad(chk(after, p1)), chk(after, p1))
+    for k in (u"enabled", u"can_undo", u"can_redo", u"undo_desc", u"redo_desc"):
+        missing, missing_p1 = dict(base), dict(pend)
+        del missing[k], missing_p1[k]
+        unreadable = dict(base)
+        unreadable[k] = {u"unreadable": u"RuntimeError('test')"}
+        check("O.missing_or_unreadable_%s_is_unverified" % k, bad(chk(missing, pend)) and bad(
+            chk(unreadable, pend)) and bad(chk(dict(base), missing_p1)))
+    check("O.non_boolean_flags_are_unverified", bad(chk(var(base, can_redo=0), pend)) and
+          bad(chk(dict(base), var(pend, can_redo=1))))
+    check("O.an_extra_member_is_unverified", bad(chk(var(base, extra=1), pend)))
+    check("O.non_mapping_states_are_unverified", bad(chk(None, pend)) and bad(chk(dict(base), None)))
+
+    # 2. Replay of run 3's preserved evidence (an extract; the corrected logic, not the corrected CPM natively).
+    raw = core.read(RUN3_EXTRACT)
+    check("O.run3_extract_matches_its_pin", core.sha(raw) == RUN3_EXTRACT_SHA256, core.sha(raw))
+    ev = json.loads(raw.decode("utf-8"))
+    check("O.run3_extract_names_the_preserved_evidence", ev[u"sources"][u"verdict_json_sha256"] ==
+          RUN3_VERDICT_SHA256 and ev[u"sources"][u"capture_sha256"] == {
+              u"UNDO2": u"b65f904649d992e3c57290b54e7e642ef9f3b8464b2447ad9c8a517961551199",
+              u"ABORT": u"cc1571a6c6a54eafd792a75ade17588e3c0fe4f440f4b7a0ec3664cf3babecf9"} and
+          ev[u"sources"][u"process_b_log_sha256"] ==
+          u"275b68fd67860ecdc2d5f1e2a09456adcc9cc2c69f9fe3a5d49048df43f888fa")
+    check("O.run3_abort_capture_differs_from_undo2_only_in_redo", ev[u"capture_differences"] == [
+        u"/session/undo/can_redo", u"/session/undo/redo_desc", u"/step"] and all(
+        ev[u"sets_sha256"][u"ABORT"][r] == ev[u"sets_sha256"][u"UNDO2"][r] for r in (u"source", u"target", u"peer")),
+        ev[u"capture_differences"])
+    native = [log_detail(l) for l in ev[u"log"] if u"BODY-abort-unverified" in l]
+    failure = [log_detail(l) for l in ev[u"log"] if u"BODY-P3-P6-failure" in l]
+    check("O.run3_native_abort_failed_only_on_the_undo_history", native == [{u"problems": [UNDO_PROBLEM]}] and
+          failure and failure[0][u"finished"] is False and failure[0][u"written"] == 212, (native, failure))
+    # `enabled` is not in the observer's capture: true at P1 (P2 passed, and P2 refuses disabled Undo), and taken
+    # as true after the Abort, which the observer did not record; a disabled state stays unverified.
+    p1 = dict(ev[u"undo"][u"UNDO2"], enabled=True)
+    after = dict(ev[u"undo"][u"ABORT"], enabled=True)
+    check("O.run3_replay_old_exact_predicate_reproduces_the_native_problem", bool(
+        ns["prod_pose_undo_problems"](after) or after != p1))
+    check("O.run3_replay_corrected_predicate_verifies_with_redo_cleared", chk(after, p1) == ([], True), chk(after, p1))
+    check("O.run3_replay_with_undo_disabled_after_the_abort_stays_unverified", bad(chk(dict(after, enabled=False),
+                                                                                     p1)))
+
+    # 3. The body route, live: SFM's Redo discard modelled by FB.discard_redo_on_start.
+    QF = ns["PROD_POSE_QUAL_FAULT"]
+
+    def pending_world(discard=True):
+        w = world(fx)
+        _, got = apply_(ns, reg, item, w)
+        assert got[0] == u"ok" and got[1][u"phase"] == u"verification-pending", got
+        w.dm.Undo()
+        if discard:
+            FB.discard_redo_on_start(w)
+        del w.dm.calls[:]
+        return w
+
+    def aborting(w, after=None, keep_first=False):
+        dm = w.dm
+        real = dm.AbortUndoableOperation
+
+        def abort():
+            if keep_first:
+                dm.current["items"] = dm.current["items"][1:]
+            real()
+            if after is not None:
+                after(w)
+        dm.AbortUndoableOperation = abort
+        return w
+
+    def faulted(w, namespace=ns, registry=reg):
+        del namespace["LOG"][:]
+        namespace["PROD_POSE_QUAL_FAULT"][0] = u"after-writes"
+        try:
+            return apply_(namespace, registry, item, w)[1]
+        finally:
+            namespace["PROD_POSE_QUAL_FAULT"][0] = None
+
+    def abort_log(namespace, tag):
+        return log_detail(last_log(namespace, tag))
+
+    try:
+        w = pending_world()
+        before, stack, redo = B.all_keys(w), list(w.dm.stack), list(w.dm.redo_stack)
+        got = faulted(w)
+        check("O.body_pending_redo_existed_at_p1", len(redo) == 1, redo)
+        check("O.body_sfm_redo_discard_abort_is_verified_with_redo_cleared", got[0] == u"ok" and got[1] == {
+            u"phase": u"not-applied", u"reason": got[1].get(u"reason"), u"redo_cleared": True} and
+            B.all_keys(w) == before and w.dm.stack == stack and w.dm.redo_stack == [] and w.dm.current is None and
+            [c[0] for c in w.dm.calls] == ["StartUndo", "AbortUndoableOperation"], (got[:2], w.dm.calls))
+        check("O.body_redo_cleared_is_logged_with_the_verified_abort", abort_log(ns, u"BODY-abort-verified") == {
+            u"problems": [], u"redo_cleared": True}, last_log(ns, u"BODY-abort"))
+
+        # Teeth: run 3's build reproduces run 3 offline (exact restoration, refused on the history).
+        old, old_sha = git_namespace(RUN3_CANDIDATE_COMMIT)
+        check("O.teeth_run3_candidate_from_git_is_2088b4af", old_sha == RUN3_CANDIDATE_SHA256, old_sha)
+        oreg, _ = B.registries(old)
+        w = pending_world()
+        before = B.all_keys(w)
+        got = faulted(w, old, oreg)
+        check("O.teeth_run3_build_reports_recovery_unverified_after_exact_restoration", got[0] ==
+              u"ProdRecoveryUnverifiedError" and B.all_keys(w) == before and abort_log(
+                  old, u"BODY-abort-unverified") == {u"problems": [UNDO_PROBLEM]}, (got, last_log(old, u"BODY-abort")))
+
+        w = world(fx)
+        FB.discard_redo_on_start(w)
+        before = B.all_keys(w)
+        got = faulted(w)
+        check("O.body_exact_history_without_pending_redo_keeps_the_plain_result", got[0] == u"ok" and
+              got[1][u"phase"] == u"not-applied" and u"redo_cleared" not in got[1] and B.all_keys(w) == before and
+              abort_log(ns, u"BODY-abort-verified") == {u"problems": [], u"redo_cleared": False}, got[:2])
+        w = pending_world(discard=False)
+        redo = list(w.dm.redo_stack)
+        got = faulted(w)
+        check("O.body_pending_redo_kept_is_exact_and_keeps_the_plain_result", got[0] == u"ok" and
+              got[1][u"phase"] == u"not-applied" and u"redo_cleared" not in got[1] and w.dm.redo_stack == redo,
+              got[:2])
+
+        def unverified(label, w, undo_problem):
+            got = faulted(w)
+            line = abort_log(ns, u"BODY-abort-unverified")
+            check("O.body_%s_is_recovery_unverified" % label, got[0] == u"ProdRecoveryUnverifiedError" and
+                  line is not None and line[u"problems"] and (UNDO_PROBLEM in line[u"problems"]) == undo_problem,
+                  (got, last_log(ns, u"BODY-abort")))
+        unverified(u"authored_difference_with_redo_cleared", aborting(pending_world(), keep_first=True), False)
+        unverified(u"owned_entry_left_on_top_with_redo_cleared", aborting(
+            pending_world(), lambda w: w.dm.stack.append({"label": u"Apply Pose Fox", "items": []})), True)
+        unverified(u"undo_disabled_after_the_abort", aborting(
+            pending_world(), lambda w: setattr(w, "undo_enabled", False)), True)
+
+        def unreadable(w):
+            def raises():
+                raise RuntimeError("GetRedoDesc failed (test)")
+            w.dm.GetRedoDesc = raises
+        unverified(u"unreadable_redo_after_the_abort", aborting(pending_world(), unreadable), True)
+        w = world(fx)
+        FB.discard_redo_on_start(w)
+        unverified(u"redo_appearing_after_the_abort", aborting(
+            w, lambda w: w.dm.redo_stack.append({"label": u"Something", "items": []})), True)
+        w = pending_world()
+        w.abort_raises = True
+        got = faulted(w)
+        check("O.body_failed_abort_with_pending_redo_is_recovery_unverified", got[0] ==
+              u"ProdRecoveryUnverifiedError" and any(u"BODY-abort-failed" in l for l in ns["LOG"]), got)
+
+        # P2 stays exact: Redo cleared between P1 and P2 is stale, before StartUndo.
+        w = pending_world()
+        writes_before = len(B.scene_writes(w))
+        original = ns["prod_body_preflight"]
+
+        def preflight_then_clear(*args):
+            pre = original(*args)
+            w.dm.redo_stack = []
+            return pre
+        ns["prod_body_preflight"] = preflight_then_clear
+        try:
+            _, got = apply_(ns, reg, item, w)
+        finally:
+            ns["prod_body_preflight"] = original
+        refused("O.p2_a_redo_cleared_after_p1_is_stale", got, u"stale")
+        check("O.p2_stale_writes_nothing_and_opens_nothing", len(B.scene_writes(w)) == writes_before and not w.dm.calls,
+              w.dm.calls)
+    finally:
+        QF[0] = None
+
+    # 4. Static: P2 calls without the Abort mode; the Abort calls with it; the wording.
+    for fn, p2 in ((u"prod_pose_apply", u"prod_pose_same_state(identity, authorization, pre, u\"P2\")"),
+                   (u"prod_body_apply", u"prod_body_same_state(identity, authorization, pre)\n"),
+                   (u"prod_scope_apply", u"prod_scope_same_state(identity, authorization, pre)\n")):
+        text = app.top_text(fn)
+        check("O.%s_p2_stays_exact_and_the_abort_uses_the_exception" % fn, text.count(p2) == 1 and
+              text.count(u"abort_record=abort_record") == 1 and u"prod_pose_not_applied(exc, redo_cleared)" in text)
+    msgs = ns["PROD_POSE_MESSAGES"]
+    check("O.wording_is_the_designers", msgs[u"not-applied-redo-cleared"] == REDO_CLEARED_COPY and
+          msgs[u"recovery-unverified"] == UNVERIFIED_COPY and msgs[u"recovery-unverified"] % {u"name": u"x"} ==
+          UNVERIFIED_COPY and msgs[u"not-applied"] == u"The pose couldn't be applied. Nothing was changed." and
+          ns["PROD_POSE_TITLE_NOT_APPLIED"] == u"Pose not applied" and
+          ns["PROD_POSE_TITLE_RECOVERY_UNVERIFIED"] == u"Pose operation stopped")
+    guard = app.method_text("ProdWindow", "guard")
+    check("O.guard_titles_pose_recovery_and_keeps_the_others", u"PROD_POSE_TITLE_RECOVERY_UNVERIFIED" in guard and
+          u"if label in PROD_POSE_SCENE_LABELS" in guard and u'"Recovery could not be verified"' in guard)
+
+    # 5. Through the Poses window (qualification build).
+    lib = library(root, u"abort")
+    mode = ns["PROD_POSE_REGISTRY_MODE"]
+    had = "tool_warning_message" in ns
+    real_warning = ns.get("tool_warning_message")
+    dialogs = []
+    ns["tool_warning_message"] = lambda window, title, message: dialogs.append((title, message))
+    try:
+        ns["PROD_POSE_REGISTRY_MODE"] = QUAL
+        use(ns, world(fx, posed=False))
+        win = B.window(app, ns, reg, lib)
+        win.dialogs = []
+        win.prompts = [u"Abort Fox"]
+        saved = win.save_pose(None, (u"full_body",))
+        witem = ns["prod_pose_reread"](lib, saved, reg)
+        dst = use(ns, world(fx))
+        win.pending = []
+        win.apply_pose(witem)
+        check("O.window_apply_commits", len(win.pending) == 1 and [c[0] for c in dst.dm.calls] == [
+            "StartUndo", "FinishUndo"], win.statuses[-1:])
+        dst.dm.Undo()
+        FB.discard_redo_on_start(dst)
+        before = B.all_keys(dst)
+        QF[0] = u"after-writes"
+        win.apply_pose(witem)
+        check("O.window_redo_cleared_shows_pose_not_applied_and_does_not_lock",
+              win.statuses[-1] == ("status", REDO_CLEARED_COPY, u"error") and
+              dialogs == [(u"Pose not applied", REDO_CLEARED_COPY)] and B.all_keys(dst) == before and
+              win.pose_recovery_blocked is False and ns["PROD_POSE_RECOVERY_BLOCK"][0] is None,
+              (win.statuses[-1:], dialogs))
+        dst = use(ns, world(fx))
+        QF[0] = u"after-writes"
+        win.apply_pose(witem)
+        check("O.window_exact_abort_keeps_nothing_was_changed_without_a_dialog",
+              win.statuses[-1] == ("status", u"The pose couldn't be applied. Nothing was changed.", u"error") and
+              len(dialogs) == 1 and win.pose_recovery_blocked is False, (win.statuses[-1:], dialogs))
+        dst = use(ns, world(fx, lambda w: setattr(w, "abort_raises", True)))
+        QF[0] = u"after-writes"
+        win.apply_pose(witem)
+        check("O.window_genuine_unverified_recovery_locks_with_the_new_wording",
+              win.pose_recovery_blocked is True and ns["PROD_POSE_RECOVERY_BLOCK"][0] == u"Apply Pose" and
+              win.statuses[-1][0] == "error" and win.statuses[-1][3] == UNVERIFIED_COPY, win.statuses[-1:])
+        dst = use(ns, world(fx))
+        win.apply_pose(witem)
+        check("O.window_lockout_holds_for_the_next_apply", win.statuses[-1][2] == u"recovery-blocked" and
+              no_mutation(dst), win.statuses[-1:])
+    finally:
+        QF[0] = None
+        ns["PROD_POSE_REGISTRY_MODE"] = mode
+        ns["PROD_POSE_RECOVERY_BLOCK"][0] = None
+        if had:
+            ns["tool_warning_message"] = real_warning
+        else:
+            ns.pop("tool_warning_message", None)
+
+
 def main():
     if "--phase=run" not in sys.argv[1:]:
         print("usage: %s --phase=run [--legacy=RC2_CPM.py]" % os.path.basename(sys.argv[0]))
@@ -1374,6 +1667,8 @@ def main():
             run("rotation", lambda: section_rotation(ns, reg, fx, lived[1]))
         run("face", lambda: section_face(ns, reg, fx, root))
         run("window", lambda: section_window(app, ns, reg, fx, root))
+        if lived:
+            run("abort_history", lambda: section_abort_history(app, ns, reg, fx, lived[1], root))
     finally:
         shutil.rmtree(root, True)
     failed = [r for r in RESULTS if not r[1]]

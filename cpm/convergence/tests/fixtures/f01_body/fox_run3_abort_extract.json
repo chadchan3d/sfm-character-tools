@@ -1,0 +1,49 @@
+{
+ "capture_differences": [
+  "/session/undo/can_redo",
+  "/session/undo/redo_desc",
+  "/step"
+ ],
+ "format": "F01-S1F-run3-abort-extract-v1",
+ "log": [
+  "2026-11-19T16:07:22.144Z #000120 s=1a3d28 w=1 op=6 | PROD_POSE_BODY-P1 {\"actions\": {\"insert\": 212, \"none\": 2, \"update\": 0}, \"noop\": false, \"time\": {\"clip\": 33304, \"seconds\": {\"t_chan\": 5.0416, \"t_doc\": 0.2083, \"t_shot\": 0.0208}, \"shot\": 21686, \"t_chan\": 50416, \"t_doc\": 2083, \"t_shot\": 208}}",
+  "2026-11-19T16:07:22.988Z #000123 s=1a3d28 w=1 op=6 | PROD_POSE_BODY-P3-P6-failure {\"error\": \"RuntimeError(u'qualification fault injected at after-writes',)\", \"finished\": false, \"written\": 212}",
+  "2026-11-19T16:07:23.757Z #000125 s=1a3d28 w=1 op=6 | PROD_POSE_BODY-abort-unverified {\"problems\": [\"Undo history changed or unreadable\"]}",
+  "2026-11-19T16:07:23.757Z #000126 s=1a3d28 w=1 op=6 | PROD_POSE_RECOVERY_BLOCKED label=u'Apply Pose' process-wide=True"
+ ],
+ "note": "Read-only extract of Fox run 3 (f01-stage1-fox-r3): the observer's UNDO2 and ABORT captures and the Process B CPM log of the injected after-writes Abort. Evidence of the old build (b195515f...), not of the corrected CPM.",
+ "sets_sha256": {
+  "ABORT": {
+   "peer": "ab058a5e822787880ece46e139a9eedafe4aafded2bec6cf74b7a2bcb1c26bc0",
+   "source": "1bbade7fef45aabb7fde8d8aa1e17444fa92bf4ee4eca22f8ab025a376b96fb7",
+   "target": "7bf0f96822fd5e42ae20fe45c30f997a3493a9defcfd59fa73e5280c3fc50d01"
+  },
+  "UNDO2": {
+   "peer": "ab058a5e822787880ece46e139a9eedafe4aafded2bec6cf74b7a2bcb1c26bc0",
+   "source": "1bbade7fef45aabb7fde8d8aa1e17444fa92bf4ee4eca22f8ab025a376b96fb7",
+   "target": "7bf0f96822fd5e42ae20fe45c30f997a3493a9defcfd59fa73e5280c3fc50d01"
+  }
+ },
+ "sources": {
+  "capture_sha256": {
+   "ABORT": "cc1571a6c6a54eafd792a75ade17588e3c0fe4f440f4b7a0ec3664cf3babecf9",
+   "UNDO2": "b65f904649d992e3c57290b54e7e642ef9f3b8464b2447ad9c8a517961551199"
+  },
+  "process_b_log_sha256": "275b68fd67860ecdc2d5f1e2a09456adcc9cc2c69f9fe3a5d49048df43f888fa",
+  "verdict_json_sha256": "561f1b091ca1d6404efe61371509ed6012626bf362ed551523e742d0ffcb9de0"
+ },
+ "undo": {
+  "ABORT": {
+   "can_redo": false,
+   "can_undo": true,
+   "redo_desc": "",
+   "undo_desc": "Change Recording State"
+  },
+  "UNDO2": {
+   "can_redo": true,
+   "can_undo": true,
+   "redo_desc": "Redo Apply Pose S1 Fox",
+   "undo_desc": "Change Recording State"
+  }
+ }
+}

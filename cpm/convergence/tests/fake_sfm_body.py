@@ -420,6 +420,19 @@ class DataModel(object):
         self.stack.append({"label": label, "items": []})
 
 
+def discard_redo_on_start(world):
+    """Opt-in: SFM's measured history behaviour (OT1 and Fox run 3, native): starting a new action discards any
+    pending Redo entry, even when that action is then aborted. Unset, the fake keeps Redo as before."""
+    dm = world.dm
+    start = dm.StartUndo
+
+    def start_undo(label, redo):
+        start(label, redo)
+        dm.redo_stack = []
+    dm.StartUndo = start_undo
+    return world
+
+
 def revert(items):
     for item in reversed(items):
         if item[0] == "insert":

@@ -484,6 +484,8 @@ TOP_EXTRACT = [
     "prod_q1_compare_body_capture", "prod_capture_body_snapshot", "prod_capture_bone_scale_map",
     # save / apply / recovery
     "prod_save", "prod_flex_record", "prod_validate_scale_plan_finite", "ProdRecoveryUnverifiedError",
+    # the guard's unverified-recovery title for pose operations (Designer disposition of Fox run 3)
+    "PROD_POSE_SCENE_LABELS", "PROD_POSE_TITLE_RECOVERY_UNVERIFIED",
     "prod_optional_float_matches", "prod_bs_snapshot_matches_baseline", "prod_verify_apply_abort_baseline",
     "prod_abort_apply_and_verify", "prod_apply", "PROD_APPLY_CHECKING_COPY", "PROD_APPLY_UNVERIFIED_COPY",
     "prod_apply_deferred_unverified", "prod_bs_play_expectation", "prod_bs_play_expectations_hold",
@@ -1462,6 +1464,20 @@ def section_lifecycle(ns, Window):
     w.guard("Apply Body Preset", lambda: (_ for _ in ()).throw(RuntimeError("synthetic precommit")))
     check("D11 guard failure ends the operation exactly once", w.operation is None and len(results()) == 1
           and len(w.dialogs) == 1)
+
+    # D11b the real guard titles an unverified recovery by operation: pose operations "Pose operation stopped"
+    # (Designer disposition of Fox run 3), every other operation unchanged.
+    def unverified():
+        raise ns["ProdRecoveryUnverifiedError"](u"synthetic unverified recovery")
+    titles = []
+    for label in (u"Apply Pose", u"Apply Body Preset"):
+        scene = reset()
+        w = Window(body_record(head=1.25, smile=0.5))
+        w.guard(label, unverified)
+        titles.append(w.dialogs[-1] if w.dialogs else None)
+    check("D11b guard titles unverified pose recovery and keeps the other titles", titles == [
+        (u"Pose operation stopped", u"synthetic unverified recovery"),
+        (u"Recovery could not be verified", u"synthetic unverified recovery")], titles)
 
     # D12 deferred end-to-end: success requires the observed values, not callback delivery.
     scene = reset()

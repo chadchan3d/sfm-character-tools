@@ -464,6 +464,74 @@ def section_abort(ns, F, reg, world, items, base):
     check("D8.fault_hook_is_inert_outside_qualification", ns["PROD_POSE_QUAL_FAULT"][0] == u"after-writes"
           and outcome(lambda: ns["prod_pose_qualification_fault"](u"production", u"after-writes"))[0] == "ok")
     ns["PROD_POSE_QUAL_FAULT"][0] = None
+    # D8R (Designer disposition of Fox run 3): SFM discards a pending Redo entry when the owned action starts, even
+    # one that is then aborted. The Abort-only history exception verifies that one transition; everything else exact.
+    dm = world.dm
+    real_start = dm.StartUndo
+
+    def discarding_start(undo, redo):
+        real_start(undo, redo)
+        dm.redo = []
+
+    def last(tag):
+        lines = [l for l in ns["LOG"] if tag in l]
+        return json.loads(lines[-1][lines[-1].index(u"{"):]) if lines else None
+
+    def faulted():
+        ns["PROD_POSE_QUAL_FAULT"][0] = u"after-writes"
+        try:
+            return outcome(lambda: apply_and_verify(ns, reg, world, items[u"Arms Moved"], run=False))
+        finally:
+            ns["PROD_POSE_QUAL_FAULT"][0] = None
+            world.evaluate(world.shots[u"shot10"])
+
+    def pending():
+        result, verdict, _ = apply_and_verify(ns, reg, world, items[u"Arms Moved"])
+        assert verdict == {u"phase": u"committed-verified"}, (result, verdict)
+        dm.Undo()
+        world.evaluate(world.shots[u"shot10"])
+        dm.StartUndo = discarding_start
+    try:
+        before = authored(ns, reg, u"shot10")
+        pending()
+        check("D8R.undo_returns_to_the_state_before_and_leaves_a_pending_redo",
+              authored(ns, reg, u"shot10") == before and len(dm.redo) == 1)
+        stack = list(dm.stack)
+        r = faulted()
+        check("D8R.redo_cleared_abort_is_verified_with_the_flag", r[0] == "ok" and r[1][0][u"phase"] ==
+              u"not-applied" and r[1][0].get(u"redo_cleared") is True and authored(ns, reg, u"shot10") == before and
+              dm.stack == stack and dm.redo == [] and last(u"abort-verified") == {u"problems": [],
+                                                                                 u"redo_cleared": True}, r)
+        r = faulted()
+        check("D8R.exact_abort_without_pending_redo_has_no_flag", r[0] == "ok" and r[1][0][u"phase"] ==
+              u"not-applied" and u"redo_cleared" not in r[1][0] and authored(ns, reg, u"shot10") == before and
+              last(u"abort-verified") == {u"problems": [], u"redo_cleared": False}, r)
+        real_abort = dm.AbortUndoableOperation
+
+        def leaves_entry():
+            real_abort()
+            dm.stack.append({"undo": u"Apply Pose Arms Moved", "redo": u"Redo Apply Pose Arms Moved", "items": []})
+        dm.StartUndo = real_start
+        pending()
+        dm.AbortUndoableOperation = leaves_entry
+        r = faulted()
+        check("D8R.owned_entry_left_on_top_with_redo_cleared_is_recovery_unverified",
+              r[0] == "ProdRecoveryUnverifiedError" and last(u"abort-unverified")[u"problems"] == [
+                  u"Undo history changed or unreadable"], (r, last(u"abort-unverified")))
+        dm.AbortUndoableOperation = real_abort
+        dm.stack.pop()
+        dm.StartUndo = real_start
+        pending()
+        world.abort_broken = True
+        r = faulted()
+        problems = (last(u"abort-unverified") or {}).get(u"problems") or []
+        check("D8R.authored_difference_with_redo_cleared_is_recovery_unverified",
+              r[0] == "ProdRecoveryUnverifiedError" and problems and
+              u"Undo history changed or unreadable" not in problems, (r, problems))
+    finally:
+        world.abort_broken = False
+        dm.StartUndo = real_start
+        ns["PROD_POSE_QUAL_FAULT"][0] = None
     # An Abort that does not restore: recovery-unverified, never "nothing was changed".
     world.abort_broken = True
     ns["PROD_POSE_QUAL_FAULT"][0] = u"after-writes"
