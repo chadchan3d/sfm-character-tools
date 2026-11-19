@@ -244,7 +244,7 @@ never opened.
 Undo enabled is observed directly at every step, not assumed.
 
 **Readiness:**
-- The run folder `E:\SFM_U0B_Scratch01-stage1-recovery` holds `s1r.json` (paths filled, pins from the template).
+- The run folder `E:\SFM_U0B_Scratch\f01-stage1-recovery` holds `s1r.json` (paths filled, pins from the template).
 - `build` has staged the qualification build `39f2e355…` (line 42630 only) with both registries.
 - The installation is still the published `ccbed9d7…`, and SFM is closed.
 - Run 3's verdict, session and library files were only read; their identities are unchanged.
