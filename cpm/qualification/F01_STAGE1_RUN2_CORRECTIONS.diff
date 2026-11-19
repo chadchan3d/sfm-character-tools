@@ -1,0 +1,170 @@
+diff --git a/cpm/app/SFM_Character_Preset_Manager.py b/cpm/app/SFM_Character_Preset_Manager.py
+index ed0a6b6..91e8526 100644
+--- a/cpm/app/SFM_Character_Preset_Manager.py
++++ b/cpm/app/SFM_Character_Preset_Manager.py
+@@ -36739,7 +36739,7 @@ class ProdWindow(QtGui.QDialog):
+ 
+             layout.addWidget(tree, 1)
+             review_box = QtGui.QGroupBox(
+-                "Review scope"
++                PROD_SCOPE_REVIEW_TITLE
+             )
+             review_layout = QtGui.QVBoxLayout(review_box)
+             review_note = QtGui.QLabel(
+@@ -36752,7 +36752,7 @@ class ProdWindow(QtGui.QDialog):
+             review_list.setFocusPolicy(QtCore.Qt.NoFocus)
+             review_layout.addWidget(review_list)
+             leave = QtGui.QCheckBox(
+-                "Leave these controls unchanged"
++                PROD_SCOPE_REVIEW_CHOICE
+             )
+             review_layout.addWidget(leave)
+             layout.addWidget(review_box)
+@@ -37293,6 +37293,15 @@ class ProdWindow(QtGui.QDialog):
+                             self.pose_registry_mode(),
+                         )
+                         if scoped_record
++                        # Stage 1 (C1): a structural rig record needs no registry rig class; Apply still drafts and
++                        # verifies the destination itself.
++                        else prod_body_rig_availability(
++                            item[u"record"],
++                            self.identity,
++                            self.pose_registry_mode(),
++                        )
++                        if item[u"record"][u"pose"].get(u"version") == 2
++                        and prod_body_rig_is_record(item[u"record"])
+                         else u"available"
+                         if r in eligible and (r in PROD_POSE_LIVE_REGIONS or r == u"full_body")
+                         else u"not-qualified",
+@@ -37433,6 +37442,9 @@ class ProdWindow(QtGui.QDialog):
+             if scoped_record:
+                 reason = prod_scope_availability(record, self.identity, self.pose_registry_mode())
+                 unavailable = [] if reason == u"available" else saved
++            elif record[u"pose"].get(u"version") == 2 and prod_body_rig_is_record(record):     # Stage 1 (C1)
++                reason = prod_body_rig_availability(record, self.identity, self.pose_registry_mode())
++                unavailable = [] if reason == u"available" else saved
+             if self.identity is not None and unavailable:
+                 note = QtGui.QLabel(
+                     u"Can't be applied to %s: %s."
+@@ -46339,13 +46351,28 @@ def prod_body_rig_probe(operation_context, identity, reg, mode):
+     return {u"time": time, u"classes": dict(st[u"C"][u"bones"])}
+ 
+ 
++def prod_body_rig_availability(record, identity, mode):
++    """Stage 1 (C1): offline availability of a structural rig record for the selected character, for the Poses page
++    and Pose Info (the scene is read only at Apply): the adapter rule is usable in this build and the saved model is
++    the selected model. An available button authorizes nothing: Apply drafts the destination independently and
++    compares it exactly, then P2-P7."""
++    adapter = record[u"pose"].get(u"adapter") or {}
++    if not prod_body_rig_usable(mode, adapter.get(u"rule"), adapter.get(u"revision")):
++        return u"not-qualified"
++    if identity is None or prod_pose_model_key(u(identity.get("model") or u"")) !=             prod_pose_model_key(record[u"pose"][u"source"][u"model_ref"]):
++        return u"different-model"
++    return u"available"
++
++
+ def prod_body_rig_inventory(inventory, probe):
+-    """The Save dialog's inventory for the structural route: Full body available, and the face review offering only
+-    the highlighted bones that are directly animated in the drafted description (rig-driven bones are body
+-    posture). Selected parts is unchanged."""
++    """The Save dialog's inventory for the structural route: Full body available. C2 (Designer, after Fox run 1): no
++    scope review. In a drafted description every bone is classified confidently: a rig-driven bone is body posture,
++    a directly animated bone (Face-group jaw and tongue included) is supported articulation that follows the pose,
++    and anything else refused the draft already. Facial expressions (flex controls) stay preserved, as before.
++    Selected parts is unchanged."""
+     out = dict(inventory)
+     out[u"full_body"] = {u"status": u"available", u"code": None, u"message": None, u"review": []}
+-    out[u"highlighted"] = [b for b in inventory.get(u"highlighted") or [] if probe[u"classes"].get(b) == u"fk"]
++    out[u"highlighted"] = []
+     out[u"structural_rig"] = True
+     return out
+ 
+@@ -46423,20 +46450,22 @@ PROD_SCOPE_VALUE_OPERATORS = (u"DmeExpressionOperator", u"DmePackColorOperator")
+ PROD_SCOPE_MAX_GROUPS = 4096
+ PROD_SCOPE_AUTH_SCHEMA = u"cpm-scoped-pose-authorization-v1"
+ PROD_SCOPE_PART_KEYS = {u"full_body": u"full_body", u"selected_parts": u"selected_parts"}
++PROD_SCOPE_FULL_BODY_UNSUPPORTED = u"Full body poses aren't supported for this character yet. You can still save "                                    u"Selected parts."
+ PROD_SCOPE_MESSAGES = {
+     u"not-qualified": u"This kind of pose isn't available in this build yet. Nothing was changed.",
+-    u"rig-driven": u"Full body can't be saved: parts of this character's body are driven by its rig. Choose Selected "
+-                   u"parts to save a smaller pose.",
+-    u"unsupported-body": u"%(parts)s can't be captured yet. Choose Selected parts to save a smaller pose.",
+-    u"carried-unsupported": u"Some bones of this character have no controls, and CPM can't confirm they stay fixed. "
+-                            u"Choose Selected parts to save a smaller pose.",
++    # C3 (Owner-approved wording, after Fox run 1): one message for unsupported Full body capability; the exact
++    # cause (code and bones) stays in the diagnostic log (prod_scope_error).
++    u"rig-driven": PROD_SCOPE_FULL_BODY_UNSUPPORTED,
++    u"unsupported-body": PROD_SCOPE_FULL_BODY_UNSUPPORTED,
++    u"carried-unsupported": PROD_SCOPE_FULL_BODY_UNSUPPORTED,
+     u"unsupported-selection": u"These controls can't be saved in a pose: %(parts)s. Choose other controls.",
+     u"carried-selection": u"A part below your selection can't follow it safely: %(parts)s. Choose other controls.",
+     u"shared-input": u"This control also drives other parts of the character: %(parts)s. Choose a supported scope or "
+                      u"select finger controls.",
+     u"empty-selection": u"Select at least one body control.",
+-    u"review-required": u"Review these controls before saving: CPM cannot determine whether they belong to the body "
+-                        u"pose.",
++    # C2 (Owner, after Fox run 1): positive wording; only controls CPM can't capture are ever asked about.
++    u"review-required": u"Some face controls can't be saved with this pose. Choose to save the body and leave them as "
++                        u"they are.",
+     u"exclusion-boundary": u"The controls you chose to leave unchanged also affect the body pose, so they can't be "
+                            u"left out. Include them or choose Selected parts.",
+     u"different-model": u"This pose was saved on a different character model. Nothing was changed.",
+@@ -46455,8 +46484,10 @@ PROD_SCOPE_MESSAGES = {
+                               u"changed.",
+     u"invalid-file": u"This pose file can't be read. It won't be applied.",
+ }
+-PROD_SCOPE_REVIEW_SCOPE_COPY = u"Review these controls before saving: CPM cannot determine whether they belong to the " \
+-                               u"body pose."
++PROD_SCOPE_REVIEW_SCOPE_COPY = u"The body pose is saved. These face controls can't be included, so they stay as " \
++                               u"they are."
++PROD_SCOPE_REVIEW_TITLE = u"Face controls"
++PROD_SCOPE_REVIEW_CHOICE = u"Save the body and leave these face controls as they are"
+ 
+ 
+ def prod_scope_error(code, detail, copy=None, parts=None):
+@@ -48900,10 +48931,11 @@ def prod_scope_summary(kind, inventory, bones=None, include_highlighted=True, ro
+             return full[u"message"]
+         if full[u"status"] == u"review-required" and include_highlighted:
+             return full[u"message"]
+-        if inventory[u"highlighted"] and not include_highlighted:
+-            text = u"The listed controls are left as they are on the character."
+-        elif inventory[u"highlighted"]:
+-            text = u"Includes the listed facial bones. Facial expressions are not saved."
++        # C2 (Owner, after Fox run 1): supported face-group bones (jaw, tongue) are simply part of the body pose; only
++        # controls CPM can't capture (a review-required body) are left as they are, by the artist's choice.
++        if full[u"status"] == u"review-required" and not include_highlighted:
++            text = (u"The body pose is saved and the listed face controls stay as they are. Facial expressions and "
++                    u"the rootTransform are not saved.")
+         else:
+             # PS-2 UI corrections: only the meaningful exclusions. "rootTransform" (not "scene placement") so it
+             # never implies the visible body can't move; the hip explanation is in Pose Info (F01-DI-01, RETAIN R3).
+@@ -48948,21 +48980,23 @@ def prod_scope_dialog_state(inventory, choice):
+         out[u"request"] = prod_scope_request(kind, bones) if bones else None
+         return out
+     full = inventory[u"full_body"]
+-    highlighted = inventory[u"highlighted"]
+     exclude = bool(choice.get(u"exclude_highlighted"))
+     if full[u"status"] == u"refused":
+         # PS-2 UI corrections: a refusal the review can't resolve shows only its reason (which points to Selected
+         # parts), never the review checklist.
+         out[u"summary"] = full[u"message"]
+         return out
+-    out[u"review"] = list(full[u"review"] or highlighted)
+-    if full[u"status"] == u"review-required" and not exclude:
++    # C2 (Owner, after Fox run 1): no review when every face-group bone is supported (it is saved with the body);
++    # a choice only for the controls CPM can't capture, and only those are left as they are.
++    review = list(full[u"review"] or []) if full[u"status"] == u"review-required" else []
++    out[u"review"] = review
++    if review and not exclude:
+         out[u"summary"] = full[u"message"]
+         return out
+-    out[u"summary"] = prod_scope_summary(kind, inventory, include_highlighted=not exclude)
++    out[u"summary"] = prod_scope_summary(kind, inventory, include_highlighted=not (exclude and review))
+     exclusions = []
+-    if exclude and highlighted:
+-        exclusions = [{u"id": u"face", u"bones": sorted(set(highlighted)), u"reason": u"expression controls left "
++    if exclude and review:
++        exclusions = [{u"id": u"face", u"bones": sorted(set(review)), u"reason": u"expression controls left "
+                        u"unchanged by the artist", u"provenance": u"user_confirmed", u"policy_revision": None,
+                        u"label": u"Face"}]
+     out[u"request"] = prod_scope_request(kind, [], exclusions)

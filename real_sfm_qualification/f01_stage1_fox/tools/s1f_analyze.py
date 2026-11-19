@@ -4,8 +4,11 @@ closed). Reads Q/staged/IDENTITIES.json, Q/observations/S1F-<step>.json, Q/evide
 saved pose kept in library_after, restore.json) and Q/sessions; writes Q/evidence/S1F_VERDICT.json and S1F_VERDICT.md
 (exclusive create). It never changes the run.
 
-Process A (PREP, SAVED) prepares Fox B on the disposable session copy, saves the Fox A pose and saves the session;
-Process B (BASE ... ABORT) is a new SFM process on that saved copy.
+Run 2 (Designer disposition after run 1, C5/C6): Process A (PREP, SAVED) creates two fresh Foxes on the disposable
+session copy, both rigged by the installed stock rig_biped_simple: Fox S (source, posed) and Fox D (destination,
+posed and placed differently); it saves Fox S's Full body and saves the session. The session's original Fox
+(foxmccouldwm1, an older rig) is the untouched peer. Process B (BASE ... ABORT) is a new SFM process on that saved
+copy. A gate with no evaluated check (a missing capture) is NOT EVALUATED, never PASS.
 
 Gates:
   EVIDENCE   identities; every capture with the qualification build, no capture error; PREP and SAVED from one SFM
@@ -13,26 +16,29 @@ Gates:
              shot and playhead; S1_SESSION.dmx saved (it differs from the R2 fixture), S1_SPARE.dmx never; the
              library changed only by the one Fox pose (and its pose_sources.json entry, character files); library
              and installation restored exactly; no unverified, uncertain or failed-Abort result in the CPM logs
-  PREP       the recorded fixture preparation: Fox A and Fox B are the same model, both admitted by CPM's structural
-             rig discovery with the same description; Fox B is posed and placed visibly differently; the saved
-             session reopens with every channel of the three sets exactly as prepared (BASE equals PREP)
-  SAVE       one version 2 structural rig record of Fox A (adapter structural_rig_v1), with the drafted written set;
+  PREP       the recorded fixture preparation: Fox S and Fox D are the same model, both admitted by CPM's structural
+             rig discovery with the same description; Fox D is posed and placed visibly differently; the saved
+             session reopens with every channel of the three sets as prepared (BASE equals PREP): the same channels,
+             bindings, logs and key times, every value exact except quaternion key components, which may differ by
+             at most one float32 step (SFM's own reload rounding, measured in run 1: 1.19e-7)
+  SAVE       one version 2 structural rig record of Fox S (adapter structural_rig_v1), with the drafted written set;
              the CPM log reports the structural admission; Save read-only; the record selected in Pose Info at SAVED
              and selected again after the restart (BASE)
-  APPLY      only Fox B's drafted written channels changed, both rig handle and direct bone channels; on each, every
+  APPLY      only Fox D's drafted written channels changed, both rig handle and direct bone channels; on each, every
              key other than the one at the mapped tick unchanged; P7 verified; one owned "Apply Pose" entry
-  POSTURE    independent of CPM's planner: every bone of Fox B, relative to its own placement handle, matches Fox A's
-             saved posture relative to Fox A's (usable-reproduction tolerances below; maxima reported); Fox B's
+  POSTURE    independent of CPM's planner: every bone of Fox D, relative to its own placement handle, matches Fox S's
+             saved posture relative to Fox S's (usable-reproduction tolerances below; maxima reported); Fox D's
              placement handle and model transform, and the local offsets of its directly animated bones, unchanged
   HISTORY    navigation away and back keeps the pose; Undo restores BASE, Redo restores APPLY, the repeat Apply is a
              true no-op, the final Undo restores BASE, each with the expected Edit menu entries
   ABORT      the armed qualification fault after the mixed rig/FK writes of one Apply: the CPM log shows the
-             injected failure after as many writes as the committed Apply made and a verified Abort; Fox B's authored
+             injected failure after as many writes as the committed Apply made and a verified Abort; Fox D's authored
              state and the Undo history exactly as before; the fault slot consumed
-  PEER       Fox A (source) and Tails (peer) unchanged at every capture
-  TAILS      Tails is refused by the structural discovery (Stage 1 admits no control-less bone) and has no saved pose
+  PEER       Fox S (source) and the original Fox (peer) unchanged at every capture
+  TAILS      Tails' Save New attempt is refused by the structural discovery (the CPM log: control-less bones,
+             BODY-RIG-unavailable) and Tails has no saved pose
 Verdict: AUTOMATED PASS (every gate; Stage 1 native acceptance also needs the Owner's visual acceptance);
-REFUSED (Fox A's Full body Save was refused: safe, but Stage 1 is not qualified); FAIL (complete evidence, a
+REFUSED (Fox S's Full body Save was refused: safe, but Stage 1 is not qualified); FAIL (complete evidence, a
 functional gate failed); INCOMPLETE (evidence, preparation or restoration missing or failed).
 
 usage: python -I s1f_analyze.py S1F.json      (or: s1f_tool.py S1F.json analyze)
@@ -61,6 +67,7 @@ BAD_LOG = ("PROD_POSE_BODY-P7-unverified", "PROD_POSE_BODY-abort-unverified", "P
            "PROD_POSE_BODY-start-undo-uncertain", "PROD_POSE_BODY-finish-undo-uncertain", "recovery-unverified",
            "PROD_POSE_SCOPE-P7-unverified", "PROD_POSE_SCOPE-abort")
 FAULT_TEXT = "qualification fault injected at after-writes"
+RELOAD_STEP = 2.0 ** -23       # one float32 step for a quaternion component in [0.5, 1): run 1's measured rounding
 # Usable reproduction (the designer: faithful, usable posture, not exact matching of harmless secondary effects).
 POSTURE_POSITION, POSTURE_ANGLE = 0.05, 0.5
 # Unchanged quantities (placement, offsets, peers): the P7 observation tolerances.
@@ -183,6 +190,33 @@ def max_difference(a, b, names):
     return dp, dq
 
 
+def reopened_as_prepared(prep, base, role):
+    """BASE against PREP across the restart: identical channels and frames (bindings, logs, key times); key values
+    exact, except quaternion components within one float32 step. Returns (ok, rounded keys, problems)."""
+    a, b = chans(prep, role), chans(base, role)
+    problems, rounded = [], 0
+    if sorted(a) != sorted(b):
+        return False, 0, ["channels differ"]
+    for n in sorted(a):
+        if a[n].get("frame") is None or a[n].get("frame") != b[n].get("frame"):
+            problems.append(n)
+            continue
+        ka, kb = a[n].get("keys") or [], b[n].get("keys") or []
+        if [[k[0] for k in la] for la in ka] != [[k[0] for k in lb] for lb in kb]:
+            problems.append(n)                     # key times (and counts) must be identical
+            continue
+        for la, lb in zip(ka, kb):
+            for x, y in zip(la, lb):
+                if x[1] == y[1]:
+                    continue
+                if isinstance(x[1], list) and len(x[1]) == 4 and isinstance(y[1], list) and len(y[1]) == 4 and \
+                        all(abs(float(u) - float(v)) <= RELOAD_STEP for u, v in zip(x[1], y[1])):
+                    rounded += 1
+                else:
+                    problems.append(n)
+    return not problems, rounded, problems[:8]
+
+
 def bones_same(a, b):
     if sorted(a) != sorted(b):
         return False
@@ -261,7 +295,7 @@ def evaluate(R):
       R.ids.get("candidate_cpm_sha256") == c["pins"]["candidate_cpm_sha256"], R.ids.get("qualification_cpm_sha256"))
     records = saved_records(R)
     refused = "SAVED" in cap and not records
-    R.info["refusal"] = "Fox A's Full body Save wrote no record" if refused else None
+    R.info["refusal"] = "Fox S's Full body Save wrote no record" if refused else None
     steps = A_STEPS if refused else STEPS
     for step in steps:
         if not E("captured.%s" % step, step in cap):
@@ -301,7 +335,7 @@ def evaluate(R):
     Pp = lambda cid, ok, d=None: R.check("PREP", cid, ok, d)  # noqa: E731
     prep = cap["PREP"]
     models = dict((r, sets(prep, r).get("model")) for r in ROLES)
-    Pp("prep.fox_a_and_fox_b_are_the_fox_model", all((u"%s" % models[r]).replace("\\", "/").lower() == MODEL
+    Pp("prep.fox_s_and_fox_d_are_the_fox_model", all((u"%s" % models[r]).replace("\\", "/").lower() == MODEL
                                                     for r in ("source", "target")), models)
     a_src, a_tgt = adm(prep, "source"), adm(prep, "target")
     Pp("prep.both_foxes_admitted_by_structural_discovery", a_src.get("placement") == PLACEMENT and
@@ -316,14 +350,15 @@ def evaluate(R):
     R.info["prep_difference"] = {"position": dp, "angle_degrees": dq}
     hs = world((sets(prep, "source").get("handles") or {}).get(PLACEMENT) or [[0.0] * 3, [0, 0, 0, 1]] * 2)
     ht = world((sets(prep, "target").get("handles") or {}).get(PLACEMENT) or [[0.0] * 3, [0, 0, 0, 1]] * 2)
-    Pp("prep.fox_b_posed_and_placed_visibly_differently", dq > VISIBLE_ANGLE and (
+    Pp("prep.fox_d_posed_and_placed_visibly_differently", dq > VISIBLE_ANGLE and (
         dist(hs[0], ht[0]) > VISIBLE_DISTANCE or angle(hs[1], ht[1]) > VISIBLE_ANGLE),
        {"posture_angle": dq, "placement_distance": dist(hs[0], ht[0]), "placement_angle": angle(hs[1], ht[1])})
     if not refused:
         base = cap["BASE"]
-        Pp("prep.saved_session_reopens_as_prepared", all(field(base, r, "content") == field(prep, r, "content")
-                                                        for r in ROLES),
-           dict((r, changed(field(prep, r, "content"), field(base, r, "content"))[:6]) for r in ROLES))
+        reopened = dict((r, reopened_as_prepared(prep, base, r)) for r in ROLES)
+        R.info["reload_rounded_keys"] = dict((r, v[1]) for r, v in reopened.items())
+        Pp("prep.saved_session_reopens_as_prepared", all(v[0] for v in reopened.values()),
+           dict((r, v[2]) for r, v in reopened.items()))
 
     V = lambda cid, ok, d=None: R.check("SAVE", cid, ok, d)  # noqa: E731
     saved = cap["SAVED"]
@@ -332,7 +367,7 @@ def evaluate(R):
     region = (pose.get("regions") or {}).get("full_body") or {}
     R.info["record"] = [r[0] for r in records]
     written = len(region.get("positions") or {}) + len(region.get("orientations") or {})
-    V("save.one_version2_structural_record_of_fox_a", len(records) == 1 and pose.get("version") == 2 and
+    V("save.one_version2_structural_record_of_fox_s", len(records) == 1 and pose.get("version") == 2 and
       pose.get("adapter") == RULE and sorted(pose.get("regions") or []) == ["full_body"] and
       (u"%s" % (pose.get("source") or {}).get("model_ref")).lower() == MODEL and
       sorted(list(region.get("positions") or {}) + list(region.get("orientations") or {})) ==
@@ -388,7 +423,7 @@ def evaluate(R):
         per[cls] = dict(zip(("position", "angle_degrees", "bones"), max_difference(src_pose, dst_pose, sub) +
                             (len(sub),)))
     R.info["posture"] = {"position": dp, "angle_degrees": dq, "bones": len(names), "by_class": per}
-    Q("posture.fox_b_takes_fox_a_saved_body_posture_independently_observed", len(names) == len(src_pose) - len(
+    Q("posture.fox_d_takes_fox_s_saved_body_posture_independently_observed", len(names) == len(src_pose) - len(
         kept & set(src_pose)) and per["constrained"]["bones"] > 0 and dp <= POSTURE_POSITION and
       dq <= POSTURE_ANGLE, R.info["posture"])
     hb, ha = (sets(base, "target").get("handles") or {}).get(PLACEMENT), (sets(app, "target").get("handles") or
@@ -441,40 +476,50 @@ def evaluate(R):
           [s for s in B_STEPS if field(cap[s], role, "sha256") != field(base, role, "sha256")])
 
     T = lambda cid, ok, d=None: R.check("TAILS", cid, ok, d)  # noqa: E731
-    peer = adm(prep, "peer")
-    T("tails.refused_by_structural_discovery", peer.get("code") == u"structure-unsupported" and
-      not peer.get("placement"), peer.get("error"))
+    T("tails.refused_by_structural_discovery", any("PROD_POSE_BODY-RIG-unavailable" in l and "structure-unsupported" in l
+                                                   for l in lines) and
+      any("PROD_POSE_BODY-refused" in l and "control-less bones" in l for l in lines))
     T("tails.no_saved_pose", len(records) == 1 and records[0][0].split("/")[1].lower().startswith("foxmccouldwm"),
       [r[0] for r in records])
     return refused
 
 
 def verdict(checks, refused):
-    gate = lambda name: all(x["pass"] for x in checks if x["gate"] == name)  # noqa: E731
+    """Each gate True (every check passed), False (one failed) or None: NOT EVALUATED (no check ran, e.g. a missing
+    capture stopped the analysis). Never PASS without a passed check."""
+    def gate(name):
+        mine = [x["pass"] for x in checks if x["gate"] == name]
+        return all(mine) if mine else None
     names = ("EVIDENCE", "PREP", "SAVE", "APPLY", "POSTURE", "HISTORY", "ABORT", "PEER", "TAILS")
     gates = dict((n, gate(n)) for n in names)
-    if not gates["EVIDENCE"] or not gates["PREP"]:
+    if gates["EVIDENCE"] is not True or gates["PREP"] is False:
         v = "INCOMPLETE"
     elif refused:
         v = "REFUSED"
-    elif all(gates.values()):
+    elif all(g is True for g in gates.values()):
         v = "AUTOMATED PASS"
+    elif gates["PREP"] is None:
+        v = "INCOMPLETE"
     else:
         v = "FAIL"
     return v, gates
+
+
+def gate_text(v):
+    return "PASS" if v is True else "FAIL" if v is False else "NOT EVALUATED"
 
 
 def markdown(out):
     lines = ["# F-01 Stage 1 native Fox qualification: %s" % out["verdict"], "",
              "Qualification CPM `%s` (Stage 1 candidate `%s`). Gates: %s." % (
                  out["identities"].get("qualification_cpm_sha256"), out["identities"].get("candidate_cpm_sha256"),
-                 ", ".join("%s %s" % (k, "PASS" if v else "FAIL") for k, v in sorted(out["gates"].items()))), ""]
+                 ", ".join("%s %s" % (k, gate_text(v)) for k, v in sorted(out["gates"].items()))), ""]
     if out["verdict"] == "AUTOMATED PASS":
         lines += ["**Every automated gate passed. Stage 1 native acceptance also needs the Owner's visual acceptance** "
-                  "(Fox B takes Fox A's body posture and secondary articulation, in its own place, without severe "
+                  "(Fox D takes Fox S's body posture and secondary articulation, in its own place, without severe "
                   "distortion).", ""]
     elif out["verdict"] == "REFUSED":
-        lines += ["**Fox A's Full body was refused (%s): safe, but Stage 1 is not natively qualified.**"
+        lines += ["**Fox S's Full body was refused (%s): safe, but Stage 1 is not natively qualified.**"
                   % out["info"].get("refusal"), ""]
     lines += ["| Gate | Check | Result | Detail |", "|---|---|---|---|"]
     for x in out["checks"]:

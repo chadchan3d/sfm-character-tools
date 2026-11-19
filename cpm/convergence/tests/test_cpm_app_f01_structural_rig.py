@@ -806,29 +806,23 @@ def section_window(app, ns, reg, fx, root):
         state = ns["prod_scope_dialog_state"](inv, {u"kind": u"full_body", u"bones": [], u"exclude_highlighted": False})
         check("E.dialog_state_enables_full_body_save", state[u"save_enabled"] is True and state[u"request"] == {
             u"kind": u"full_body", u"bones": [], u"exclusions": []}, state)
-        check("E.review_offers_only_directly_animated_face_bones", all(
-            ns["prod_body_rig_probe"](ctx(ns), IDENTITY, reg, QUAL)[u"classes"].get(b) == u"fk"
-            for b in inv[u"highlighted"]), inv[u"highlighted"])
-        check("E.save_writes_nothing_to_the_scene", no_mutation(src))
-        # Leave the reviewed face controls unchanged: the user-confirmed exclusion reaches the record.
-        if inv[u"highlighted"]:
-            win.prompts = [u"Window Fox Face"]
-            real = win.prompt_pose_scope
-
-            def leave(inventory, route_):
-                win.dialogs.append((inventory, route_))
-                st = ns["prod_scope_dialog_state"](inventory, {u"kind": u"full_body", u"bones": [],
-                                                               u"exclude_highlighted": True})
-                return {u"name": win.prompts.pop(0), u"kind": u"full_body", u"request": st[u"request"]}
-            win.prompt_pose_scope = leave
-            try:
-                faced = win.save_pose(None, (u"full_body",))
-            finally:
-                del win.prompt_pose_scope
-            del real
-            check("E.leave_unchanged_records_the_confirmed_face_exclusion", faced is not None and sorted(
-                faced[u"record"][u"pose"][u"regions"][u"full_body"][u"exclusions"][0][u"bones"]) == sorted(set(
-                    inv[u"highlighted"])), win.statuses[-1:])
+        # C2 (Designer, after Fox run 1): no scope review on the structural route. Every bone of a drafted description
+        # is classified confidently, so the Face-group jaw and tongue are supported articulation that follows the
+        # pose; facial expressions (flexes) stay preserved.
+        record = saved[u"record"][u"pose"][u"regions"][u"full_body"]
+        check("E.c2_structural_dialog_has_no_review_and_the_plain_summary", inv[u"highlighted"] == [] and
+              state[u"review"] == [] and state[u"summary"] == u"Facial expressions and the rootTransform are not "
+              u"saved.", (inv[u"highlighted"], state[u"summary"]))
+        check("E.c2_jaw_and_tongue_follow_the_saved_pose", record[u"exclusions"] == [] and
+              u"JAW_o" in record[u"orientations"] and u"tonge2_o" in record[u"orientations"] and
+              not [b for b in record[u"descriptor"][u"bones"] if b[u"class"] == u"fk-preserved"])
+        check("E.c2_flex_controls_stay_preserved", not [n for n in list(record[u"orientations"]) +
+                                                       list(record[u"positions"]) if u"flex" in n])
+        v3 = ns["prod_scope_inventory"](IDENTITY, ns["prod_scope_authorize"](ctx(ns), IDENTITY, reg, QUAL,
+                                                                            u"Save Pose"))
+        check("E.c2_the_generic_v3_review_is_unchanged", v3[u"highlighted"] == [u"JAW", u"tonge", u"tonge1",
+                                                                              u"tonge2", u"tonge3", u"tonge4"],
+              v3[u"highlighted"])
         # Selected parts on the same rigged character stays a version 3 pose.
         win.scope_kind = u"selected_parts"
         win.prompts = [u"Fox Fingers"]
@@ -867,6 +861,17 @@ def section_window(app, ns, reg, fx, root):
               updated[u"record"][u"pose"][u"regions"][u"full_body"][u"orientations"][u"rig_spine_1_o"] !=
               saved[u"record"][u"pose"][u"regions"][u"full_body"][u"orientations"][u"rig_spine_1_o"],
               win.statuses[-1:])
+        # C1: the Poses page's availability for structural records (the button only; Apply still verifies).
+        av = ns["prod_body_rig_availability"]
+        rec = saved[u"record"]
+        future = json.loads(json.dumps(rec))
+        future[u"pose"][u"adapter"][u"revision"] = 2
+        check("E.c1_availability_same_model_in_qualification", av(rec, IDENTITY, QUAL) == u"available" and
+              av(rec, dict(IDENTITY, model=MODEL.upper()), QUAL) == u"available")
+        check("E.c1_availability_refuses_production_other_models_and_unknown_revisions",
+              av(rec, IDENTITY, PROD) == u"not-qualified" and av(rec, dict(IDENTITY, model=u"models/x.mdl"), QUAL) ==
+              u"different-model" and av(rec, None, QUAL) == u"different-model" and av(future, IDENTITY, QUAL) ==
+              u"not-qualified")
         # Production build with a structural record: Apply refuses before any write.
         ns["PROD_POSE_REGISTRY_MODE"] = PROD
         dst = use(ns, world(fx))
@@ -883,6 +888,11 @@ def section_window(app, ns, reg, fx, root):
         win.prompts = [u"Tails-like"]
         got = win.save_pose(None, (u"full_body",))
         inv = win.dialogs[-1][0] if win.dialogs else {}
+        check("E.c3_unsupported_full_body_shows_the_owner_wording", inv.get(u"full_body", {}).get(u"message") ==
+              u"Full body poses aren't supported for this character yet. You can still save Selected parts." and
+              ns["prod_scope_dialog_state"](inv, {u"kind": u"full_body"})[u"summary"] ==
+              inv.get(u"full_body", {}).get(u"message") and any(
+                  u"SCOPE-refused" in l and u"rig-driven" in l for l in ns["LOG"][-40:]), inv.get(u"full_body"))
         check("E.control_less_bones_keep_the_generic_refusal", got is None and not inv.get(u"structural_rig") and
               inv.get(u"full_body", {}).get(u"status") == u"refused" and any(
                   u"BODY-RIG-unavailable" in l for l in ns["LOG"][-40:]), win.statuses[-1:])

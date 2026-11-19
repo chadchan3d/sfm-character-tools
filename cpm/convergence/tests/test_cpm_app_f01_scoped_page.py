@@ -74,7 +74,8 @@ def labels(dialog, QtGui):
 
 
 def summary_of(dialog, QtGui):
-    texts = [t for t in labels(dialog, QtGui) if t and t not in (u"Name:",) and not t.startswith(u"Review these")]
+    texts = [t for t in labels(dialog, QtGui) if t and t not in (u"Name:",) and not t.startswith(u"Review these")
+             and not t.startswith(u"The body pose is saved. These face controls")]
     return texts[-1] if texts else u""
 
 
@@ -93,7 +94,7 @@ def main():
     def default(dialog, seen, save):
         tree = dialog.findChild(QtGui.QTreeWidget, "pose_scope_picker")
         radios = dict((r.text(), r) for r in dialog.findChildren(QtGui.QRadioButton))
-        box = [g for g in dialog.findChildren(QtGui.QGroupBox) if g.title() == u"Review scope"][0]
+        box = [g for g in dialog.findChildren(QtGui.QGroupBox) if g.title() == u"Face controls"][0]
         lists = [w for w in box.findChildren(QtGui.QListWidget)]
         seen[u"state"] = (radios[u"Full body"].isChecked(), not radios[u"Selected parts"].isChecked(),
                           tree.isHidden(), box.isVisible(), [lists[0].item(i).text()
@@ -109,11 +110,11 @@ def main():
     check("D1 the Save dialog: title Save Pose, Save and Cancel, Save is the default",
           seen[u"title"] == u"Save Pose" and seen[u"buttons"] == [u"Cancel", u"Save"] and seen[u"default"] == [u"Save"],
           seen)
-    check("D1 Full body is the default; the inactive picker is hidden; the review lists the highlighted controls",
-          seen[u"state"][:6] == (True, True, True, True, [u"jaw"], True), seen[u"state"])
+    # C2 (Owner, after Fox run 1): a supported face-group bone (the jaw) is saved with the body: no review box.
+    check("D1 Full body is the default; the inactive picker is hidden; no review interrupts a supported face",
+          seen[u"state"][:4] == (True, True, True, False) and seen[u"state"][5] is True, seen[u"state"])
     check("D1 coverage line comes from the ledger state",
-          seen[u"state"][6] == u"Includes the listed facial bones. Facial expressions are not saved.",
-          seen[u"state"][6])
+          seen[u"state"][6] == u"Facial expressions and the rootTransform are not saved.", seen[u"state"][6])
     check("D1 group labels drop a repeated prefix only where unambiguous; the full path is the tooltip",
           seen[u"groups"][0][:2] == (u"LeftFingers", u"Arms > LeftFingers") and seen[u"groups"][1][0] == u"Face",
           seen[u"groups"])
@@ -127,13 +128,27 @@ def main():
                   u"request": {u"kind": u"full_body", u"bones": [], u"exclusions": []}}, got)
 
     def leave(dialog, seen, save):
-        [c for c in dialog.findChildren(QtGui.QCheckBox) if c.text() == u"Leave these controls unchanged"][0].setChecked(
+        [c for c in dialog.findChildren(QtGui.QCheckBox) if c.text() == u"Save the body and leave these face controls as they are"][0].setChecked(
             True)
         seen[u"summary"] = summary_of(dialog, QtGui)
         return True
-    got, seen = drive(window, QtGui, QtCore, inventory(), False, leave)
+    review = {u"status": u"review-required", u"code": u"review-required", u"review": [u"jaw"],
+              u"message": u"Some face controls can't be saved with this pose. Choose to save the body and leave them "
+                          u"as they are."}
+
+    def before(dialog, seen, save):
+        box = [g for g in dialog.findChildren(QtGui.QGroupBox) if g.title() == u"Face controls"][0]
+        lists = box.findChildren(QtGui.QListWidget)
+        seen[u"before"] = (box.isVisible(), [lists[0].item(i).text() for i in range(lists[0].count())],
+                           save.isEnabled(), summary_of(dialog, QtGui))
+        return False
+    got, seen = drive(window, QtGui, QtCore, inventory(full=review), False, before)
+    check("D2 controls CPM can't capture: a positively worded choice, and Save waits for it",
+          got is None and seen[u"before"] == (True, [u"jaw"], False, review[u"message"]), seen)
+    got, seen = drive(window, QtGui, QtCore, inventory(full=review), False, leave)
     check("D2 leaving the reviewed controls unchanged is an explicit, recorded user decision",
-          seen[u"summary"] == u"The listed controls are left as they are on the character."
+          seen[u"summary"] == u"The body pose is saved and the listed face controls stay as they are. Facial "
+                             u"expressions and the rootTransform are not saved."
           and got[u"request"][u"exclusions"] == [{u"id": u"face", u"bones": [u"jaw"], u"reason": u"expression controls "
                                                   u"left unchanged by the artist", u"provenance": u"user_confirmed",
                                                   u"policy_revision": None, u"label": u"Face"}], (seen, got))
@@ -145,7 +160,7 @@ def main():
         tree.topLevelItem(0).setCheckState(0, QtCore.Qt.Checked)
         seen[u"after"] = (save.isEnabled(), summary_of(dialog, QtGui),
                           [tree.topLevelItem(0).child(i).checkState(0) == QtCore.Qt.Checked for i in range(2)])
-        box = [g for g in dialog.findChildren(QtGui.QGroupBox) if g.title() == u"Review scope"][0]
+        box = [g for g in dialog.findChildren(QtGui.QGroupBox) if g.title() == u"Face controls"][0]
         seen[u"review_hidden"] = not box.isVisible()
         return True
     got, seen = drive(window, QtGui, QtCore, inventory(), False, parts)
@@ -178,8 +193,8 @@ def main():
           got is None and not seen[u"save"] and u"Choose Selected parts" in seen[u"summary"], (got, seen))
 
     def refused_with_face(dialog, seen, save):
-        box = [g for g in dialog.findChildren(QtGui.QGroupBox) if g.title() == u"Review scope"][0]
-        leave_box = [c for c in dialog.findChildren(QtGui.QCheckBox) if c.text() == u"Leave these controls unchanged"]
+        box = [g for g in dialog.findChildren(QtGui.QGroupBox) if g.title() == u"Face controls"][0]
+        leave_box = [c for c in dialog.findChildren(QtGui.QCheckBox) if c.text() == u"Save the body and leave these face controls as they are"]
         seen[u"review_visible"] = box.isVisible()
         seen[u"leave_visible"] = bool(leave_box) and leave_box[0].isVisible()
         seen[u"summary"] = summary_of(dialog, QtGui)

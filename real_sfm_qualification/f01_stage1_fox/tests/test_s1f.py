@@ -2,9 +2,10 @@
 """F-01 Stage 1 Fox kit: offline tests of the capture and the analyzer.
 
 The capture script runs against the real Stage 1 CPM (the stage E harness of cpm/convergence/tests: the extracted
-blocks and the fake scene built from fixtures/f01_body/fox_shot15.json). A complete two-process run is then simulated
-with CPM's real Save, Apply, Undo, Redo, no-op and injected-fault Abort on fake scenes (Fox A, a renamed and
-differently posed Fox B, and a Tails-like peer with a control-less bone), and analyzed; then each gate is broken once.
+blocks and the fake scene built from fixtures/f01_body/fox_shot15.json). A complete two-process run 2 is then
+simulated with CPM's real Save, Apply, Undo, Redo, no-op and injected-fault Abort on fake scenes (Fox S, a renamed and
+differently posed Fox D, the original Fox as the untouched peer, and a Tails-like character with a control-less bone
+whose Save New probe refuses), and analyzed; then each gate is broken once.
 This shows the kit's own logic, never SFM's behaviour.
 
 Usage: python -I test_s1f.py   (or <SFM python 2.7.5> -E -B test_s1f.py)
@@ -105,16 +106,17 @@ class Run(object):
         self.q = os.path.join(root, "Q")
         for d in ("staged", "sessions", "observations", os.path.join("evidence", "logs")):
             os.makedirs(os.path.join(self.q, d))
-        self.src = make(u"foxmccouldwm1")
-        self.dst = make(u"foxmccouldwm2", posed=True, rig=u"rig_biped_foxmccouldwm2")
-        self.peer = make(u"milestailsprower1", jiggle)
+        self.src = make(u"foxmccouldwm2", rig=u"rig_biped_foxmccouldwm2")
+        self.dst = make(u"foxmccouldwm3", posed=True, rig=u"rig_biped_foxmccouldwm3")
+        self.peer = make(u"foxmccouldwm1")
+        self.tails = make(u"milestailsprower1", jiggle)
         self.caps, self.pid, self.selected = {}, 1000, None
         self.lib = T.library(root, u"lib")
 
     def capture(self, step):
         data = {"format": CAP["FORMAT"], "step": step, "pid": self.pid, "cpm_build_sha256": QUAL_SHA,
                 "registry_mode": u"qualification", "qualification_fault": list(NS["PROD_POSE_QUAL_FAULT"]),
-                "names": {"source": u"foxmccouldwm1", "target": u"foxmccouldwm2", "peer": u"milestailsprower1"},
+                "names": {"source": u"foxmccouldwm2", "target": u"foxmccouldwm3", "peer": u"foxmccouldwm1"},
                 "errors": [], "sets": {}}
         for role, w in (("source", self.src), ("target", self.dst), ("peer", self.peer)):
             data["sets"][role] = capture_set(w, role == "target")
@@ -150,6 +152,9 @@ class Run(object):
                          "adapter": r[u"pose"][u"adapter"], "regions": [u"full_body"], "model": r[u"model_ref"],
                          "exclusions": [], "written": 0}
         self.capture("SAVED")
+        T.use(NS, self.tails)                               # Tails' Save New: the structural probe refuses
+        check("sim.tails_probe_refuses", NS["prod_body_rig_probe"](T.ctx(NS), T.IDENTITY, REG, u"qualification") is
+              None)
         self.pid += 1                                       # the restart
         self.capture("BASE")
         self.apply()
@@ -239,7 +244,7 @@ def section_capture(root):
           and len(s["model_state"]) == 4)
     peer = capture_set(make(u"milestailsprower1", jiggle), False)
     check("capture.records_a_refusal_with_its_code", peer["admission"].get("code") == u"structure-unsupported" and
-          "keys" not in list(peer["channels"].values())[0], peer["admission"])
+          all("keys" in c and "frame" in c for c in peer["channels"].values()), peer["admission"])
     renamed = capture_set(make(u"foxmccouldwm2", rig=u"rig_biped_foxmccouldwm2"), False)
     check("capture.description_digest_ignores_the_rig_name", renamed["admission"]["description_sha256"] ==
           adm["description_sha256"] and renamed["admission"]["rig_name"] != adm["rig_name"])
@@ -359,7 +364,7 @@ def section_verdicts(root):
 
     def prep_not_restored(c, f):
         n = sorted(c["BASE"]["sets"]["target"]["channels"])[0]
-        c["BASE"]["sets"]["target"]["channels"][n]["content"] = "v" * 64
+        c["BASE"]["sets"]["target"]["channels"][n]["frame"] = "v" * 64
     variant("saved_session_not_reopened_as_prepared_is_incomplete", prep_not_restored, "INCOMPLETE", "PREP")
 
     def same_pose(c, f):
@@ -382,9 +387,41 @@ def section_verdicts(root):
         f["record"][u"pose"].pop(u"adapter")
     variant("a_record_without_the_adapter_fails", registry_record, "FAIL", "SAVE")
 
-    def tails_admitted(c, f):
-        c["PREP"]["sets"]["peer"]["admission"] = dict(c["PREP"]["sets"]["source"]["admission"])
-    variant("tails_admitted_fails", tails_admitted, "FAIL", "TAILS")
+    variant("tails_not_refused_fails", lambda c, f: f.__setitem__("log", [
+        l for l in f["log"] if "BODY-RIG-unavailable" not in l]), "FAIL", "TAILS")
+
+    # C6: the reopened session may differ from PREP by SFM's own quaternion rounding only.
+    def first_quat(c, role):
+        for n, ch in sorted(c["PREP"]["sets"][role]["channels"].items()):
+            for layer in ch["keys"]:
+                for k in layer:
+                    if isinstance(k[1], list) and len(k[1]) == 4:
+                        return k
+        raise AssertionError("no quaternion key")
+
+    def nudge(steps, role="peer"):
+        def fn(c, f):
+            k = first_quat(c, role)
+            k[1][0] = k[1][0] + steps * 2.0 ** -23
+        return fn
+    variant("one_float32_step_reload_rounding_is_accepted", nudge(1), "AUTOMATED PASS")
+    variant("one_step_rounding_on_the_destination_is_accepted", nudge(1, "target"), "AUTOMATED PASS")
+    variant("two_steps_are_not_reload_rounding", nudge(2), "INCOMPLETE", "PREP")
+
+    def key_time(c, f):
+        first_quat(c, "peer")[0] += 1
+    variant("a_changed_key_time_is_not_reload_rounding", key_time, "INCOMPLETE", "PREP")
+
+    def missing(c, f):
+        for step in ("NAV", "UNDO", "REDO", "NOOP", "UNDO2", "ABORT"):
+            del c[step]
+    v, gates, failed, _ = analyze(run.write(missing))
+    check("verdict.missing_captures_are_not_evaluated_never_pass", v == "INCOMPLETE" and gates["EVIDENCE"] is False
+          and all(gates[g] is None for g in ("PREP", "SAVE", "APPLY", "POSTURE", "HISTORY", "ABORT", "PEER",
+                                             "TAILS")), gates)
+    import s1f_analyze as A
+    check("verdict.markdown_says_not_evaluated", "HISTORY NOT EVALUATED" in A.markdown({
+        "verdict": v, "gates": gates, "identities": {}, "checks": [], "info": {}}))
 
     def wrong_build(c, f):
         c["APPLY"]["cpm_build_sha256"] = "p" * 64

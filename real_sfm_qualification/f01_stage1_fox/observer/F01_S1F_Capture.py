@@ -2,15 +2,15 @@
 """F-01 Stage 1: the native Fox structural-rig qualification, state capture. STRICTLY READ-ONLY. Run from SFM's
 Script Editor (Python 2.7) with CPM open, after the setup line:
 
-    S1F_DIR = r"<Q>"; S1F_SOURCE = "<Fox A set>"; S1F_TARGET = "<Fox B set>"; S1F_PEER = "<Tails set>"
+    S1F_DIR = r"<Q>"; S1F_SOURCE = "<Fox S set>"; S1F_TARGET = "<Fox D set>"; S1F_PEER = "foxmccouldwm1"
     S1F_STEP = "PREP"; execfile(r"<REPO>\\real_sfm_qualification\\f01_stage1_fox\\observer\\F01_S1F_Capture.py")
 
 For the three named animation sets of the current shot it records, through the loaded CPM's own read-only functions
 (prod_body_live, prod_pose_channel_authored, prod_pose_transform_state, prod_pose_time_read, prod_body_discover,
 prod_body_rig_draft, prod_body_classify):
 - every channel of the set's channels clip: a digest of its complete authored state (this process's handles
-  included), a handle-free content digest (comparable across SFM processes), its destination, and for the target
-  every key;
+  included), a handle-free content digest and a handle-free frame digest without key values (comparable across SFM
+  processes), its destination and every key;
 - every bone's and rig handle's local and absolute transform, and the model's;
 - CPM's structural rig admission: the drafted description (placement, helpers, handle and constraint counts), the
   bone classes and the role of every channel, or the refusal;
@@ -56,6 +56,15 @@ def s1f_strip(obj):
     return obj
 
 
+def s1f_frame(stripped):
+    """The handle-free authored state with key times but without key values (run 2: SFM's own session reload may
+    round a quaternion key by one float32 step; the values are compared separately, within that step only)."""
+    out = dict(stripped)
+    out[u"layers"] = [dict(layer, keys=[k[0] for k in layer.get(u"keys") or []]) for layer in
+                      stripped.get(u"layers") or []]
+    return out
+
+
 def s1f_state(cpm, dag):
     s = cpm.prod_pose_transform_state(dag)
     return [list(s[u"local_position"]), list(s[u"local_orientation"]), list(s[u"world_position"]),
@@ -95,12 +104,13 @@ def s1f_set(cpm, shot, animset, keys):
         authored = cpm.prod_pose_channel_authored(ch, budget)
         to = (authored.get(u"binding") or {}).get(u"toElement") or {}
         target = to.get(u"value") if isinstance(to, dict) else None
-        row_ = {"sha256": s1f_digest(authored), "content": s1f_digest(s1f_strip(authored)),
+        stripped = s1f_strip(authored)
+        row_ = {"sha256": s1f_digest(authored), "content": s1f_digest(stripped), "frame": s1f_digest(
+            s1f_frame(stripped)),
                 "to": s1f_text(target.get(u"name")) if isinstance(target, dict) else None,
                 "to_type": s1f_text(target.get(u"type")) if isinstance(target, dict) else None,
                 "to_attribute": s1f_text(((authored.get(u"binding") or {}).get(u"toAttribute") or {}).get(u"value"))}
-        if keys:
-            row_["keys"] = [layer.get(u"keys") for layer in authored.get(u"layers") or []]
+        row_["keys"] = [layer.get(u"keys") for layer in authored.get(u"layers") or []]
         channels[s1f_text(ch.GetName())] = row_
     out["channels"] = channels
     out["keys"] = budget[0]
@@ -169,7 +179,7 @@ def s1f_capture(g):
             data["errors"].append("%s: %d animation sets named %r" % (role, len(found), names[role]))
             continue
         try:
-            data["sets"][role] = s1f_set(cpm, shot, found[0], keys=role == "target")
+            data["sets"][role] = s1f_set(cpm, shot, found[0], keys=True)
         except Exception as exc:
             data["errors"].append("%s: %r" % (role, exc))
     data["selected_pose"] = s1f_try(lambda: s1f_selected_pose(cpm))
@@ -179,7 +189,7 @@ def s1f_capture(g):
         f.write(payload)
     adm = dict((r, (data["sets"].get(r) or {}).get("admission") or {}) for r in ROLES)
     undo = session["undo"] if isinstance(session["undo"], dict) else {}
-    line = "S1F %s: Fox A %s | Fox B %s | peer %s | undo %r redo %r | errors %s | written" % (
+    line = "S1F %s: Fox S %s | Fox D %s | peer %s | undo %r redo %r | errors %s | written" % (
         step, adm["source"].get("placement") or adm["source"].get("code") or "refused",
         adm["target"].get("placement") or adm["target"].get("code") or "refused",
         adm["peer"].get("placement") or adm["peer"].get("code") or "refused",

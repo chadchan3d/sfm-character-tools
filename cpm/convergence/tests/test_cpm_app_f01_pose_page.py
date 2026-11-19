@@ -1107,6 +1107,106 @@ def section_full_body_apply(window, tabs, env, boxes, QtGui):
         window.refresh_pose_view()
 
 
+def section_structural_apply(window, tabs, env, boxes, QtGui):
+    """F-01 Stage 1 C4 (Fox native run 1: Save worked, Apply Pose stayed disabled). The real window, its button state,
+    Pose Info and the Apply click for a structural rig record (version 2 with the adapter marker) of a character with
+    no registry rig class: Apply is enabled in the qualification build for the same model, and the click reaches the
+    structural authorization and the version 2 transaction. The production build, another model, an unknown adapter
+    revision and a recovery pause keep it disabled, and Pose Info says so."""
+    g = window.render.im_func.func_globals
+    names = ("prod_pose_load_registry", "prod_pose_selected_library", "prod_pose_discover", "prod_pose_rig_class",
+             "prod_pose_registry_select", "prod_resolve_instance", "prod_identity_from_row", "prod_context_token",
+             "prod_body_apply", "prod_pose_reread", "prod_body_rig_authorize", "prod_pose_authorize",
+             "prod_context_token_matches", "PROD_POSE_REGISTRY_MODE")
+    saved = dict((k, g[k]) for k in names)
+    fox = u"models/fursonas/foxmccouldwm.mdl"
+
+    def item(name, pid, model=fox, revision=1):
+        pose = {u"format": u"cpm-pose", u"version": 2, u"adapter": {u"rule": u"structural_rig_v1",
+                                                                    u"revision": revision},
+                u"source": {u"model_ref": model, u"shot_name": u"shot15", u"rig_class": u"structural_rig_v1",
+                            u"t_doc_ticks": 2083, u"t_shot_ticks": 208},
+                u"regions": {u"full_body": {u"profile_id": u"structural_rig_v1", u"exclusions": [],
+                                            u"orientations": {u"rig_hand_L_o": [0.0, 0.0, 0.0, 1.0]},
+                                            u"positions": {u"rig_hand_L_p": [1.0, 2.0, 3.0]}}}}
+        return {u"name": name, u"preset_id": pid, u"revision": 1,
+                u"record": {u"name": name, u"preset_id": pid, u"kind": u"pose", u"model_ref": model,
+                            u"created_at": u"20261119-120000-000000", u"updated_at": u"20261119-120000-000000",
+                            u"pose": pose}}
+    rig = item(u"Fox Rig", u"s1")
+    other = item(u"Other Model", u"s2", model=u"models/other/model.mdl")
+    future = item(u"Future Rig", u"s3", revision=2)
+    state = {"found": {u"items": [rig, other, future], u"unusable": []}}
+    calls = []
+    g["prod_pose_load_registry"] = lambda path=None: dict(BODY_REGISTRY)
+    g["prod_pose_selected_library"] = lambda ident: {u"char_dir": u"unused", u"character_key": u"fox"}
+    g["prod_pose_discover"] = lambda char_dir, key, reg: state["found"]
+    g["prod_pose_rig_class"] = lambda reg, model, checksum: None          # Fox: no registry rig class
+    g["prod_pose_registry_select"] = lambda reg, mode: {u"mappings": list(BODY_SELECTION[u"mappings"])}
+    ident = {"model": fox, "checksum": 4321, "animset_name": u"foxmccouldwm3"}
+    g["prod_resolve_instance"] = lambda tok, identity=None: dict(ident, test_row=True)
+    g["prod_identity_from_row"] = lambda row: dict(ident)
+    g["prod_context_token"] = lambda *a, **k: {"test_context": True}
+    g["prod_context_token_matches"] = lambda token: token == {"test_context": True}
+    g["prod_pose_reread"] = lambda selected, it, reg: it
+    g["prod_body_rig_authorize"] = lambda *a, **k: calls.append((u"structural authorization", a[5][u"preset_id"])) \
+        or {u"mode": u"qualification", u"structural": True}
+    g["prod_pose_authorize"] = lambda *a, **k: calls.append((u"registry authorization",)) or {u"mode": u"x"}
+    g["prod_body_apply"] = lambda i, a, it, reg, phase_callback=None: calls.append(
+        (u"version 2", it[u"preset_id"], bool(a.get(u"structural")))) or {u"phase": u"no-op"}
+
+    def select(name):
+        rows = dict((window.pose_list.item(i).text(), i) for i in range(window.pose_list.count()))
+        window.pose_list.setCurrentRow(rows[name] if name in rows else -1)
+        return window.apply_pose_button.isEnabled()
+
+    def reload():
+        window.pose_list.setCurrentRow(-1)
+        window.refresh_pose_view()
+
+    def note(name):
+        select(name)
+        info = capture_dialog(QtGui, window.open_pose_info)
+        labels = (info[0] if info else {}).get("labels", [])
+        return [t for t in labels if t.startswith(u"Can't be applied")]
+    try:
+        g["PROD_POSE_REGISTRY_MODE"] = u"qualification"
+        window.identity = dict(ident)
+        window.selection_token = {"kind": g["PROD_INSTANCE_TOKEN_KIND"], "test": True}
+        reload()
+        check("S1 qualification: a structural Full body pose of the same model enables Apply Pose",
+              select(u"Fox Rig") is True)
+        check("S1 its summary names the complete pose as available",
+              window.pose_ui_state(window.selected_pose())[u"summary"][0].endswith(u"Available: Full body"),
+              window.pose_ui_state(window.selected_pose())[u"summary"])
+        check("S1 Pose Info shows no can't-be-applied note on another instance of the model",
+              note(u"Fox Rig") == [], note(u"Fox Rig"))
+        select(u"Fox Rig")
+        window.apply_pose_button.click()
+        check("S2 the click reaches the structural authorization and the version 2 transaction",
+              calls == [(u"structural authorization", u"s1"), (u"version 2", u"s1", True)] and
+              window.status.text() == g["PROD_POSE_MESSAGES"][u"no-op"], (calls, window.status.text()))
+        check("S3 a structural pose of another model stays disabled, and Pose Info says so",
+              select(u"Other Model") is False and note(u"Other Model") ==
+              [u"Can't be applied to foxmccouldwm3: Full body."], note(u"Other Model"))
+        check("S3 an unknown adapter revision stays disabled", select(u"Future Rig") is False)
+        g["PROD_POSE_RECOVERY_BLOCK"][0] = u"Apply Pose"
+        check("S3 a recovery pause keeps the structural pose disabled", select(u"Fox Rig") is False)
+        g["PROD_POSE_RECOVERY_BLOCK"][0] = None
+        g["PROD_POSE_REGISTRY_MODE"] = u"production"
+        reload()
+        check("S4 production (adapter experimental): the structural pose stays disabled, and Pose Info says so",
+              select(u"Fox Rig") is False and note(u"Fox Rig") == [u"Can't be applied to foxmccouldwm3: Full body."],
+              note(u"Fox Rig"))
+    finally:
+        g["PROD_POSE_RECOVERY_BLOCK"][0] = None
+        window.pose_list.setCurrentRow(-1)
+        window.identity = None
+        window.selection_token = None
+        g.update(saved)
+        window.refresh_pose_view()
+
+
 def main():
     env = r15.Env("real", os.path.join(tempfile.gettempdir(), "cpm_pose_page_fixture"))
     QtGui = env.QtGui
@@ -1172,6 +1272,7 @@ def main():
     section_polish(window, tabs, env, boxes, QtGui)
     section_selection_refresh(window, tabs, env, boxes)
     section_full_body_apply(window, tabs, env, boxes, QtGui)
+    section_structural_apply(window, tabs, env, boxes, QtGui)
     try:
         window.close()
     except Exception:

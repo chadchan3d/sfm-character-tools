@@ -474,17 +474,21 @@ def section_coverage(ns, fx):
     check("B.a_group_merely_named_face_cannot_authorize_omission",
           u"jaw" in S[u"posed"] and inv[u"highlighted"] == [u"jaw"] and S[u"excluded"] == [])
     state = ns["prod_scope_dialog_state"](inv, {u"kind": u"full_body"})
-    check("B.full_body_summary_discloses_included_facial_bones", state[u"save_enabled"] and
-          state[u"summary"] == u"Includes the listed facial bones. Facial expressions are not saved.", state)
+    # C2 (Owner, after Fox run 1): supported face-group bones are saved with the body, with no review interruption.
+    check("B.full_body_includes_supported_face_bones_without_review", state[u"save_enabled"] and
+          state[u"review"] == [] and state[u"request"][u"exclusions"] == [] and
+          state[u"summary"] == u"Facial expressions and the rootTransform are not saved.", state)
     # An unsupported tail: Full body refuses naming it; Selected parts without it remains available.
     bad = FS.clone(arm)
     bad[u"channels"][u"tail_o"]["from"] = None
     bad[u"channels"][u"tail_o"]["from_attribute"] = u""
     use(ns, FS.World(bad), bad)
     inv = inventory(ns)
+    # Stage 1 C3: the Owner's wording; the refusal still stops the save, and the tail is named in the diagnostic log.
     check("B.unsupported_tail_is_never_silently_omitted", inv[u"full_body"][u"status"] == u"refused" and
-          u"tail" in inv[u"full_body"][u"message"] and u"Choose Selected parts" in inv[u"full_body"][u"message"],
-          inv[u"full_body"])
+          inv[u"full_body"][u"message"] == ns["PROD_SCOPE_FULL_BODY_UNSUPPORTED"] and
+          u"You can still save Selected parts" in inv[u"full_body"][u"message"] and
+          any(u"SCOPE-refused" in l and u"tail" in l for l in ns["LOG"][-12:]), inv[u"full_body"])
     refused("B.tail_cannot_be_selected", outcome(lambda: compile_request(ns, ns["prod_scope_request"](
         u"selected_parts", [u"tail"]))), u"unsupported-selection")
     check("B.selected_parts_without_the_tail_remain_available",
@@ -552,13 +556,16 @@ def section_exclusions(ns, root):
           inv[u"full_body"][u"status"] == u"review-required" and inv[u"full_body"][u"review"] == [u"jaw"],
           inv[u"full_body"])
     state = ns["prod_scope_dialog_state"](inv, {u"kind": u"full_body"})
-    check("C.review_blocks_save_until_resolved", not state[u"save_enabled"] and
-          state[u"summary"] == ns["PROD_SCOPE_REVIEW_SCOPE_COPY"], state)
+    check("C.review_blocks_save_until_resolved", not state[u"save_enabled"] and state[u"review"] == [u"jaw"] and
+          state[u"summary"] == u"Some face controls can't be saved with this pose. Choose to save the body and leave "
+          u"them as they are.", state)     # C2: positive wording, only for controls CPM can't capture
     refused("C.requesting_the_unsupported_solver_for_capture_refuses",
             outcome(lambda: capture(ns, ns["prod_scope_request"](u"full_body"))), u"rig-driven")
     state = ns["prod_scope_dialog_state"](inv, {u"kind": u"full_body", u"exclude_highlighted": True})
     check("C.confirmed_exclusion_allows_full_body_with_honest_copy", state[u"save_enabled"] and
-          state[u"summary"] == u"The listed controls are left as they are on the character." and state[u"request"][u"exclusions"][0][u"provenance"] ==
+          state[u"summary"] == u"The body pose is saved and the listed face controls stay as they are. Facial "
+          u"expressions and the rootTransform are not saved." and state[u"request"][u"exclusions"][0][u"bones"] ==
+          [u"jaw"] and state[u"request"][u"exclusions"][0][u"provenance"] ==
           u"user_confirmed", state)
     lib = library(root, u"synthetic_face")
     saved = ns["prod_pose_save_new"](lib, u"Body only", capture(ns, state[u"request"]), u"20261108-130000-000000", {})
@@ -1558,7 +1565,7 @@ def section_dialog_copy(ns, fx):
           state[u"summary"] == u"Select at least one body control.")
     state = ns["prod_scope_dialog_state"](inv, {u"kind": u"full_body"})
     check("M.unsupported_full_body_explains_and_points_to_selected_parts", not state[u"save_enabled"] and
-          u"Choose Selected parts" in state[u"summary"], state[u"summary"])
+          u"You can still save Selected parts" in state[u"summary"], state[u"summary"])     # Stage 1 C3 wording
     state = ns["prod_scope_dialog_state"](inv, {u"kind": u"selected_parts", u"bones": [u"bip_pelvis"]})
     check("M.selected_root_discloses_articulation_only", state[u"save_enabled"] and
           u"The body root keeps its position." in state[u"summary"], state[u"summary"])
@@ -1797,8 +1804,10 @@ def section_corrections(ns, app, root, lib, grip):
     use(ns, src, arm)
     inv = inventory(ns)
     check("AX1.full_body_refuses_an_unsupported_index_anywhere_in_the_body", inv[u"full_body"][u"status"] ==
-          u"refused" and inv[u"full_body"][u"code"] == u"unsupported-body" and u"tail" in inv[u"full_body"][u"message"],
-          inv[u"full_body"])
+          u"refused" and inv[u"full_body"][u"code"] == u"unsupported-body" and inv[u"full_body"][u"message"] ==
+          ns["PROD_SCOPE_FULL_BODY_UNSUPPORTED"] and any(u"tail" in l and u"unsupported-body" in l
+                                                         for l in ns["LOG"][-12:]),
+          inv[u"full_body"])     # Stage 1 C3: the Owner's wording; the bones stay in the diagnostic log
     check("AX1.classification_names_the_index_reason",
           ns["prod_scope_classify"](ns["prod_scope_state"](ns["prod_resolve_instance"](context(ns)["instance"]))[
               u"D"])[u"bones"][u"tail"][u"reason"] == u"unsupported channel index")
@@ -2574,7 +2583,8 @@ def section_ui_copy(ns, fx, root):
     st = ns["prod_scope_dialog_state"](refused_inv, {u"kind": u"full_body"})
     check("UI.refused_full_body_shows_its_reason_and_no_review_checklist",
           st[u"review"] == [] and not st[u"save_enabled"] and st[u"summary"] ==
-          ns["PROD_SCOPE_MESSAGES"][u"rig-driven"] and u"Choose Selected parts" in st[u"summary"], st)
+          ns["PROD_SCOPE_MESSAGES"][u"rig-driven"] and st[u"summary"] == u"Full body poses aren't supported for this "
+          u"character yet. You can still save Selected parts.", st)     # Stage 1 C3: the Owner-approved wording
     review_inv = dict(inv, highlighted=[u"jaw"], full_body={
         u"status": u"review-required", u"code": u"review", u"review": [u"jaw"], u"message": u"Review these."})
     st = ns["prod_scope_dialog_state"](review_inv, {u"kind": u"full_body"})
