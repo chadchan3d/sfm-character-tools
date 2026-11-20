@@ -129,3 +129,25 @@ The R2 fixture `259ea8a6…` is unchanged. The run folder is kept as evidence.
 - **Disposition:** for the Owner and Designer. This record proposes no procedure change, analyzer change, repeat run
   or adjudication.
 - **Not done:** no production promotion, signing, push, merge or release.
+
+## 7. Final disposition (2026-11-19)
+
+**Authority:** the Owner/Designer's "F-01 Stage 2 — Final Qualification Disposition", checkpoint `97eb43a`.
+
+**Stage 2: CLOSED — ACCEPTED BY OWNER/DESIGNER ADJUDICATION, WITH DOCUMENTED NAV HISTORY EXCEPTION.** No repeat test.
+
+**Basis (as ruled):**
+- All functional Save, Apply, POSTURE, LEAVES, PEER and restoration checks passed.
+- The sole automated failure was `navigation.pose_holds_after_moving_away_and_back`: the top SFM Undo entry changed from
+  `Apply Pose S2 Tails` to `Modify Time Selection`.
+- At NAV, the authored channels and the evaluated skeletal pose matched APPLY.
+- The Owner used two Undos to reach the pose transaction. UNDO restored BASE, and REDO restored APPLY.
+- The additional history entry's cause remains undetermined; none is assigned.
+- Owner visual acceptance: PASS.
+
+**Preserved unchanged:** the automated verdict **FAIL** (76/77; `S2T_VERDICT.json` `36739104…`, `.md` `f6e58ac4…`), the
+analyzer `a76b7a80…`, the captures and leaf sidecars, the CPM logs, the library evidence and any screenshots the Owner
+kept. The verdict is not reinterpreted.
+
+**Not done (as ruled):** no native rerun, and no product-code, analyzer or procedure change for this isolated history
+observation. No production promotion, signing, push, merge or release.
