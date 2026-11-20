@@ -433,6 +433,41 @@ def discard_redo_on_start(world):
     return world
 
 
+def simulate_jiggle(world, bones, step_position=0.37, step_degrees=6.5):
+    """Opt-in (F-01 Stage 2): SFM's simulated procedural output on the named leaf bones. After every evaluation each
+    one's local transform (the DmeTransform values) and world transform move by an offset that grows with every
+    evaluation, as a stateful simulation may: never the same twice. Their channels, logs and keys, and every other
+    bone, stay exactly as evaluated. Unset, the fake is unchanged."""
+    evaluate = world.evaluate
+    world.jiggle_steps = [0]
+
+    def chain_scale(name):
+        s, p = 1.0, world.fx["bones"][name]["parent"]
+        while p:
+            s *= world.scale(world.bone_dag[p])
+            p = world.fx["bones"][p]["parent"]
+        return s
+
+    def run():
+        evaluate()
+        world.jiggle_steps[0] += 1
+        k = world.jiggle_steps[0]
+        for n in bones:
+            dag = world.bone_dag[n]
+            lp, lq = world.local(dag)
+            half = math.radians(step_degrees * k) / 2.0
+            turn = [math.sin(half) * a for a in unit([1.0, 0.5, 0.25])] + [math.cos(half)]
+            lp = [lp[0] + step_position * k, lp[1] - 0.5 * step_position * k, lp[2]]
+            lq = qnorm(qmul(lq, turn))
+            dag.attrs["transform"].set("position", Vector(*lp))
+            dag.attrs["transform"].set("orientation", Quaternion(*lq))
+            parent = world.bone_dag[world.fx["bones"][n]["parent"]]
+            dag.wp, dag.wq = compose((parent.wp, parent.wq), (lp, lq), chain_scale(n))
+    world.evaluate = run
+    run()
+    return world
+
+
 def revert(items):
     for item in reversed(items):
         if item[0] == "insert":

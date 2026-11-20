@@ -1135,7 +1135,7 @@ def section_structural_apply(window, tabs, env, boxes, QtGui):
                             u"pose": pose}}
     rig = item(u"Fox Rig", u"s1")
     other = item(u"Other Model", u"s2", model=u"models/other/model.mdl")
-    future = item(u"Future Rig", u"s3", revision=2)
+    future = item(u"Future Rig", u"s3", revision=3)        # unknown (Stage 2 defines revision 2)
     state = {"found": {u"items": [rig, other, future], u"unusable": []}}
     calls = []
     g["prod_pose_load_registry"] = lambda path=None: dict(BODY_REGISTRY)

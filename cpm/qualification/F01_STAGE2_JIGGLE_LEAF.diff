@@ -1,0 +1,320 @@
+diff --git a/cpm/app/SFM_Character_Preset_Manager.py b/cpm/app/SFM_Character_Preset_Manager.py
+index 996f083..d46e2e0 100644
+--- a/cpm/app/SFM_Character_Preset_Manager.py
++++ b/cpm/app/SFM_Character_Preset_Manager.py
+@@ -44853,6 +44853,16 @@ def prod_body_classify(D, profile):
+                     if not control_channel(cname, name, attr):
+                         raise fail(u"structure-unsupported", u"bone offset %s is not a control channel" % cname)
+                     roles[cname], owners[cname] = u"ik-offset", [lab, attr]
++        elif name in profile.get(u"simulated_leaf_bones", ()):
++            # Stage 2: a declared JIGGLE leaf admitted by prod_body_rig_draft. One source-less transform channel per
++            # attribute, never written; its authored channels stay in the exact authored-state comparisons.
++            bone_classes[name] = PROD_BODY_SIMULATED_LEAF
++            for attr, ws in writers.items():
++                if len(ws) != 1 or channels[ws[0]][u"from"] is not None or \
++                        (channels[ws[0]][u"log_type"], channels[ws[0]][u"layers"][0]) != PROD_BODY_TRANSFORM_TYPES[attr]:
++                    raise fail(u"structure-unsupported", u"simulated leaf %s.%s is not one source-less channel" %
++                               (name, attr))
++                roles[ws[0]], owners[ws[0]] = PROD_BODY_SIMULATED_LEAF, [lab, attr]
+         elif name in profile[u"passive_channel_bones"]:
+             bone_classes[name] = u"passive"
+             for attr, ws in writers.items():
+@@ -44877,6 +44887,9 @@ def prod_body_classify(D, profile):
+     for name in profile[u"passive_channel_bones"]:
+         if bone_classes.get(name) != u"passive":
+             raise fail(u"rig-differs", u"passive bone %s is missing" % name)
++    for name in profile.get(u"simulated_leaf_bones", ()):
++        if bone_classes.get(name) != PROD_BODY_SIMULATED_LEAF:
++            raise fail(u"rig-differs", u"simulated leaf %s is missing" % name)
+     for cname in list(profile[u"written_handle_channels"]) + list(profile[u"preserved_handle_channels"]):
+         if cname not in roles:
+             raise fail(u"rig-differs", u"handle channel %s is missing" % cname)
+@@ -44924,7 +44937,7 @@ def prod_body_descriptor(D, C, profile):
+     constraints.sort(key=lambda r: json.dumps(r, sort_keys=True))
+     channels, positions, orientations = {}, {}, {}
+     for name, role in C[u"channels"].items():
+-        if role not in PROD_BODY_DESCRIBED_ROLES:
++        if role not in PROD_BODY_DESCRIBED_ROLES and role != PROD_BODY_SIMULATED_LEAF:
+             continue
+         ch = D[u"channels"][name]
+         channels[name] = {u"role": role, u"owner": C[u"owners"][name][0], u"attribute": C[u"owners"][name][1],
+@@ -45108,12 +45121,15 @@ def prod_body_compare_descriptor(saved, live):
+ def prod_body_region_schema(structural=False):
+     s, i = (u"str",), (u"int", 1000000)
+     v3, q, typed = (u"vec", 3), (u"quat",), (u"typed",)
+-    bone = (u"obj", {u"name": s, u"index": i, u"parent": (u"nullable", s), u"class": (u"enum", PROD_BODY_BONE_CLASSES)})
++    classes, roles = PROD_BODY_BONE_CLASSES, PROD_BODY_DESCRIBED_ROLES
++    if structural:                    # Stage 2: a structural record may describe simulated leaves
++        classes, roles = classes + (PROD_BODY_SIMULATED_LEAF,), roles + (PROD_BODY_SIMULATED_LEAF,)
++    bone = (u"obj", {u"name": s, u"index": i, u"parent": (u"nullable", s), u"class": (u"enum", classes)})
+     constraint = (u"obj", {u"type": (u"enum", PROD_POSE_CONSTRAINT_TYPES),
+                            u"slaves": (u"map", PROD_BODY_SLAVE_SLOTS, s, False), u"targets": (u"list", s, 1, 1),
+                            u"pole": (u"nullable", s), u"solver": (u"map", PROD_POSE_SOLVER_FIELDS, typed, False),
+                            u"offsets": (u"obj", {u"oOffset": typed, u"vecOffset": typed})})
+-    channel = (u"obj", {u"role": (u"enum", PROD_BODY_DESCRIBED_ROLES), u"owner": s, u"attribute": s,
++    channel = (u"obj", {u"role": (u"enum", roles), u"owner": s, u"attribute": s,
+                         u"log_type": s, u"layer_type": s})
+     fields = {
+         u"profile_id": s, u"frame": (u"const", PROD_BODY_FRAME),
+@@ -45147,7 +45163,7 @@ def prod_body_record_schema(structural=False):
+         u"regions": (u"obj", {PROD_BODY_REGION: prod_body_region_schema(structural)})}
+     if structural:
+         pose[u"adapter"] = (u"obj", {u"rule": (u"const", PROD_BODY_RIG_RULE),
+-                                     u"revision": (u"const", PROD_BODY_RIG_REVISION)})
++                                     u"revision": (u"int", max(PROD_BODY_RIG_REVISIONS))})
+     else:
+         pose[u"registry"] = (u"obj", {u"profile_set": (u"const", PROD_BODY_REGISTRY_FORMAT), u"version": (u"const", 1)})
+     return (u"obj", {
+@@ -45180,7 +45196,8 @@ def prod_body_validate(record, reg):
+             raise ProdPoseError(u"invalid-file", u"the full-body region names no body profile")
+     d = region[u"descriptor"]
+     names = [b[u"name"] for b in d[u"bones"]]
+-    if len(set(names)) != len(names) or sorted(region[u"oracle"][u"bones"]) != sorted(names):
++    posed = [b[u"name"] for b in d[u"bones"] if b[u"class"] != PROD_BODY_SIMULATED_LEAF]
++    if len(set(names)) != len(names) or sorted(region[u"oracle"][u"bones"]) != sorted(posed):
+         raise ProdPoseError(u"invalid-file", u"the oracle must cover every described bone exactly once")
+     written = dict((n, c) for n, c in d[u"channels"].items() if c[u"role"] in PROD_BODY_WRITTEN_ROLES)
+     pos = sorted(n for n, c in written.items() if c[u"attribute"] == u"position")
+@@ -45255,6 +45272,8 @@ def prod_body_payload(D, C, profile):
+     inv = prod_pose_invert(prod_body_root_world(D, profile))
+     bones = {}
+     for name, b in D[u"bones"].items():
++        if C[u"bones"][name] == PROD_BODY_SIMULATED_LEAF:
++            continue                  # Stage 2: SFM's simulated output, never a reproduction obligation
+         p, q = prod_pose_compose(inv, (b[u"world_position"], prod_pose_unit(b[u"world_orientation"])))
+         bones[name] = {u"position": [float(c) for c in p], u"orientation": prod_pose_unit(q),
+                        u"local_position": prod_body_f32_list(b[u"local_position"]),
+@@ -45428,6 +45447,8 @@ def prod_body_expected_skeleton(region, D, C, profile):
+         b = D[u"bones"][name]
+         parent_scale = world_scale[b[u"parent"]] if b[u"parent"] is not None else 1.0
+         world_scale[name] = parent_scale * prod_body_bone_scale(D, name)     # scale accumulates down the hierarchy
++        if C[u"bones"][name] == PROD_BODY_SIMULATED_LEAF:
++            continue                  # Stage 2: a leaf, so no other bone's expectation composes through it
+         if C[u"bones"][name] in (u"fk-preserved", u"passive"):
+             parent = expected[b[u"parent"]] if b[u"parent"] is not None else model
+             expected[name] = prod_body_scaled_compose(parent, parent_scale, (
+@@ -45456,6 +45477,9 @@ def prod_body_verify_skeleton(D_now, D_base, expected, C, profile, values=None):
+                 prod_pose_distance(now[u"local_position"], was[u"local_position"]) > tol[u"position"] or
+                 prod_pose_angle_deg(now[u"local_orientation"], was[u"local_orientation"]) > tol[u"angle_degrees"]):
+             problems.append(u"preserved bone %s local" % name)
++    for name, cls in sorted(C[u"bones"].items()):
++        if cls == PROD_BODY_SIMULATED_LEAF and D_now[u"bones"][name][u"scale"] != D_base[u"bones"][name][u"scale"]:
++            problems.append(u"bone %s scale" % name)       # Stage 2: configuration only, never its transform
+     for key in (u"world", u"local"):
+         if prod_pose_distance(D_now[u"model"][key + u"_position"], D_base[u"model"][key + u"_position"]) > \
+                 tol[u"position"] or prod_pose_angle_deg(D_now[u"model"][key + u"_orientation"],
+@@ -45677,6 +45701,8 @@ def prod_body_discover(L, t_chan, index):
+             key = u"%d:%s" % (prod_pose_h(to), to_attr)
+             D[u"writers"][key] = len(index[u"destinations"].get(key, []))
+     D[u"authority"] = prod_body_authority_evidence(L, index)
++    if L[u"profile"] is None or L[u"profile"].get(u"_structural"):
++        D[u"header"] = prod_body_rig_header(L)          # Stage 2: read only; never raises
+     return prod_pose_roundtrip(D)
+ 
+ 
+@@ -46185,9 +46211,23 @@ def prod_body_verify_applied(pending):
+ # descriptor must equal it exactly). Experimental: the qualification build only, until natively qualified.
+ # Outside Stage 1 (refused): control-less bones (jiggle: Stage 2; procedural helpers), weighted or multiple-target
+ # constraints, other operator types, reverse feet, handles parented to bones and cross-model retargeting.
++# Stage 2 (Astra's ruling, F01_STAGE2_ASTRA_JIGGLE_RULING.md; "F-01 Stage 2 - Implementation Authorization"): a
++# control-less bone the engine-loaded studio header declares a JIGGLE procedure that always runs, with no physics or
++# screen-align flag, is admitted as a simulated leaf when it is a leaf (scene and header), its parent is a bone of the
++# drafted description (directly animated, preserved or rig-driven), the header matches the scene skeleton, and no
++# concrete consumer reads it (a header attachment or bone flex driver, a rig constraint target or pole, an instance
++# channel). Never by name or model. It stays under normal SFM control: never written, no saved value or oracle, and
++# no transform obligation at Save/Apply compatibility, no-op, P2, P7 or recovery; its authored channels, keys,
++# configuration and scale stay in the existing exact checks. Not the v2 passive class (Astra). Records describing one
++# are structural_rig_v1 revision 2 (older strict readers refuse them); records without one stay revision 1. Non-leaf
++# jiggle chains, physics and every other procedure keep refusing.
+ 
+ PROD_BODY_RIG_RULE = u"structural_rig_v1"
+ PROD_BODY_RIG_REVISION = 1
++PROD_BODY_RIG_LEAF_REVISION = 2
++PROD_BODY_RIG_REVISIONS = (PROD_BODY_RIG_REVISION, PROD_BODY_RIG_LEAF_REVISION)
++PROD_BODY_SIMULATED_LEAF = u"simulated-leaf"
++PROD_BODY_RIG_LEAF_PROC = u"STUDIO_PROC_JIGGLE"
+ # experimental: usable in the qualification build only; production keeps the RC2 refusal of rigged characters
+ # without a registry profile until the Owner accepts the native Fox qualification.
+ PROD_BODY_RIG_STATUS = u"experimental"
+@@ -46205,7 +46245,7 @@ PROD_BODY_RIG_PROFILE_KEYS = (u"region", u"rig_name", u"placement_handle", u"han
+ 
+ def prod_body_rig_usable(mode, rule=PROD_BODY_RIG_RULE, revision=PROD_BODY_RIG_REVISION):
+     """Whether the structural rig adapter is usable in this build mode (experimental: qualification only)."""
+-    if rule != PROD_BODY_RIG_RULE or revision != PROD_BODY_RIG_REVISION:
++    if rule != PROD_BODY_RIG_RULE or isinstance(revision, bool) or revision not in PROD_BODY_RIG_REVISIONS:
+         return False
+     if mode == u"qualification":
+         return True
+@@ -46387,16 +46427,22 @@ def prod_body_rig_draft(D, exclusions=None):
+             keep = n == placement or (attr == u"orientation" and lab in poles and lab not in targets and
+                                       not children.get(n))
+             (preserved if keep else written)[got[0]] = [n, attr]
+-    # 7. Bones: the rig drives the body; artist-confirmed face exclusions are preserved FK bones; Stage 1 admits no
+-    #    control-less bone (procedural outputs such as jiggle bones: Stage 2).
++    # 7. Bones: the rig drives the body; artist-confirmed face exclusions are preserved FK bones; a control-less
++    #    bone is admitted only as a simulated leaf (Stage 2), and every other one refuses.
+     if not [x for x in slaved if x.startswith(u"bone:")]:
+         raise fail(u"unavailable", u"the rig drives no bone")
+     controlless = sorted(n for n, b in bones.items() if (u"bone:" + n) not in slaved and any(
+         D[u"channels"][c][u"from"] is None for attr in (u"position", u"orientation")
+         for c in by_dest.get((b[u"transform"], attr), [])))
+-    if controlless:
+-        raise fail(u"structure-unsupported", u"control-less bones %s are outside Stage 1" % controlless[:16])
++    leaves, refusals = prod_body_rig_leaf_admission(D, controlless, by_dest, constraints)
++    if refusals:
++        prod_pose_log(u"BODY-RIG-leaf-refused", {u"refusals": dict(sorted(refusals.items())[:16])})
++        raise fail(u"structure-unsupported", u"control-less bones %s are not supported simulated leaves" %
++                   sorted(refusals)[:16])
+     kept = sorted(set(b for e in exclusions for b in e[u"bones"]))
++    if [b for b in kept if b in leaves]:
++        raise fail(u"structure-unsupported", u"excluded bones are simulated leaves: %s" % [
++            b for b in kept if b in leaves][:8])
+     if [b for b in kept if b not in bones]:
+         raise fail(u"rig-differs", u"excluded bones are missing: %s" % [b for b in kept if b not in bones][:8])
+     if [b for b in kept if (u"bone:" + b) in slaved]:
+@@ -46407,12 +46453,96 @@ def prod_body_rig_draft(D, exclusions=None):
+                u"preserved_handle_channels": preserved, u"constraints": constraints, u"preserved_fk_bones": kept,
+                u"passive_channel_bones": [], u"tolerances": dict(PROD_SCOPE_TOLERANCES)}
+     prod_body_rig_check(profile)
++    if leaves:                        # Stage 2 (absent without one: Stage 1 descriptions stay unchanged)
++        profile[u"simulated_leaf_bones"] = leaves
+     profile.update({u"descriptor_rig_name": PROD_BODY_RIG_NAME,
+                     u"fk_position_limit": PROD_SCOPE_FK_POSITION_LIMIT[u"full_body"],
+                     u"_id": PROD_BODY_RIG_RULE, u"_structural": True, u"_exclusions": exclusions})
+     return prod_pose_roundtrip(profile)
+ 
+ 
++def prod_body_rig_header(L):
++    """Stage 2: the H1 read-only studio header evidence of the pinned instance (prod_scope_helper_evidence, unchanged)
++    plus the vs.studio value of STUDIO_PROC_JIGGLE. Never raises: anything unreadable gives status UNREADABLE, which
++    admits no simulated leaf."""
++    H = prod_scope_helper_evidence(L)
++    if not isinstance(H, dict) or H.get(u"status") != u"READ":
++        return H
++    try:
++        value = getattr(getattr(vs, "studio"), PROD_BODY_RIG_LEAF_PROC)
++        if isinstance(value, bool) or not isinstance(value, prod_pose_int_types()):
++            raise ValueError(u"constant %s is not an integer" % PROD_BODY_RIG_LEAF_PROC)
++    except Exception as exc:
++        return {u"status": u"UNREADABLE", u"reason": u"%r" % (exc,)}
++    out = dict(H)
++    out[u"constants"] = dict(H[u"constants"])
++    out[u"constants"][PROD_BODY_RIG_LEAF_PROC] = int(value)
++    return prod_pose_roundtrip(out)
++
++
++def prod_body_rig_leaf_admission(D, controlless, by_dest, constraints):
++    """Stage 2: which control-less bones are simulated leaves. Pure. Returns (admitted names sorted, refusals
++    {bone: reason}). Each must be one source-less transform channel per attribute; declared STUDIO_PROC_JIGGLE with
++    BONE_ALWAYS_PROCEDURAL and none of the physics or screen-align flags, by a header that matches the scene skeleton
++    exactly by index, name and parent; a leaf in the scene and in the header; under a bone that is not itself
++    control-less; and read by no concrete consumer: a header attachment or bone flex driver, a rig constraint (target
++    or pole) or a channel of the instance. Harmless relationships (hitbox use, a non-bone element parented below it)
++    do not refuse."""
++    if not controlless:
++        return [], {}
++    bones, H = D[u"bones"], D.get(u"header")
++    if not isinstance(H, dict) or H.get(u"status") != u"READ":
++        why = u"the model's procedural declarations are unreadable"
++        return [], dict((n, why) for n in controlless)
++    rows = H[u"bones"]
++    by_index = dict((r[u"index"], r) for r in rows)
++    mismatch = len(rows) != len(bones) or len(by_index) != len(rows)
++    for n, b in bones.items():
++        if mismatch:
++            break
++        r = by_index.get(b[u"index"])
++        mismatch = r is None or r[u"name"] != n or r[u"parent"] != (
++            -1 if b[u"parent"] is None else bones[b[u"parent"]][u"index"] if b[u"parent"] in bones else -2)
++    if mismatch:
++        why = u"the model's header does not match the scene skeleton"
++        return [], dict((n, why) for n in controlless)
++    k = H[u"constants"]
++    excluded = 0
++    for name in PROD_SCOPE_HELPER_EXCLUDED_FLAGS:
++        excluded |= k[name]
++    header_parents = set(r[u"parent"] for r in rows)
++    scene_parents = set(b[u"parent"] for b in bones.values())
++    followed = set(c[u"targets"][0] for c in constraints) | set(c[u"pole"] for c in constraints if c[u"pole"])
++    read = set()
++    for ch in D[u"channels"].values():
++        if ch[u"from"] is not None:
++            read.add(ch[u"from"][u"handle"])
++    admitted, refusals = [], {}
++    for n in controlless:
++        b = bones[n]
++        r = by_index[b[u"index"]]
++        shape = [by_dest.get((b[u"transform"], attr), []) for attr in (u"position", u"orientation")]
++        if [len(x) for x in shape] != [1, 1] or any(D[u"channels"][x[0]][u"from"] is not None for x in shape):
++            refusals[n] = u"its channels are not one source-less channel per attribute"
++        elif r[u"proctype"] != k[PROD_BODY_RIG_LEAF_PROC]:
++            refusals[n] = u"not a declared JIGGLE output"
++        elif not r[u"flags"] & k[PROD_SCOPE_HELPER_REQUIRED_FLAG] or r[u"flags"] & excluded:
++            refusals[n] = u"its procedural flags are not supported"
++        elif n in scene_parents or r[u"index"] in header_parents:
++            refusals[n] = u"other bones depend on it (a jiggle chain)"
++        elif b[u"parent"] is None or b[u"parent"] in controlless:
++            refusals[n] = u"its parent is not a supported bone"
++        elif r[u"index"] in H[u"attachments"] or r[u"index"] in H[u"flex_drivers"]:
++            refusals[n] = u"an attachment or bone flex driver uses it"
++        elif (u"bone:" + n) in followed:
++            refusals[n] = u"a rig constraint follows it"
++        elif b[u"handle"] in read or b[u"transform"] in read:
++            refusals[n] = u"a channel reads it"
++        else:
++            admitted.append(n)
++    return sorted(admitted), refusals
++
++
+ def prod_body_rig_confirm(D, profile):
+     """A fresh read must draft exactly the description admitted earlier (P2, Abort, P7 and every later phase)."""
+     again = prod_body_rig_draft(D, profile[u"_exclusions"])
+@@ -46501,7 +46631,8 @@ def prod_body_rig_record(pose, profile):
+     set, and the artist-confirmed exclusions beside the descriptor."""
+     out = json.loads(json.dumps(pose))
+     del out[u"registry"]
+-    out[u"adapter"] = {u"rule": PROD_BODY_RIG_RULE, u"revision": PROD_BODY_RIG_REVISION}
++    out[u"adapter"] = {u"rule": PROD_BODY_RIG_RULE, u"revision": PROD_BODY_RIG_LEAF_REVISION if
++                       profile.get(u"simulated_leaf_bones") else PROD_BODY_RIG_REVISION}
+     out[u"regions"][PROD_BODY_REGION][u"exclusions"] = [dict(e) for e in profile[u"_exclusions"]]
+     return prod_pose_roundtrip(out)
+ 
+@@ -46518,6 +46649,23 @@ def prod_body_rig_validate(record):
+     classes = dict((b[u"name"], b[u"class"]) for b in d[u"bones"])
+     if [n for n, c in classes.items() if c == u"passive"]:
+         raise ProdPoseError(u"invalid-file", u"a structural rig record holds no passive bones")
++    # Stage 2: revision 2 exactly when simulated leaves are described; each is a leaf under a described bone that is
++    # not one, and owns exactly its two simulated-leaf channels.
++    revision = pose[u"adapter"][u"revision"]
++    leaves = sorted(n for n, c in classes.items() if c == PROD_BODY_SIMULATED_LEAF)
++    if isinstance(revision, bool) or revision not in PROD_BODY_RIG_REVISIONS or \
++            (revision == PROD_BODY_RIG_LEAF_REVISION) != bool(leaves):
++        raise ProdPoseError(u"invalid-file", u"the structural rig record's revision does not match its content")
++    parents = dict((b[u"name"], b[u"parent"]) for b in d[u"bones"])
++    for n in leaves:
++        owned = sorted((c[u"attribute"], c[u"role"]) for c in d[u"channels"].values() if c[u"owner"] == u"bone:" + n)
++        if parents[n] is None or classes.get(parents[n]) in (None, PROD_BODY_SIMULATED_LEAF) or \
++                n in parents.values() or owned != [(u"orientation", PROD_BODY_SIMULATED_LEAF),
++                                                   (u"position", PROD_BODY_SIMULATED_LEAF)]:
++            raise ProdPoseError(u"invalid-file", u"simulated leaf %s is not a well-formed leaf" % n)
++    if [c for c in d[u"channels"].values() if c[u"role"] == PROD_BODY_SIMULATED_LEAF and
++            classes.get(c[u"owner"][5:]) != PROD_BODY_SIMULATED_LEAF]:
++        raise ProdPoseError(u"invalid-file", u"a simulated-leaf channel belongs to another bone")
+     if len([h for h in d[u"handles"].values() if h[u"class"] == u"placement"]) != 1:
+         raise ProdPoseError(u"invalid-file", u"a structural rig record has exactly one placement handle")
+     ids = [e[u"id"] for e in region[u"exclusions"]]
+@@ -46544,9 +46692,11 @@ def prod_body_rig_probe(operation_context, identity, reg, mode):
+             raise
+         prod_pose_log(u"BODY-RIG-unavailable", {u"code": getattr(exc, "code", None), u"error": u"%s" % exc})
+         return None
+-    prod_pose_log(u"BODY-RIG-available", {u"handles": len(profile[u"handles"]),
+-                                          u"constraints": len(profile[u"constraints"]),
+-                                          u"written": len(st[u"C"][u"written"])})
++    info = {u"handles": len(profile[u"handles"]), u"constraints": len(profile[u"constraints"]),
++            u"written": len(st[u"C"][u"written"])}
++    if profile.get(u"simulated_leaf_bones"):
++        info[u"simulated_leaves"] = list(profile[u"simulated_leaf_bones"])
++    prod_pose_log(u"BODY-RIG-available", info)
+     return {u"time": time, u"classes": dict(st[u"C"][u"bones"])}
+ 
+ 

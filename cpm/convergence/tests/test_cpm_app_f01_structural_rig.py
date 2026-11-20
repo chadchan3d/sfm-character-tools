@@ -866,7 +866,7 @@ def section_window(app, ns, reg, fx, root):
         av = ns["prod_body_rig_availability"]
         rec = saved[u"record"]
         future = json.loads(json.dumps(rec))
-        future[u"pose"][u"adapter"][u"revision"] = 2
+        future[u"pose"][u"adapter"][u"revision"] = 3        # unknown (Stage 2 defines revision 2)
         check("E.c1_availability_same_model_in_qualification", av(rec, IDENTITY, QUAL) == u"available" and
               av(rec, dict(IDENTITY, model=MODEL.upper()), QUAL) == u"available")
         check("E.c1_availability_refuses_production_other_models_and_unknown_revisions",
