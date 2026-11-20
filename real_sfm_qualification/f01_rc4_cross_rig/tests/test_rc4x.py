@@ -388,6 +388,82 @@ def section_wrapper():
         shutil.rmtree(root, True)
 
 
+# --- the replay under the revised verification contract ---------------------------------------------------------
+
+def section_replay():
+    sys.path.insert(0, os.path.join(KIT, "tools"))
+    import rc4x_replay as RP  # noqa: E402
+
+    def replay(b_offset, logged_b, original=u"INCOMPLETE"):
+        def edit(run):
+            for step in ("B_APPLY", "B_NAV", "B_REDO", "B_NOOP"):
+                bone = run["caps"][step]["sets"]["target"]["bones"][u"bip_spine_3"]
+                bone[2] = [bone[2][0] + b_offset, bone[2][1], bone[2][2]]
+            run["lines"] = [l for l in run["lines"] if "P7-verified" not in l and "BODY-P1" not in l] + [
+                'PROD_POSE_BODY-P7-verified {}', 'PROD_POSE_BODY-P1 {"actions": {"insert": 0, "none": 5, "update": 0}}',
+                'PROD_POSE_BODY-P7-%s' % logged_b, 'PROD_POSE_BODY-P1 {"actions": {"insert": 0, "none": 5, "update": 0}}',
+                'PROD_POSE_BODY-P1 {"noop": true}', 'PROD_POSE_BODY-P1 {"noop": true}']
+        root = tempfile.mkdtemp(prefix="rc4x_replay_")
+        try:
+            c = build(root, edit)
+            ev = os.path.join(c["paths"]["Q"], "evidence")
+            lib = os.path.join(ev, "library_after", "Characters", "milestailsprower--x", "Poses")
+            for name, pose in ((X.CHEST, POSE_CHEST), (X.SIT, POSE_SIT)):
+                path = os.path.join(lib, "%s--x.json" % name)
+                rec = json.load(open(path))
+                rec["pose"]["regions"]["full_body"]["oracle"] = {"bones": dict(
+                    (n, {"position": p, "orientation": q}) for n, (p, q) in pose.items() if n not in LEAVES)}
+                # a reference of more than 100 bones, as a real record has
+                for i in range(110):
+                    rec["pose"]["regions"]["full_body"]["oracle"]["bones"]["extra%d" % i] = {
+                        "position": [0.0, 0.0, 0.0], "orientation": [0.0, 0.0, 0.0, 1.0]}
+                json.dump(rec, open(path, "w"))
+            for step in X.STEPS:
+                path = os.path.join(c["paths"]["Q"], "observations", "S1F-%s.json" % step)
+                cap = json.load(open(path))
+                for role in ("source", "target"):
+                    bones = cap["sets"][role]["bones"]
+                    root_p = cap["sets"][role]["handles"]["rig_root"][2]
+                    for i in range(110):
+                        bones["extra%d" % i] = [[0, 0, 0], rot(0), list(root_p), rot(0)]
+                json.dump(cap, open(path, "w"))
+            with open(os.path.join(ev, "RC4X_VERDICT.json"), "w") as f:
+                json.dump({"verdict": original}, f)
+            before = open(os.path.join(ev, "RC4X_VERDICT.json")).read()
+            code = RP.run(c)
+            out = json.load(open(os.path.join(ev, "replay_revised_contract", "RC4X_REPLAY.json")))
+            again = S2_outcome(lambda: RP.run(c))
+            return code, out, before == open(os.path.join(ev, "RC4X_VERDICT.json")).read(), again
+        finally:
+            shutil.rmtree(root, True)
+
+    def S2_outcome(fn):
+        try:
+            return ("ok", fn())
+        except Exception as exc:
+            return (type(exc).__name__,)
+    stdout = sys.stdout
+    sys.stdout = open(os.devnull, "w")
+    try:
+        ok = replay(0.005, 'unverified {"problems": ["bone bip_spine_3"]}')
+        far = replay(0.05, 'unverified {"problems": ["bone bip_spine_3"]}')
+        wrong_log = replay(0.005, 'verified {}')
+    finally:
+        sys.stdout.close()
+        sys.stdout = stdout
+    check("replay.former_failure_within_the_revised_envelope_passes", ok[0] == 0 and ok[1]["verdict"].startswith(
+        "REPLAY PASS") and ok[1]["info"]["B"]["APPLY"]["former_failures"] == [u"bip_spine_3"] and
+        ok[1]["info"]["B"]["APPLY"]["revised_failures"] == [], [x for x in ok[1]["checks"] if not x["pass"]])
+    check("replay.never_changes_the_original_verdict_and_refuses_to_overwrite", ok[2] and ok[3][0] != "ok")
+    check("replay.beyond_the_revised_envelope_fails", far[0] == 1 and far[1]["info"]["B"]["APPLY"][
+        "revised_failures"] == [u"bip_spine_3"])
+    check("replay.self_check_catches_a_disagreement_with_cpms_log", wrong_log[0] == 1 and not [
+        x for x in wrong_log[1]["checks"] if x["id"] == "selfcheck.former_limits_reproduce_cpm_direction_b_bones"][0][
+        "pass"])
+    check("replay.limits", RP.REVISED == {"position": 0.01, "angle_degrees": 0.1} and RP.FORMER == {
+        "position": 0.001, "angle_degrees": 0.01})
+
+
 def section_kit():
     paths = [p for p, _ in TOOL.pinned_kit_files({})]
     check("kit_files_exist", all(os.path.isfile(p) for p in paths), paths)
@@ -416,6 +492,7 @@ def section_kit():
 def main():
     section_analyzer()
     section_wrapper()
+    section_replay()
     section_kit()
     failed = [n for n, ok in RESULTS if not ok]
     print("RESULT: %d/%d %s" % (len(RESULTS) - len(failed), len(RESULTS), "ALL PASS" if not failed else "SOME FAILED"))

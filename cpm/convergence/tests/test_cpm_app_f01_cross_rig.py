@@ -1006,6 +1006,187 @@ def section_copy(ns, app):
                                                                   for m in rig.values()))
 
 
+# ---------------------------------------------------------------------------
+# V. Astra's revised verification contract: reproduction envelope, outcomes and the no-work repeat Apply
+# ---------------------------------------------------------------------------
+
+def misbend(w, degrees):
+    """SFM's evaluation leaves each IK start joint `degrees` off its solution (the inputs stay exact)."""
+    solve = w.solve_ik
+
+    def misbent(start, el, parent_world, parent_scale):
+        solve(start, el, parent_world, parent_scale)
+        w.set_world(start, start.wp, B.rotate(start.wq, [0.0, 0.0, 1.0], degrees), parent_world, parent_scale)
+    w.solve_ik = misbent
+    w.evaluate()
+
+
+def section_contract_pure(ns):
+    P, S = ns["prod_pose_reproduction"], ns["prod_pose_reproduction_stats"]
+    tol = ns["PROD_POSE_REPRODUCTION_TOLERANCES"]
+    check("V.limits_are_astras", tol == {u"position": 0.01, u"angle_degrees": 0.1})
+    check("V.preservation_limits_are_unchanged", ns["PROD_SCOPE_TOLERANCES"] == {
+        u"angle_degrees": 0.01, u"effective_angle_degrees": 0.001, u"position": 0.001})
+    I = [0.0, 0.0, 0.0, 1.0]
+
+    def one(got_p, got_q, want_p, want_q):
+        problems, stats = [], S()
+        P(u"bone x", got_p, got_q, want_p, want_q, problems, stats)
+        return problems, stats
+    check("V.position_at_the_limit_is_admitted", one([0.01, 0.0, 0.0], I, [0.0, 0.0, 0.0], I)[0] == [])
+    check("V.position_beyond_the_limit_is_a_reproduction_problem", one([0.0100001, 0.0, 0.0], I, [0.0] * 3, I)[0] == [
+        u"reproduction: bone x"])
+    check("V.position_jointly_beyond_the_limit", one([0.006, 0.006, 0.006], I, [0.0] * 3, I)[0] == [
+        u"reproduction: bone x"] and one([0.005, 0.005, 0.005], I, [0.0] * 3, I)[0] == [])
+    for deg, ok in ((0.0999, True), (0.1001, False), (5.0, False)):
+        got = one([0.0] * 3, B.rotate(I, [0.6, 0.0, 0.8], deg), [0.0] * 3, I)[0]     # a unit axis
+        check("V.rotation_%s_degrees_%s" % (deg, "admitted" if ok else "is_a_reproduction_problem"), (got == []) == ok
+              and (ok or got == [u"reproduction: bone x"]), got)
+    q = B.rotate(I, [0.0, 0.0, 1.0], 0.1)
+    at = ns["prod_pose_angle_deg"](q, I)
+    real = tol[u"angle_degrees"]
+    try:
+        tol[u"angle_degrees"] = at
+        inclusive = one([0.0] * 3, q, [0.0] * 3, I)[0] == []
+        tol[u"angle_degrees"] = at * (1.0 - 1e-12)
+        beyond = one([0.0] * 3, q, [0.0] * 3, I)[0] != []
+    finally:
+        tol[u"angle_degrees"] = real
+    check("V.rotation_bound_is_inclusive", inclusive and beyond and abs(at - 0.1) < 1e-9, at)
+    for label, args in ((u"nan_position", ([float("nan"), 0, 0], I, [0.0] * 3, I)),
+                        (u"infinite_expected", ([0.0] * 3, I, [float("inf"), 0, 0], I)),
+                        (u"zero_quaternion", ([0.0] * 3, [0.0] * 4, [0.0] * 3, I)),
+                        (u"short_vector", ([0.0, 0.0], I, [0.0] * 3, I)),
+                        (u"missing", (None, None, [0.0] * 3, I)),
+                        (u"text", ([u"x", 0, 0], I, [0.0] * 3, I))):
+        got = one(*args)[0]
+        check("V.%s_evidence_is_an_integrity_problem" % label, got == [u"bone x unreadable"], got)
+    _, stats = one([0.004, 0.0, 0.0], B.rotate(I, [0, 0, 1], 0.03), [0.0] * 3, I)
+    check("V.maxima_are_recorded", stats[u"outputs"] == 1 and abs(stats[u"max_distance"] - 0.004) < 1e-12 and
+          abs(stats[u"max_angle_deg"] - 0.03) < 1e-9 and stats[u"worst_angle"] == u"bone x", stats)
+    only, nowork = ns["prod_pose_reproduction_only"], ns["prod_pose_nowork"]
+    check("V.reproduction_only_requires_every_problem_to_be_reproduction", not only([]) and only(
+        [u"reproduction: bone a", u"reproduction: bone b"]) and not only([u"reproduction: bone a", u"placement handle"])
+        and not only([u"bone a unreadable"]))
+    none, ins = {u"action": u"none"}, {u"action": u"insert"}
+    check("V.nowork_decisions", nowork([none, ins], []) is None and nowork([], []) is None and
+          nowork([none, none], []) == u"no-op" and nowork([none], [u"reproduction: bone a"]) == u"mismatch" and
+          nowork([none], [u"placement handle"]) == u"unverified" and nowork([none], [u"bone a unreadable"]) ==
+          u"unverified")
+    check("V.mismatch_copy_is_astras", ns["PROD_POSE_MESSAGES"][u"reproduction-mismatch"] ==
+          u"Pose keys applied, but the evaluated pose differs from the saved pose.")
+
+
+def section_contract_live(ns, reg, fx, items, app):
+    chest_item, direct_item = items[0], items[1]
+    block = ns["PROD_POSE_RECOVERY_BLOCK"]
+    # 1. Within the envelope but beyond the former limits: verified, with the maxima in the diagnostics.
+    w = world(fx)
+    auth, got = J.apply_(ns, reg, direct_item, w)
+    misbend(w, 0.05)
+    del ns["LOG"][:]
+    verdict = J.verify(ns, auth, got)
+    line = R.log_detail(R.last_log(ns, u"BODY-P7-verified")) or {}
+    rep = line.get(u"reproduction") or {}
+    check("V.within_the_envelope_beyond_the_former_limit_verifies", verdict == {u"phase": u"committed-verified"} and
+          0.01 < rep.get(u"max_angle_deg", 0) <= 0.1 and rep.get(u"limits") == {u"position": 0.01,
+                                                                                u"angle_degrees": 0.1}, (verdict, rep))
+    # 2. Significantly wrong: a reproduction mismatch, with ordinary Undo and no lockout.
+    w = world(fx)
+    before = B.all_keys(w)
+    auth, got = J.apply_(ns, reg, direct_item, w)
+    misbend(w, 0.5)
+    verdict = J.verify(ns, auth, got)
+    check("V.significantly_wrong_reproduction_is_a_mismatch", verdict is not None and verdict.get(u"phase") ==
+          u"reproduction-mismatch" and verdict.get(u"written") is True and verdict.get(u"recovery") is None and
+          (verdict.get(u"reproduction") or {}).get(u"max_angle_deg", 0) > 0.1 and block[0] is None, verdict)
+    w.dm.Undo()
+    check("V.mismatch_keeps_ordinary_undo", B.all_keys(w) == before and block[0] is None)
+    # 3. Integrity failures stay unverified even when the skeleton is inside the envelope.
+    for label, change in (
+            (u"corrupted_key", lambda w: turn(w, u"rig_hand_L_o", [1.0, 0.0, 0.0], 0.01)),
+            (u"placement_drift", lambda w: w.channels[u"rig_root_p"].attrs["log"].layer.keys.__setitem__(
+                -1, [w.channels[u"rig_root_p"].attrs["log"].layer.keys[-1][0], FB.native(
+                    [c + (0.005 if i == 0 else 0.0) for i, c in enumerate(FB.plain(
+                        w.channels[u"rig_root_p"].attrs["log"].layer.keys[-1][1]))], "vec")]) or w.evaluate()),
+            (u"changed_preserved_scale", lambda w: (w.bone_dag[u"Tail2_L"].attrs["transform"].set("scale", 1.001),
+                                                    w.evaluate()))):
+        w = world(fx)
+        auth, got = J.apply_(ns, reg, direct_item, w)
+        change(w)
+        verdict = J.verify(ns, auth, got)
+        check("V.%s_with_skeleton_in_the_envelope_is_unverified" % label, verdict is not None and verdict.get(
+            u"phase") == u"committed-unverified", verdict)
+    w = world(fx)
+    auth, got = J.apply_(ns, reg, direct_item, w)
+    B.Pin.valid[0] = False
+    try:
+        verdict = J.verify(ns, auth, got)
+    finally:
+        B.Pin.valid[0] = True
+    check("V.wrong_target_context_is_unverified", verdict is not None and verdict.get(u"phase") ==
+          u"committed-unverified", verdict)
+    # 4. The repeat Apply: no-op and no-work mismatch never open Undo.
+    w = world(fx)
+    auth, got = J.apply_(ns, reg, direct_item, w)
+    J.verify(ns, auth, got)
+    calls = list(w.dm.calls)
+    _, again = J.apply_(ns, reg, direct_item, w)
+    check("V.repeat_with_verified_reproduction_is_a_no_op_without_undo", again[0] == u"ok" and again[1] == {
+        u"phase": u"no-op"} and w.dm.calls == calls, (again[:2], w.dm.calls[len(calls):]))
+    misbend(w, 0.5)
+    del ns["LOG"][:]
+    writes = len(B.scene_writes(w))
+    _, again = J.apply_(ns, reg, direct_item, w)
+    check("V.repeat_with_failed_reproduction_is_a_no_write_mismatch_without_undo", again[0] == u"ok" and
+          again[1].get(u"phase") == u"reproduction-mismatch" and again[1].get(u"written") is False and
+          w.dm.calls == calls and len(B.scene_writes(w)) == writes, (again[:2], w.dm.calls[len(calls):]))
+    check("V.no_work_mismatch_is_logged_without_p6", any(u"BODY-nowork" in l and u'"mismatch"' in l for l in
+                                                          ns["LOG"]) and not any(u"BODY-P6" in l for l in ns["LOG"]))
+    real = ns["prod_body_verify_skeleton"]
+    for label, problems in ((u"integrity_failure", [u"placement handle"]),
+                            (u"unreadable_evidence", [u"bone bip_pelvis unreadable"])):
+        w = world(fx)
+        auth, got = J.apply_(ns, reg, direct_item, w)
+        J.verify(ns, auth, got)
+        calls = list(w.dm.calls)
+        ns["prod_body_verify_skeleton"] = lambda *a, **k: list(problems)
+        try:
+            _, again = J.apply_(ns, reg, direct_item, w)
+        finally:
+            ns["prod_body_verify_skeleton"] = real
+        check("V.repeat_with_%s_refuses_without_undo" % label, again[0] != u"ok" and again[1] ==
+              u"already-unverified" and w.dm.calls == calls, (again, w.dm.calls[len(calls):]))
+    # 5. A missing key still takes the normal guarded transaction.
+    w = world(fx)
+    auth, got = J.apply_(ns, reg, direct_item, w)
+    J.verify(ns, auth, got)
+    layer = w.channels[u"rig_hand_L_o"].attrs["log"].layer
+    t_chan = w.t_chan()
+    layer.keys[:] = [k for k in layer.keys if k[0] != t_chan]
+    w.evaluate()
+    calls = len(w.dm.calls)
+    auth, again = J.apply_(ns, reg, direct_item, w)
+    verdict = J.verify(ns, auth, again)
+    check("V.missing_key_uses_the_guarded_transaction", again[0] == u"ok" and again[1].get(u"phase") ==
+          u"verification-pending" and [c[0] for c in w.dm.calls[calls:]] == ["StartUndo", "FinishUndo"] and
+          verdict == {u"phase": u"committed-verified"}, (again[:2], verdict))
+    # 6. Abort and recovery are unchanged.
+    w = world(fx)
+    before = B.all_keys(w)
+    w.fail_on_write = u"rig_spine_1_o"
+    _, got = J.apply_(ns, reg, chest_item, w)
+    check("V.abort_after_adapted_writes_restores_exactly", got[0] == u"ok" and got[1][u"phase"] == u"not-applied"
+          and B.all_keys(w) == before and block[0] is None, got[:2])
+    w = world(fx, lambda w: (setattr(w, "fail_on_write", u"rig_spine_1_o"), setattr(w, "abort_raises", True)))
+    _, got = J.apply_(ns, reg, chest_item, w)
+    check("V.failed_abort_is_still_recovery_unverified", got[0] == u"ProdRecoveryUnverifiedError", got)
+    # 7. The window reports the outcome with Astra's wording, never as success or as a recovery failure.
+    text = app.method_text("ProdWindow", "pose_finish_verification") + app.method_text("ProdWindow", "apply_pose")
+    check("V.window_reports_the_mismatch_as_a_warning", text.count(u'PROD_POSE_MESSAGES[u"reproduction-mismatch"]')
+          == 2 and u'u"reproduction-mismatch": u"reproduction-mismatch"' in text)
+
+
 def run(label, fn):
     try:
         value = fn()
@@ -1037,12 +1218,14 @@ def main():
         run("native", lambda: section_native(ns, recs))
         run("native_refusals", lambda: section_native_refusals(ns, recs))
         run("bounds", lambda: section_bounds(ns, recs))
+        run("contract_pure", lambda: section_contract_pure(ns))
         run("variant", lambda: section_variant(ns, fx, chest_fx, recs))
         items = run("live", lambda: section_live(ns, reg, fx, chest_fx, root))
         if items not in (None, True):
             run("live_refusals", lambda: section_live_refusals(ns, reg, fx, chest_fx, root, items))
             run("transaction", lambda: section_transaction(ns, reg, fx, chest_fx, items))
             run("bounded_live", lambda: section_bounded_live(ns, reg, fx, chest_fx, items))
+            run("contract_live", lambda: section_contract_live(ns, reg, fx, items, app))
         run("copy", lambda: section_copy(ns, app))
     finally:
         shutil.rmtree(root, True)

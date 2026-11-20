@@ -585,7 +585,7 @@ def section_boundaries(ns, reg, fx, item):
     w.evaluate()
     verdict = verify(ns, auth, got)
     check("E.p7_still_detects_a_wrong_body_while_the_leaves_move", verdict is not None and verdict.get(u"phase") ==
-          u"committed-unverified", verdict)
+          u"reproduction-mismatch", verdict)
 
     # Recovery: a partial-write failure after rig and FK writes, with the leaves moving, is a verified Abort.
     w = world(fx)

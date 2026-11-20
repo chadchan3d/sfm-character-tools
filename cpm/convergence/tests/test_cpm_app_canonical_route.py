@@ -297,7 +297,10 @@ F01_STAGEA_NEW_TOP = set([
     "prod_pose_f32", "prod_pose_finite_vector", "prod_pose_hemisphere", "prod_pose_int_types", "prod_pose_invert",
     "prod_pose_is_number", "prod_pose_key_plan", "prod_pose_layer_problems", "prod_pose_mb_angle_deg",
     "prod_pose_mb_apply", "prod_pose_mb_from_quaternion", "prod_pose_mb_mul", "prod_pose_mb_to_quaternion",
-    "prod_pose_model_key", "prod_pose_noop_test", "prod_pose_parse", "prod_pose_parts_dialog_state",
+    "prod_pose_model_key", "prod_pose_noop_test",
+    # RC4, Astra's revised verification contract: the reproduction envelope and the repeat-Apply decision (pure)
+    "PROD_POSE_REPRODUCTION_TOLERANCES", "PROD_POSE_REPRODUCTION_PREFIX", "prod_pose_reproduction_stats",
+    "prod_pose_reproduction_finite", "prod_pose_reproduction", "prod_pose_reproduction_only", "prod_pose_nowork", "prod_pose_parse", "prod_pose_parts_dialog_state",
     "prod_pose_parts_phrase", "prod_pose_payload_digest", "prod_pose_plan_matrix", "prod_pose_plan_quaternion",
     "prod_pose_plan_region", "prod_pose_qmul", "prod_pose_qrot", "prod_pose_quaternion_input",
     "prod_pose_record_schema", "prod_pose_region_schema", "prod_pose_registry_parse", "prod_pose_registry_schema",
@@ -334,6 +337,8 @@ F01_STAGEC_NEW_TOP = set([
     "prod_pose_session_project", "prod_pose_record_source",
     # RC4 Pose Info Rig (Astra's RC4 ruling section 4): the read-only scene rig read and the never-failing record step
     "PROD_POSE_NO_RIG", "PROD_POSE_CUSTOM_RIG", "prod_pose_rig_label", "prod_pose_instance_rig", "prod_pose_record_rig",
+    # RC4, Astra's revised verification contract: the reproduction-mismatch outcome and the no-work Apply result
+    "prod_pose_reproduction_mismatch", "prod_pose_nowork_result",
 ])
 # F-01 UI corrections after K2 (Owner-authorized 2026-11-14; F01_K2_UI_CORRECTIONS.md): the shared confirmation and
 # Trash dialogs, and the Source project sidecar store in the stage B block (pure library I/O: contained, strict,
@@ -433,7 +438,7 @@ F01_STAGEE_NEW_TOP = set([
     "prod_body_effective_inputs", "prod_body_error", "prod_body_exact", "prod_body_expected_authored",
     "prod_body_expected_skeleton", "prod_body_f32_list", "prod_body_field_value", "prod_body_fk_distance",
     "prod_body_fk_limit", "prod_body_identity", "prod_body_is_record", "prod_body_label_ok", "prod_body_live",
-    "prod_body_load_registry", "prod_body_noop", "prod_body_owner_row", "prod_body_payload", "prod_body_pending",
+    "prod_body_load_registry", "prod_body_noop", "prod_body_nowork", "prod_body_owner_row", "prod_body_payload", "prod_body_pending",
     "prod_body_plan", "prod_body_planned_values", "prod_body_preflight", "prod_body_profile",
     "prod_body_record_schema", "prod_body_region_schema", "prod_body_registry_parse", "prod_body_registry_schema",
     "prod_body_resolve_profile", "prod_body_root_world", "prod_body_same_state", "prod_body_scaled_compose",
@@ -480,7 +485,7 @@ F01_SFP1_NEW_TOP = set([
     "prod_scope_field_value", "prod_scope_followers", "prod_scope_group_view", "prod_scope_groups",
     "prod_scope_highlighted", "prod_scope_identity", "prod_scope_info", "prod_scope_inventory",
     "prod_scope_is_record", "prod_scope_label", "prod_scope_layout_signature", "prod_scope_list_phrase",
-    "prod_scope_live", "prod_scope_model_scale", "prod_scope_noop",
+    "prod_scope_live", "prod_scope_model_scale", "prod_scope_noop", "prod_scope_nowork",
     "prod_scope_oracle", "prod_scope_order", "prod_scope_parts", "prod_scope_payload", "prod_scope_pending",
     "prod_scope_plan", "prod_scope_planned_values", "prod_scope_preflight", "prod_scope_procedural_guard",
     "prod_scope_reason_text", "prod_scope_record_request", "prod_scope_record_schema",

@@ -36296,6 +36296,7 @@ class ProdWindow(QtGui.QDialog):
                 {
                     u"no-op": u"no-op",
                     u"not-applied": u"recovery-verified",
+                    u"reproduction-mismatch": u"reproduction-mismatch",
                 }.get(
                     phase,
                     u"committed-unverified",
@@ -36306,6 +36307,12 @@ class ProdWindow(QtGui.QDialog):
             if phase == u"no-op":
                 self.set_status(
                     PROD_POSE_MESSAGES[u"no-op"]
+                )
+            elif phase == u"reproduction-mismatch":
+                # RC4 repeat Apply: the keys are already present and nothing was written; no Undo was opened.
+                self.set_status(
+                    PROD_POSE_MESSAGES[u"reproduction-mismatch"],
+                    u"warning",
                 )
             elif phase == u"not-applied" and result.get(u"redo_cleared") is True:
                 self.set_status(
@@ -37023,11 +37030,14 @@ class ProdWindow(QtGui.QDialog):
             ]
             == u"committed-verified"
         )
+        mismatch = outcome["phase"] == u"reproduction-mismatch"      # RC4: keys applied, evaluated pose differs
 
         prod_log_outcome(
             (
                 u"verified"
                 if verified
+                else u"reproduction-mismatch"
+                if mismatch
                 else u"committed-unverified"
             ),
             {
@@ -37070,6 +37080,11 @@ class ProdWindow(QtGui.QDialog):
                     ),
                 },
                 u"success",
+            )
+        elif mismatch:
+            self.set_status(
+                PROD_POSE_MESSAGES[u"reproduction-mismatch"],
+                u"warning",
             )
         else:
             self.set_status(
@@ -41979,6 +41994,73 @@ def prod_pose_noop_test(plans, evaluated):
     return evaluated.get(u"rig_inputs_ok") is True and evaluated.get(u"skeletal_oracle_ok") is True
 
 
+# Astra's revised verification contract (RC4, REVISE ruling): the evaluated skeletal outputs a pose must reproduce are
+# compared with their own inclusive reproduction envelope, separately from integrity and preservation (identity,
+# ownership, dependencies, authored keys and metadata, placement, facing, scale, preserved local articulation,
+# structural compatibility, P2 stability, effective rig inputs, Abort, Undo and recovery keep their own limits). Every
+# required output needs finite, readable evidence; missing, unreadable or non-finite evidence is an integrity problem.
+PROD_POSE_REPRODUCTION_TOLERANCES = {u"position": 0.01, u"angle_degrees": 0.1}
+PROD_POSE_REPRODUCTION_PREFIX = u"reproduction: "
+
+
+def prod_pose_reproduction_stats():
+    return {u"outputs": 0, u"max_distance": 0.0, u"max_angle_deg": 0.0, u"worst_distance": None,
+            u"worst_angle": None, u"limits": dict(PROD_POSE_REPRODUCTION_TOLERANCES)}
+
+
+def prod_pose_reproduction_finite(v, n):
+    if not isinstance(v, (list, tuple)) or len(v) != n:
+        return False
+    for c in v:
+        if not prod_pose_is_number(c) or math.isnan(float(c)) or math.isinf(float(c)):
+            return False
+    return True
+
+
+def prod_pose_reproduction(label, got_p, got_q, want_p, want_q, problems, stats=None):
+    """One required skeletal output against its expected transform (want_p or want_q None: that part is not
+    required). Appends "<label> unreadable" (integrity) or "reproduction: <label>" (a readable output outside the
+    inclusive envelope) to problems; records the maxima in stats."""
+    tol = PROD_POSE_REPRODUCTION_TOLERANCES
+    try:
+        if (want_p is not None and not (prod_pose_reproduction_finite(got_p, 3) and
+                                         prod_pose_reproduction_finite(want_p, 3))) or \
+                (want_q is not None and not (prod_pose_reproduction_finite(got_q, 4) and
+                                             prod_pose_reproduction_finite(want_q, 4))):
+            raise ValueError(u"not finite")
+        d = prod_pose_distance([float(c) for c in got_p], [float(c) for c in want_p]) if want_p is not None else 0.0
+        a = prod_pose_angle_deg([float(c) for c in got_q], [float(c) for c in want_q]) if want_q is not None else 0.0
+        if math.isnan(d) or math.isnan(a) or math.isinf(d) or math.isinf(a):
+            raise ValueError(u"not finite")
+    except Exception:
+        problems.append(u"%s unreadable" % label)
+        return
+    if stats is not None:
+        stats[u"outputs"] += 1
+        if d > stats[u"max_distance"]:
+            stats[u"max_distance"], stats[u"worst_distance"] = d, label
+        if a > stats[u"max_angle_deg"]:
+            stats[u"max_angle_deg"], stats[u"worst_angle"] = a, label
+    if not (d <= tol[u"position"] and a <= tol[u"angle_degrees"]):
+        problems.append(PROD_POSE_REPRODUCTION_PREFIX + label)
+
+
+def prod_pose_reproduction_only(problems):
+    """True when there are problems and every one is a reproduction mismatch (no integrity problem)."""
+    return bool(problems) and all((u"%s" % x).startswith(PROD_POSE_REPRODUCTION_PREFIX) for x in problems)
+
+
+def prod_pose_nowork(plans, problems):
+    """Repeat Apply (RC4): when every planned key is already present, the result without any write: "no-op" (the
+    evaluated pose verifies), "mismatch" (only reproduction problems) or "unverified" (integrity evidence fails).
+    None when a key is missing or the plan is empty: the normal guarded Apply transaction."""
+    if not plans or any(x[u"action"] != u"none" for x in plans):
+        return None
+    if not problems:
+        return u"no-op"
+    return u"mismatch" if prod_pose_reproduction_only(problems) else u"unverified"
+
+
 def prod_pose_check_postconditions(before, after, plan, allowed_metadata_changes=()):
     """Compare one layer's snapshots around the writes against its plan. Returns a list of problems (empty: pass).
     allowed_metadata_changes names metadata fields a qualified insertion may change (none until NQ-1 says so)."""
@@ -42061,6 +42143,9 @@ PROD_POSE_MESSAGES = {
                             u"continuing. Restart SFM to use pose tools again.",
     u"blocked-after-recovery": u"Pose changes are paused because CPM couldn't confirm an earlier result. Check the "
                                u"character's pose in SFM, then restart SFM to use poses again.",
+    u"reproduction-mismatch": u"Pose keys applied, but the evaluated pose differs from the saved pose.",
+    u"already-unverified": u"This pose's keys are already on the character, but CPM couldn't verify it. Nothing was "
+                           u"changed.",
     u"committed-unverified": u"Pose keys were written, but CPM couldn't verify the result. Check the character's pose "
                              u"before applying another pose. SFM Undo shows this change as \"Apply Pose %(name)s\".",
     u"shared-authority": u"This pose can't be applied: the arms on %(character)s share animation data CPM can't "
@@ -42966,6 +43051,34 @@ def prod_pose_context_gate(authorization):
     if not prod_context_token_matches(context):
         return u"context-changed"
     return None
+
+
+def prod_pose_reproduction_mismatch(stats, problems, written):
+    """Astra's reproduction-mismatch outcome: the authored change (or, with written False, the keys already present)
+    and its ownership verify, but the evaluated pose is outside the reproduction envelope. Not a corruption, not a
+    recovery failure and not a reproduced pose; ordinary editing and Undo stay available (no lockout, no automatic
+    Undo)."""
+    result = prod_outcome(u"reproduction-mismatch", native_committed=bool(written), durable_persisted=False,
+                          verified=False, recovery=None)
+    result[u"reason"] = u"reproduction"
+    result[u"written"] = bool(written)
+    result[u"reproduction"] = stats
+    result[u"problems"] = [u"%s" % x for x in problems[:16]]
+    return result
+
+
+def prod_pose_nowork_result(pre, tag):
+    """The repeat-Apply result of a preflight whose planned keys are all present (never opens Undo)."""
+    if prod_pose_undo_state(dm()) != pre[u"undo"]:
+        raise ProdPoseError(u"stale", PROD_POSE_MESSAGES[u"stale"])
+    kind = pre.get(u"nowork")
+    prod_pose_log(tag + u"-nowork", {u"result": kind, u"problems": (pre.get(u"nowork_problems") or [])[:16],
+                                     u"reproduction": pre.get(u"reproduction")})
+    if kind == u"no-op":
+        return {u"phase": u"no-op"}                 # the maxima are in the diagnostic line above
+    if kind == u"mismatch":
+        return prod_pose_reproduction_mismatch(pre.get(u"reproduction"), pre.get(u"nowork_problems") or [], False)
+    raise ProdPoseError(u"already-unverified", PROD_POSE_MESSAGES[u"already-unverified"])
 
 
 def prod_pose_deferred_verify(pending):
@@ -44181,20 +44294,20 @@ def prod_pose_oracle(region, skel, profile):
     return oracle
 
 
-def prod_pose_classify(skel, baseline, oracle, inputs, bindings, profile):
+def prod_pose_classify(skel, baseline, oracle, inputs, bindings, profile, stats=None):
     """Section 8.4 items 2-5 for one observation against the expected pose: the skeletal oracles (primary local and
-    secondary anchor-mapped world), the rig inputs and the observed channel, and the preservation of every other
-    bone, the model, the root and anchor placement, the weights and the scales. Returns the list of problems."""
+    secondary anchor-mapped world; RC4: the reproduction envelope), the rig inputs and the observed channel, and the
+    preservation of every other bone, the model, the root and anchor placement, the weights and the scales (their own
+    limits). Returns the list of problems."""
     tol = profile[u"tolerances"]
     problems = []
     for name in profile[u"arm_bones"]:
         now = skel[u"bones"][name]
-        if prod_pose_angle_deg(now[u"local_orientation"], oracle[u"primary_local"][name]) > tol[u"angle_degrees"]:
-            problems.append(u"oracle %s local orientation" % name)
+        prod_pose_reproduction(u"oracle %s local orientation" % name, None, now[u"local_orientation"], None,
+                               oracle[u"primary_local"][name], problems, stats)
         w = oracle[u"secondary_world"][name]
-        if prod_pose_distance(now[u"world_position"], w[u"position"]) > tol[u"position"] or \
-                prod_pose_angle_deg(now[u"world_orientation"], w[u"orientation"]) > tol[u"angle_degrees"]:
-            problems.append(u"oracle %s anchor-mapped world" % name)
+        prod_pose_reproduction(u"oracle %s anchor-mapped world" % name, now[u"world_position"],
+                               now[u"world_orientation"], w[u"position"], w[u"orientation"], problems, stats)
         was = baseline[u"bones"][name]
         if prod_pose_distance(now[u"local_position"], was[u"local_position"]) > tol[u"position"] or \
                 now[u"scale"] != was[u"scale"]:
@@ -44393,7 +44506,8 @@ def prod_pose_preflight(identity, authorization, item, reg):
     undo = prod_pose_undo_state(dm_obj)
     if prod_pose_undo_problems(undo):
         raise ProdPoseError(u"evidence-unreadable", u"the Undo history is unreadable: %s" % prod_pose_undo_problems(undo))
-    out = {u"regions": {}, u"undo": undo, u"time": None, u"plans": [], u"noop": True}
+    out = {u"regions": {}, u"undo": undo, u"time": None, u"plans": [], u"noop": True, u"nowork_problems": [],
+           u"reproduction": prod_pose_reproduction_stats()}
     for r in regions:
         profile = prod_pose_region_profile(reg, authorization, r)
         region = record[u"pose"][u"regions"][r]
@@ -44423,7 +44537,10 @@ def prod_pose_preflight(identity, authorization, item, reg):
                                             (b[u"role"][u"log_type"], b[u"role"][u"layer_type"])))
         oracle = prod_pose_oracle(region, skel, profile)
         inputs = dict((p[u"name"], p[u"value"]) for p in plans)
-        already = not prod_pose_classify(skel, skel, oracle, inputs, st[u"bindings"], profile)
+        found = prod_pose_classify(skel, skel, oracle, inputs, st[u"bindings"], profile, out[u"reproduction"])
+        already = not found
+        out[u"nowork_problems"].extend(u"%s: %s" % (r, x) if not x.startswith(PROD_POSE_REPRODUCTION_PREFIX) else x
+                                       for x in found)
         noop = prod_pose_noop_test(plans, {u"rig_inputs_ok": already, u"skeletal_oracle_ok": already})
         out[u"noop"] = out[u"noop"] and noop
         out[u"plans"].extend(plans)
@@ -44431,6 +44548,7 @@ def prod_pose_preflight(identity, authorization, item, reg):
                               u"oracle": oracle, u"inputs": inputs, u"cross_check": checks,
                               u"expected_authored": prod_pose_expected_authored(st[u"authored"], plans, st[u"bindings"])}
     out[u"row"] = row
+    out[u"nowork"] = prod_pose_nowork(out[u"plans"], out[u"nowork_problems"])
     return out
 
 
@@ -44490,11 +44608,10 @@ def prod_pose_apply(identity, authorization, item, reg, phase_callback=None):
         raise ProdPoseError(u"evidence-unreadable", u"%s" % exc)
     prod_pose_log(u"P1", {u"time": pre[u"time"], u"plans": [dict((k, p[k]) for k in (u"name", u"action", u"index",
                                                                                    u"t", u"count"))
-                                                            for p in pre[u"plans"]], u"noop": pre[u"noop"]})
-    if pre[u"noop"]:
-        if prod_pose_undo_state(dm()) != pre[u"undo"]:
-            raise ProdPoseError(u"stale", PROD_POSE_MESSAGES[u"stale"])
-        return {u"phase": u"no-op"}
+                                                            for p in pre[u"plans"]], u"noop": pre[u"noop"],
+                       u"nowork": pre[u"nowork"]})
+    if pre[u"nowork"] is not None:                 # RC4: every key present; never opens Undo
+        return prod_pose_nowork_result(pre, u"ARM")
     # P2: final revalidation; any change refuses before a write.
     fresh = prod_pose_read_file(item[u"path"], reg)
     if fresh[1] != item[u"revision"]:
@@ -44619,6 +44736,7 @@ def prod_pose_verify_applied(pending):
     if pending.get(u"finish_exception") or not pending.get(u"owned_top"):
         return prod_apply_deferred_unverified(u"ownership-uncertain")
     authorization = pending[u"authorization"]
+    stats, mismatch = prod_pose_reproduction_stats(), []
     try:
         row = prod_resolve_instance(prod_instance_token(authorization[u"context"]))
         undo = prod_pose_undo_state(dm())
@@ -44649,14 +44767,20 @@ def prod_pose_verify_applied(pending):
                 problems.append(u"constraint or operator attributes")
             skel = prod_pose_capture_skeleton(L, time[u"t_chan"])
             problems.extend(prod_pose_classify(skel, info[u"baseline"], info[u"oracle"], info[u"inputs"], bindings,
-                                               profile))
+                                               profile, stats))
             if problems:
+                if prod_pose_reproduction_only(problems):
+                    mismatch.extend(problems)
+                    continue
                 prod_pose_log(u"P7-unverified", {u"region": r, u"problems": problems[:16]})
                 return prod_apply_deferred_unverified(u"verify-failed")
     except Exception as exc:
         prod_pose_log(u"P7-unverified", {u"reason": u"verify-error", u"error": repr(exc)})
         return prod_apply_deferred_unverified(u"verify-error")
-    prod_pose_log(u"P7-verified", {u"time": pending[u"time"]})
+    if mismatch:
+        prod_pose_log(u"P7-reproduction-mismatch", {u"problems": mismatch[:16], u"reproduction": stats})
+        return prod_pose_reproduction_mismatch(stats, mismatch, True)
+    prod_pose_log(u"P7-verified", {u"time": pending[u"time"], u"reproduction": stats})
     return {u"phase": u"committed-verified"}
 
 # === end of F-01 stage D block ===
@@ -45732,18 +45856,17 @@ def prod_body_expected_skeleton(region, D, C, profile):
     return expected
 
 
-def prod_body_verify_skeleton(D_now, D_base, expected, C, profile, values=None):
-    """The evaluated destination against the expected state: every bone where expected; preserved and passive bones
-    with unchanged local transforms; every bone's scale and the model's placement and scale unchanged; the
-    placement handle unchanged; and, when given, each written channel's owner at its planned value. Returns the
-    problems (empty: verified)."""
+def prod_body_verify_skeleton(D_now, D_base, expected, C, profile, values=None, stats=None):
+    """The evaluated destination against the expected state: every bone where expected (RC4: the reproduction
+    envelope); preserved and passive bones with unchanged local transforms; every bone's scale and the model's
+    placement and scale unchanged; the placement handle unchanged; and, when given, each written channel's owner at
+    its planned value (their own limits). Returns the problems (empty: verified)."""
     tol = profile[u"tolerances"]
     problems = []
     for name, (p, q) in expected.items():
         now, was = D_now[u"bones"][name], D_base[u"bones"][name]
-        if prod_pose_distance(now[u"world_position"], p) > tol[u"position"] or \
-                prod_pose_angle_deg(now[u"world_orientation"], q) > tol[u"angle_degrees"]:
-            problems.append(u"bone %s" % name)
+        prod_pose_reproduction(u"bone %s" % name, now[u"world_position"], now[u"world_orientation"], p, q, problems,
+                               stats)
         if now[u"scale"] != was[u"scale"]:
             problems.append(u"bone %s scale" % name)
         if C[u"bones"][name] in (u"fk-preserved", u"passive") and (
@@ -45777,6 +45900,19 @@ def prod_body_verify_skeleton(D_now, D_base, expected, C, profile, values=None):
         elif prod_pose_angle_deg(row[u"local_orientation"], v) > tol[u"effective_angle_degrees"]:
             problems.append(u"input %s" % name)
     return problems
+
+
+def prod_body_nowork(plans, D, C, region, profile, values=None):
+    """RC4 repeat Apply: (prod_pose_nowork result, the problems, the reproduction maxima) of the evaluated
+    destination against the record's expected skeleton and the planned inputs, when every planned key is present."""
+    stats = prod_pose_reproduction_stats()
+    if values is None:
+        values = prod_body_planned_values(region, {})
+    if not plans or any(x[u"action"] != u"none" for x in plans):
+        return None, [], stats
+    expected = prod_body_expected_skeleton(region, D, C, profile)
+    problems = prod_body_verify_skeleton(D, D, expected, C, profile, values, stats)
+    return prod_pose_nowork(plans, problems), problems, stats
 
 
 def prod_body_noop(plans, D, C, region, profile, values=None):
@@ -46227,13 +46363,15 @@ def prod_body_preflight(identity, authorization, item, reg):
     plans = prod_body_wrap(lambda: prod_body_plan(region, D, C, snaps, t_chan, pinned))
     values = prod_body_planned_values(region, pinned)     # the one map for plans, no-op, P5 and P7
     expected = prod_body_expected_skeleton(saved_region, D, C, profile)    # always the record's own reference
-    noop = prod_body_noop(plans, D, C, saved_region, profile, values)
+    nowork, nowork_problems, reproduction = prod_body_nowork(plans, D, C, saved_region, profile, values)
+    noop = nowork == u"no-op"
     handles = dict((n, prod_pose_h(b[u"channel"])) for n, b in bindings.items())
     return {u"state": st, u"profile": profile, u"undo": undo, u"time": st[u"time"], u"gate": gate,
             u"region": region, u"inputs": inputs, u"pinned": pinned,
             u"bindings": bindings, u"snaps": snaps, u"plans": plans, u"values": values, u"expected": expected,
             u"noop": noop, u"expected_authored": prod_body_expected_authored(st[u"authored"], plans, handles),
-            u"row": row, u"saved_region": saved_region, u"adaptation": adaptation}
+            u"row": row, u"saved_region": saved_region, u"adaptation": adaptation, u"nowork": nowork,
+            u"nowork_problems": nowork_problems, u"reproduction": reproduction}
 
 
 def prod_body_same_state(identity, authorization, pre, abort_record=None):
@@ -46307,12 +46445,11 @@ def prod_body_apply(identity, authorization, item, reg, phase_callback=None):
     mode = authorization[u"mode"]
     name = item[u"record"][u"name"]
     pre = prod_body_preflight(identity, authorization, item, reg)
-    prod_pose_log(u"BODY-P1", {u"time": pre[u"time"], u"noop": pre[u"noop"], u"actions": dict(
-        (a, sum(1 for p in pre[u"plans"] if p[u"action"] == a)) for a in (u"none", u"update", u"insert"))})
-    if pre[u"noop"]:
-        if prod_pose_undo_state(dm()) != pre[u"undo"]:
-            raise ProdPoseError(u"stale", PROD_POSE_MESSAGES[u"stale"])
-        return {u"phase": u"no-op"}
+    prod_pose_log(u"BODY-P1", {u"time": pre[u"time"], u"noop": pre[u"noop"], u"nowork": pre[u"nowork"],
+                               u"actions": dict((a, sum(1 for p in pre[u"plans"] if p[u"action"] == a))
+                                                for a in (u"none", u"update", u"insert"))})
+    if pre[u"nowork"] is not None:                 # RC4: every key present; never opens Undo
+        return prod_pose_nowork_result(pre, u"BODY")
     # P2: final revalidation of the record and the whole state immediately before the transaction.
     fresh = prod_pose_read_file(item[u"path"], reg)
     if fresh[1] != item[u"revision"]:
@@ -46475,15 +46612,19 @@ def prod_body_verify_applied(pending):
             if not ok:
                 problems.append(u"pinned FK position %s drifted" % name)
         expected = dict((k, (v[0], v[1])) for k, v in pending[u"expected"].items())
+        stats = prod_pose_reproduction_stats()
         problems.extend(prod_body_verify_skeleton(D, pending[u"baseline"], expected, pending[u"classes"], profile,
-                                                  pending[u"values"]))
+                                                  pending[u"values"], stats))
+        if problems and prod_pose_reproduction_only(problems):
+            prod_pose_log(u"BODY-P7-reproduction-mismatch", {u"problems": problems[:16], u"reproduction": stats})
+            return prod_pose_reproduction_mismatch(stats, problems, True)
         if problems:
             prod_pose_log(u"BODY-P7-unverified", {u"problems": problems[:16]})
             return prod_apply_deferred_unverified(u"verify-failed")
     except Exception as exc:
         prod_pose_log(u"BODY-P7-unverified", {u"reason": u"verify-error", u"error": repr(exc)})
         return prod_apply_deferred_unverified(u"verify-error")
-    prod_pose_log(u"BODY-P7-verified", {u"time": pending[u"time"]})
+    prod_pose_log(u"BODY-P7-verified", {u"time": pending[u"time"], u"reproduction": stats})
     return {u"phase": u"committed-verified"}
 
 # --- part 4: F-01 Stage 1, generic structural rig support -----------------------------------------------------------
@@ -48930,7 +49071,7 @@ def prod_scope_check_against_source(pose, expected, D, S):
     return problems
 
 
-def prod_scope_verify(D_now, D_base, expected, pose, S, values, followers=()):
+def prod_scope_verify(D_now, D_base, expected, pose, S, values, followers=(), stats=None):
     """The evaluated destination against the expected state (P7 and no-op): every affected bone at its expected
     world transform; posed bones at their saved local orientation and planned offset; carried bones with their own
     unchanged local transforms; dependency chain, outside branches, scales and the model placement unchanged.
@@ -48947,12 +49088,12 @@ def prod_scope_verify(D_now, D_base, expected, pose, S, values, followers=()):
             problems.append(u"bone %s parent changed" % name)
     for name, (p, q) in expected.items():
         now, was = D_now[u"bones"][name], D_base[u"bones"][name]
-        if prod_pose_distance(now[u"world_position"], p) > tol[u"position"] or \
-                prod_pose_angle_deg(now[u"world_orientation"], q) > tol[u"angle_degrees"]:
-            problems.append(u"bone %s" % name)
+        # RC4: the affected bones' evaluated outputs against the reproduction envelope.
+        prod_pose_reproduction(u"bone %s" % name, now[u"world_position"], now[u"world_orientation"], p, q, problems,
+                               stats)
         if name in S[u"posed"]:
-            if prod_pose_angle_deg(now[u"local_orientation"], orc[name][u"local_orientation"]) > tol[u"angle_degrees"]:
-                problems.append(u"bone %s local orientation" % name)
+            prod_pose_reproduction(u"bone %s local orientation" % name, None, now[u"local_orientation"], None,
+                                   orc[name][u"local_orientation"], problems, stats)
         elif prod_pose_distance(now[u"local_position"], was[u"local_position"]) > tol[u"position"] or \
                 prod_pose_angle_deg(now[u"local_orientation"], was[u"local_orientation"]) > tol[u"angle_degrees"]:
             problems.append(u"carried bone %s local" % name)
@@ -49216,6 +49357,16 @@ def prod_scope_plan(S, values, snaps, t_chan):
                 raise prod_scope_error(u"evidence-unreadable", u"%s: the key at t contradicts the pinned offset" % name)
         plans.append(plan)
     return plans
+
+
+def prod_scope_nowork(plans, D, expected, pose, S, values, followers):
+    """RC4 repeat Apply: (prod_pose_nowork result, the problems, the reproduction maxima) when every planned key is
+    present."""
+    stats = prod_pose_reproduction_stats()
+    if not plans or any(x[u"action"] != u"none" for x in plans):
+        return None, [], stats
+    problems = prod_scope_verify(D, D, expected, pose, S, values, followers, stats)
+    return prod_pose_nowork(plans, problems), problems, stats
 
 
 def prod_scope_noop(plans, D, expected, pose, S, values, followers):
@@ -49499,12 +49650,14 @@ def prod_scope_preflight(identity, authorization, item):
     opaque = [n for n in S[u"excluded"] if n not in S[u"preserved"]]
     followers = sorted(set(dependencies[u"confined"]) | set(opaque) | prod_scope_descendants(D, opaque) |
                        set(S[u"helpers"]))
-    noop = prod_scope_noop(plans, D, expected, pose, S, values, followers)
+    nowork, nowork_problems, reproduction = prod_scope_nowork(plans, D, expected, pose, S, values, followers)
+    noop = nowork == u"no-op"
     handles = dict((n, prod_pose_h(b[u"channel"])) for n, b in bindings.items())
     return {u"state": st, u"undo": undo, u"time": st[u"time"], u"gate": gate, u"pose": pose, u"request": request,
             u"carried": carried, u"pinned": pinned, u"bindings": bindings, u"snaps": snaps, u"plans": plans,
             u"values": values, u"expected": expected, u"followers": followers, u"noop": noop,
-            u"dependencies": dependencies,
+            u"dependencies": dependencies, u"nowork": nowork, u"nowork_problems": nowork_problems,
+            u"reproduction": reproduction,
             u"expected_authored": prod_body_expected_authored(st[u"authored"], plans, handles), u"row": row}
 
 
@@ -49578,13 +49731,12 @@ def prod_scope_apply(identity, authorization, item, reg=None, phase_callback=Non
     mode = authorization[u"mode"]
     name = item[u"record"][u"name"]
     pre = prod_scope_preflight(identity, authorization, item)
-    prod_pose_log(u"SCOPE-P1", {u"time": pre[u"time"], u"noop": pre[u"noop"], u"scope": pre[u"state"][u"S"][u"kind"],
+    prod_pose_log(u"SCOPE-P1", {u"time": pre[u"time"], u"noop": pre[u"noop"], u"nowork": pre[u"nowork"],
+                                u"scope": pre[u"state"][u"S"][u"kind"],
                                 u"actions": dict((a, sum(1 for p in pre[u"plans"] if p[u"action"] == a))
                                                  for a in (u"none", u"update", u"insert"))})
-    if pre[u"noop"]:
-        if prod_pose_undo_state(dm()) != pre[u"undo"]:
-            raise ProdPoseError(u"stale", PROD_POSE_MESSAGES[u"stale"])
-        return {u"phase": u"no-op"}
+    if pre[u"nowork"] is not None:                 # RC4: every key present; never opens Undo
+        return prod_pose_nowork_result(pre, u"SCOPE")
     fresh = prod_pose_read_file(item[u"path"], reg if reg is not None else {})
     if fresh[1] != item[u"revision"]:
         raise ProdPoseLibraryError(u"record-changed", PROD_POSE_MESSAGES[u"record-changed"])
@@ -49752,15 +49904,19 @@ def prod_scope_verify_applied(pending):
                     PROD_SCOPE_TOLERANCES[u"effective_angle_degrees"]):
                 problems.append(u"written channel %s does not hold its planned value" % w[u"channel"])
         expected = dict((k, (v[0], v[1])) for k, v in pending[u"expected"].items())
+        stats = prod_pose_reproduction_stats()
         problems.extend(prod_scope_verify(D, pending[u"baseline"], expected, pending[u"pose"], pending[u"scope"],
-                                          pending[u"values"], pending[u"followers"]))
+                                          pending[u"values"], pending[u"followers"], stats))
+        if problems and prod_pose_reproduction_only(problems):
+            prod_pose_log(u"SCOPE-P7-reproduction-mismatch", {u"problems": problems[:16], u"reproduction": stats})
+            return prod_pose_reproduction_mismatch(stats, problems, True)
         if problems:
             prod_pose_log(u"SCOPE-P7-unverified", {u"problems": problems[:16]})
             return prod_apply_deferred_unverified(u"verify-failed")
     except Exception as exc:
         prod_pose_log(u"SCOPE-P7-unverified", {u"reason": u"verify-error", u"error": repr(exc)})
         return prod_apply_deferred_unverified(u"verify-error")
-    prod_pose_log(u"SCOPE-P7-verified", {u"time": pending[u"time"]})
+    prod_pose_log(u"SCOPE-P7-verified", {u"time": pending[u"time"], u"reproduction": stats})
     return {u"phase": u"committed-verified"}
 
 

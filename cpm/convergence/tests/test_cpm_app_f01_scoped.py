@@ -724,7 +724,7 @@ def section_frames(ns, root):
     finally:
         ns.update(saved_fns)
     check("F.self_consistent_wrong_planner_is_never_verified", result[u"phase"] == u"verification-pending" and
-          verdict[u"phase"] == u"committed-unverified", verdict)
+          verdict[u"phase"] == u"reproduction-mismatch", verdict)
     return lib, grip
 
 
@@ -3047,9 +3047,11 @@ def section_offset_amendment_02(ns, root, arm, lib):
     refused("AM2.selected_parts_one_ulp_change_at_P2_refuses", got, u"stale")
     check("AM2.selected_parts_p2_refusal_writes_nothing", not writes(w))
 
-    # 10. P7 keeps its 0.001 position limit: an expected position 0.0011 off is never verified; 0.0009 off verifies.
-    # (Only the expectation is wrong; the pre-write source cross-check is disabled so the error reaches P7.)
-    for label, err, ok in ((u"0.0011", 0.0011, False), (u"0.0009", 0.0009, True)):
+    # 10. P7's skeletal reproduction envelope (RC4, Astra's revised contract: 0.01 units, 0.1 degrees, inclusive;
+    # formerly 0.001): an expected position 0.0101 off is a reproduction mismatch, never verified; 0.0099 and the
+    # former boundary case 0.0011 verify. (Only the expectation is wrong; the pre-write source cross-check is
+    # disabled so the error reaches P7.)
+    for label, err, ok in ((u"0.0101", 0.0101, False), (u"0.0099", 0.0099, True), (u"0.0011", 0.0011, True)):
         w = FS.World(placed_destination(arm))
         use(ns, w, arm)
         saved_fns = dict((k, ns[k]) for k in (u"prod_scope_expected", u"prod_scope_check_against_source"))
@@ -3066,11 +3068,11 @@ def section_offset_amendment_02(ns, root, arm, lib):
         finally:
             ns.update(saved_fns)
         if ok:
-            check("AM2.p7_position_error_%s_within_0.001_verifies" % label, verdict == {u"phase": u"committed-verified"},
-                  verdict)
+            check("AM2.p7_position_error_%s_within_the_reproduction_envelope_verifies" % label,
+                  verdict == {u"phase": u"committed-verified"}, verdict)
         else:
-            check("AM2.p7_position_error_%s_above_0.001_is_never_verified" % label,
-                  result[u"phase"] == u"verification-pending" and verdict[u"phase"] == u"committed-unverified", verdict)
+            check("AM2.p7_position_error_%s_beyond_the_reproduction_envelope_is_a_mismatch" % label,
+                  result[u"phase"] == u"verification-pending" and verdict[u"phase"] == u"reproduction-mismatch", verdict)
 
     # 3. EF-1 native: Selected parts subsets saved on the native source (A2) and applied to the native destination
     # (B1), each containing an affected bone (bip_head 6.08e-4, bip_upperArm_R 5.98e-4 from the saved offsets).

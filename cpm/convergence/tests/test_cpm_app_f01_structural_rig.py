@@ -652,9 +652,12 @@ def section_transaction(ns, reg, fx, item):
     w.evaluate()
     pending = dict(got[1][u"pending"], authorization=auth)
     verdict = ns["prod_pose_deferred_verify"](pending)
+    # RC4 (Astra's revised contract): correct inputs and ownership with a wrong evaluated skeleton is a reproduction
+    # mismatch, never a verified success.
     check("T.p7_detects_a_wrong_evaluated_skeleton_with_correct_inputs", B.all_keys(w) == keys and
-          verdict.get(u"phase") == u"committed-unverified" and any(
-              u"BODY-P7-unverified" in l and u"bone " in l for l in ns["LOG"][-4:]), (verdict, ns["LOG"][-1:]))
+          verdict.get(u"phase") == u"reproduction-mismatch" and verdict.get(u"written") is True and any(
+              u"BODY-P7-reproduction-mismatch" in l and u"bone " in l for l in ns["LOG"][-4:]),
+          (verdict, ns["LOG"][-1:]))
     # P7: a constraint offset changed after the commit (a changed description) is unverified.
     w = world(fx)
     auth, got = apply_(ns, reg, item, w)
@@ -1411,8 +1414,8 @@ def section_rotation(ns, reg, fx, item):
     w.solve_ik = misbent
     w.evaluate()
     verdict = ns["prod_pose_deferred_verify"](dict(got[1][u"pending"], authorization=auth))
-    check("N.compatible_rig_with_wrong_reproduction_is_committed_unverified", verdict.get(u"phase") ==
-          u"committed-unverified", verdict)
+    check("N.compatible_rig_with_wrong_reproduction_is_a_reproduction_mismatch", verdict.get(u"phase") ==
+          u"reproduction-mismatch", verdict)
 
     # Authored quaternion keys keep their exact values and signs (no rotation equivalence for keys).
     def negate_keys(w):
