@@ -80,8 +80,23 @@ Each capture prints two lines:
      - lift one foot (`rig_foot_R`) and its toe (`rig_toe_R`);
      - curl a few fingers.
 
-     Then turn the directly animated ears, hair spikes and tails with their own controls (for example `ear_L`,
-     `ear2_L`, `HairSpike_M1`, `Tail2_L`, `Tail4_R`). The tips have no controls; leave them alone.
+     Then turn a few ordinary editable parent bones with their own controls: `ear_L`, `HairSpike_M1`, `Tail2_L`
+     and `Tail4_R`.
+
+     **Do not pose the seven JIGGLE leaves.** The model header (`milestailsprower.mdl`, procedure type JIGGLE)
+     declares exactly these:
+     - `ear3_L`, under `ear2_L`;
+     - `ear3_R`, under `ear2_R`;
+     - `HairSpike_B3`, under `HairSpike_B2`;
+     - `HairSpike_M3`, under `HairSpike_M2`;
+     - `HairSpike_T3`, under `HairSpike_T2`;
+     - `Tail6_L`, under `Tail5_L`;
+     - `Tail6_R`, under `Tail5_R`.
+
+     They have no controls in the Animation Set Editor: do not select or move them in the viewport either.
+
+     `ear2_L` and `ear2_R` are not JIGGLE leaves; they are ordinary bones and the leaves' parents. As an extra
+     precaution (Designer's GO), leave them alone too.
    - **Tails D:** move its `rig_root` a few hundred units away from Tails S and turn it. Then pose it differently with a
      couple of rig handles (for example both hands down, head turned the other way).
 

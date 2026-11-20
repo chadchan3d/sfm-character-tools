@@ -106,3 +106,34 @@ line give the exact reason.
 - No Abort or Fox repetition, and no other rig campaign.
 - No production promotion, signing, push, merge or release.
 - Stage 1 and every historical verdict are unchanged.
+
+## 6. Native GO and procedure correction (2026-11-19)
+
+**Authority:** the Designer's "F-01 Stage 2 — Native Qualification GO": ACCEPT kit `cbe30f6`, with one procedure
+correction; native execution authorized after it.
+
+**The correction** (Process A step 4, posing):
+- Tails S is posed with the stock rig handles and ordinary editable parent bones (`ear_L`, `HairSpike_M1`, `Tail2_L`
+  and `Tail4_R`).
+- The seven JIGGLE leaves are listed from the model header, each with its parent: `ear3_L` (`ear2_L`), `ear3_R`
+  (`ear2_R`), `HairSpike_B3/M3/T3` (`HairSpike_B2/M2/T2`) and `Tail6_L/R` (`Tail5_L/R`). The Owner must not pose
+  them.
+- **Accuracy note:** the GO named `ear2_L` among the leaves. The header declares `ear2_L` and `ear2_R` ordinary
+  (procedure type 0); they are the parents of `ear3_L` and `ear3_R`. The procedure says so, and, as the GO asks,
+  still tells the Owner to leave them alone as an extra precaution.
+
+**What changed with it:**
+- The procedure is now `fccf5ecc…`, re-pinned in the template and the run configuration.
+- The analyzer (`a76b7a80…`), the capture wrapper and the gates are unchanged.
+- Kit tests: 79/79 (3.10.6) and 25/25 (2.7.5).
+
+**Recorded, not altered (as the GO asks):** the two stale-template failures of the closed recovery kit
+(`template.candidate_is_the_corrected_cpm` and `template.qualification_build_is_the_one_line_derivation`, 59/61).
+They compare that kit's pins with the repository's current CPM. That kit and its evidence stay unchanged.
+
+**Preflight and installation:**
+- `staged/` (derived output only) was rebuilt for the new procedure pin. `build` gave `7d3ed720…`, line 42630 only.
+- `pre` passed: `S2T_SESSION.dmx` is a verified copy of the R2 fixture `259ea8a6…`, the spare is in place, and the
+  preset library is backed up (107 files, 22 folders).
+- `install` and `check`: the qualification CPM `7d3ed720…` and both registries are installed.
+- The original R2 fixture is unchanged.
