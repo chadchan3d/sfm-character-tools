@@ -1764,6 +1764,7 @@ def main():
             run("rotation", lambda: section_rotation(ns, reg, fx, lived[1]))
         run("face", lambda: section_face(ns, reg, fx, root))
         run("window", lambda: section_window(app, ns, reg, fx, root))
+        run("rig_info", lambda: section_rig_info(app, ns, reg, fx, root))
         if lived:
             run("abort_history", lambda: section_abort_history(app, ns, reg, fx, lived[1], root))
     finally:
@@ -1772,6 +1773,107 @@ def main():
     print("RESULT: %d/%d %s (%s)" % (len(RESULTS) - len(failed), len(RESULTS),
                                      "ALL PASS" if not failed else "SOME FAILED", sys.version.split()[0]))
     return 1 if failed else 0
+
+
+# ---------------------------------------------------------------------------
+# I. Pose Info's Rig (RC4; Astra's RC4 ruling section 4): the recorded scene rig, informational only
+# ---------------------------------------------------------------------------
+
+def section_rig_info(app, ns, reg, fx, root):
+    label = ns["prod_pose_rig_label"]
+    check("I.label_removes_the_exact_animation_set_suffix", label(u"rig_biped_milestailsprower2",
+                                                                  u"milestailsprower2") == u"rig_biped")
+    check("I.label_keeps_any_other_name_as_it_is", label(u"my_rig_v3", u"foxmccouldwm1") == u"my_rig_v3" and
+          label(u"rig_biped_fox2", u"fox") == u"rig_biped_fox2" and label(u"_fox", u"fox") == u"_fox")
+    check("I.label_is_custom_rig_when_unusable", label(u"bad\x01name", u"fox") == u"Custom rig" and
+          label(u"x" * 300, u"fox") == u"Custom rig")
+    # The pinned instance's scene rig, read only.
+    w = use(ns, world(fx, posed=False))
+    rig = ns["prod_pose_instance_rig"](ctx(ns))
+    check("I.instance_rig_is_the_scene_rig_element_name", rig == {u"label": u"rig_biped_foxmccouldwm1",
+                                                                  u"scene": u"rig_biped_foxmccouldwm1"} and
+          no_mutation(w), rig)
+    w.animset.name = u"foxmccouldwm1"
+    check("I.instance_rig_label_drops_the_instance_name", ns["prod_pose_instance_rig"](ctx(ns)) == {
+        u"label": u"rig_biped", u"scene": u"rig_biped_foxmccouldwm1"})
+    regs = w.rig.attrs["animSetList"].items
+    saved_regs = list(regs)
+    del regs[:]
+    check("I.no_rig_registration_is_no_rig", ns["prod_pose_instance_rig"](ctx(ns)) == {u"label": u"No rig",
+                                                                                     u"scene": u""})
+    regs.extend(saved_regs + saved_regs)
+    check("I.two_registrations_are_not_recorded", ns["prod_pose_instance_rig"](ctx(ns)) is None)
+    del regs[:]
+    regs.extend(saved_regs)
+    B.Pin.valid[0] = False
+    try:
+        check("I.an_unreadable_instance_is_not_recorded", ns["prod_pose_instance_rig"](ctx(ns)) is None)
+    finally:
+        B.Pin.valid[0] = True
+    # The local sidecar: round trip, forget, damage never overwritten and never blocking.
+    lib = library(root, u"riginfo")
+    os.makedirs(lib[u"char_dir"])
+    entry = {u"label": u"rig_biped", u"scene": u"rig_biped_foxmccouldwm1"}
+    ns["prod_pose_set_rig"](lib, u"a" * 32, entry)
+    ns["prod_pose_set_rig"](lib, u"b" * 32, {u"label": u"No rig", u"scene": u""})
+    check("I.sidecar_round_trip", ns["prod_pose_source_rig"](lib[u"char_dir"], u"a" * 32) == entry and
+          ns["prod_pose_source_rig"](lib[u"char_dir"], u"b" * 32) == {u"label": u"No rig", u"scene": u""} and
+          os.path.isfile(os.path.join(lib[u"char_dir"], u"pose_rigs.json")))
+    ns["prod_pose_set_rig"](lib, u"a" * 32, None)
+    check("I.sidecar_forgets_one_entry_and_keeps_the_others", ns["prod_pose_source_rig"](
+        lib[u"char_dir"], u"a" * 32) is None and ns["prod_pose_source_rig"](lib[u"char_dir"], u"b" * 32) is not None)
+    path = os.path.join(lib[u"char_dir"], u"pose_rigs.json")
+    with open(path, "wb") as f:
+        f.write(b"{damaged")
+    del ns["LOG"][:]
+    ns["prod_pose_record_rig"](lib, u"c" * 32, entry)
+    check("I.damaged_sidecar_is_never_overwritten_and_never_blocks", open(path, "rb").read() == b"{damaged" and
+          ns["prod_pose_source_rig"](lib[u"char_dir"], u"c" * 32) is None and
+          any(u"RIG-unrecorded" in l for l in ns["LOG"]))
+    os.remove(path)
+    # Pose Info rows.
+    view = ns["prod_pose_info_view"]
+    lib2 = library(root, u"riginfo_view")
+    use(ns, world(fx, posed=False))
+    pose, saved, item = save(ns, reg, lib2, u"Info Fox")
+    record = item[u"record"]
+    rows = view(record, None, rig=entry)[u"rows"]
+    labels = [r[0] for r in rows]
+    row = rows[labels.index(u"Rig:")] if u"Rig:" in labels else None
+    check("I.pose_info_shows_the_rig_after_the_model_path", row is not None and labels.index(u"Rig:") ==
+          labels.index(u"Model path:") + 1 and row[1] == u"rig_biped", rows)
+    check("I.pose_info_rig_tooltip_names_the_scene_rig_and_its_limits", row is not None and
+          u"rig_biped_foxmccouldwm1" in row[2] and u"not the script that built it" in row[2] and
+          u"doesn't mean a pose will apply" in row[2], row)
+    check("I.pose_info_rig_not_recorded", [r for r in view(record, None, rig=None)[u"rows"] if r[0] == u"Rig:"] ==
+          [[u"Rig:", u"Not recorded", None]])
+    check("I.pose_info_damaged_entry_is_not_recorded", [r for r in view(record, None, rig={u"label": u""})[u"rows"]
+                                                        if r[0] == u"Rig:"] == [[u"Rig:", u"Not recorded", None]])
+    no_rig = [r for r in view(record, None, rig={u"label": u"No rig", u"scene": u""})[u"rows"] if r[0] == u"Rig:"]
+    check("I.pose_info_no_rig", no_rig == [[u"Rig:", u"No rig", u"The character had no rig when this pose was "
+                                                                 u"saved."]], no_rig)
+    check("I.pure_view_without_the_lookup_is_unchanged", u"Rig:" not in [r[0] for r in view(record)[u"rows"]])
+    text = app.method_text("ProdWindow", "open_pose_info")
+    check("I.pose_info_dialog_always_passes_the_rig_lookup", u"prod_pose_source_rig(" in text and
+          u"prod_pose_info_view(record, project, rig=rig)" in text)
+    # Save New records the rig of the saved instance; the portable record never holds it.
+    lib3 = library(root, u"riginfo_save")
+    w = use(ns, world(fx, posed=False))
+    w.animset.name = u"foxmccouldwm1"
+    win = B.window(app, ns, reg, lib3)
+    win.dialogs, win.prompts = [], [u"Rig Fox"]
+    got = win.save_pose(None, (u"full_body",))
+    check("I.save_new_records_the_scene_rig", got is not None and ns["prod_pose_source_rig"](
+        lib3[u"char_dir"], got[u"preset_id"]) == {u"label": u"rig_biped", u"scene": u"rig_biped_foxmccouldwm1"},
+        win.statuses[-1:])
+    raw = open(got[u"path"], "rb").read() if got and got.get(u"path") else b""
+    check("I.the_portable_record_holds_no_scene_rig_name", raw and b"rig_biped_foxmccouldwm1" not in raw and
+          b"pose_rigs" not in raw)
+    check("I.update_records_the_rig_too", u"prod_pose_record_rig(" in app.method_text("ProdWindow", "update_pose"))
+    check("I.apply_never_reads_the_rig_sidecar", not [n for n in ("prod_pose_apply", "prod_body_apply",
+                                                                  "prod_body_preflight", "prod_body_rig_adapt")
+                                                      if n in app.top and u"pose_rigs" in app.top_text(n) or
+                                                      n in app.top and u"source_rig" in app.top_text(n)])
 
 
 def run(label, fn):

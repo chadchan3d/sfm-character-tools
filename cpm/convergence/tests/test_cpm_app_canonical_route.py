@@ -332,6 +332,8 @@ F01_STAGEC_NEW_TOP = set([
     "prod_pose_registry_path", "prod_pose_reread", "prod_pose_selected_library",
     # UI corrections after K2 (2026-11-14): Source project, the session read and the never-failing record step
     "prod_pose_session_project", "prod_pose_record_source",
+    # RC4 Pose Info Rig (Astra's RC4 ruling section 4): the read-only scene rig read and the never-failing record step
+    "PROD_POSE_NO_RIG", "PROD_POSE_CUSTOM_RIG", "prod_pose_rig_label", "prod_pose_instance_rig", "prod_pose_record_rig",
 ])
 # F-01 UI corrections after K2 (Owner-authorized 2026-11-14; F01_K2_UI_CORRECTIONS.md): the shared confirmation and
 # Trash dialogs, and the Source project sidecar store in the stage B block (pure library I/O: contained, strict,
@@ -342,6 +344,9 @@ F01_K2UI_NEW_TOP = set([
     "PROD_POSE_NOT_RECORDED", "PROD_POSE_SOURCES", "PROD_POSE_SOURCES_KIND", "PROD_POSE_SOURCE_PROJECT_MAX",
     "prod_pose_load_sources", "prod_pose_set_source", "prod_pose_source_project", "prod_pose_sources_path",
     "prod_pose_valid_project",
+    # RC4 Pose Info Rig: its local sidecar store, the same contained, strict, read-back pattern
+    "PROD_POSE_RIGS", "PROD_POSE_RIGS_KIND", "PROD_POSE_RIG_NAME_MAX", "prod_pose_rigs_path", "prod_pose_valid_rig",
+    "prod_pose_load_rigs", "prod_pose_source_rig", "prod_pose_set_rig",
 ])
 # F-01 OT1 (Astra, ACCEPT WITH CONDITIONS; F01_OT1_ORDERING_TRIAL_PREPARATION.md, F01_OT1_PRODUCTION_GUARD.md):
 # a changed, admitted, existing mode-3 Body scale operates its bound expression inside the owned transaction and

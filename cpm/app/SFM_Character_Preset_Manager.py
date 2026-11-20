@@ -36664,6 +36664,12 @@ class ProdWindow(QtGui.QDialog):
                 saved[u"preset_id"],
                 prod_pose_session_project(),
             )
+            # Pose Info's Rig (RC4): the scene rig of the saved instance, local sidecar only; never fails the Save.
+            prod_pose_record_rig(
+                selected,
+                saved[u"preset_id"],
+                prod_pose_instance_rig(self.operation["context"]),
+            )
             self.set_status(
                 PROD_POSE_MESSAGES[u"saved"]
                 % {
@@ -37469,7 +37475,16 @@ class ProdWindow(QtGui.QDialog):
                 if item.get(u"path") and record.get(u"preset_id")
                 else None
             )
-            view = prod_pose_info_view(record, project)
+            # Rig (RC4): the same library's rig sidecar, read only ("Not recorded" when unknown).
+            rig = (
+                prod_pose_source_rig(
+                    os.path.dirname(os.path.dirname(u(item[u"path"]))),
+                    record[u"preset_id"],
+                )
+                if item.get(u"path") and record.get(u"preset_id")
+                else None
+            )
+            view = prod_pose_info_view(record, project, rig=rig)
             dialog = QtGui.QDialog(self)
             dialog.setWindowTitle("Pose Info")
             outer = QtGui.QVBoxLayout(dialog)
@@ -37828,6 +37843,11 @@ class ProdWindow(QtGui.QDialog):
                 selected,
                 updated[u"preset_id"],
                 prod_pose_session_project(),
+            )
+            prod_pose_record_rig(
+                selected,
+                updated[u"preset_id"],
+                prod_pose_instance_rig(self.operation["context"]),
             )
             self.set_status(
                 u"Pose updated: %s."
@@ -42663,6 +42683,71 @@ def prod_pose_set_source(selected, preset_id, project):
         raise ProdPoseLibraryError(u"write-verify", u"The pose source information did not read back exactly.")
     return project
 
+
+# --- Rig (RC4; Astra's RC4 ruling section 4) ------------------------------------------------------------------------
+# The scene rig a pose was saved from, kept like Source project: a local per-character sidecar, pose_rigs.json, keyed
+# by the pose identity, never in the portable record. Each entry is the rig element's name as the scene holds it and
+# its readable label. It is not the script that built the rig, never identifies or proves compatibility and is never
+# read by Apply; a missing, unreadable or damaged sidecar shows "Not recorded" and never blocks a pose operation.
+PROD_POSE_RIGS = u"pose_rigs.json"
+PROD_POSE_RIGS_KIND = u"cpm-pose-rigs"
+PROD_POSE_RIG_NAME_MAX = 256
+
+
+def prod_pose_rigs_path(char_dir):
+    return os.path.join(char_dir, PROD_POSE_RIGS)
+
+
+def prod_pose_valid_rig(entry):
+    """{label, scene}: a readable label and the scene's rig name ("" when the character had no rig), printable text."""
+    def text(v, empty):
+        return isinstance(v, prod_pose_text_types()) and (empty or len(v) > 0) and len(v) <= PROD_POSE_RIG_NAME_MAX \
+            and not any(ord(c) < 32 for c in v)
+    return isinstance(entry, dict) and sorted(entry) == [u"label", u"scene"] and text(entry[u"label"], False) and \
+        text(entry[u"scene"], True)
+
+
+def prod_pose_load_rigs(char_dir):
+    """The character's rig sidecar: {preset_id: {label, scene}}. Absent: empty. Anything else refuses."""
+    path = prod_pose_rigs_path(char_dir)
+    if not os.path.isfile(path):
+        return {}
+    record = prod_pose_strict_json_file(path, 1 << 22)
+    ok = isinstance(record, dict) and sorted(record) == [u"entries", u"record_kind", u"schema_version"] and \
+        record[u"schema_version"] == 1 and record[u"record_kind"] == PROD_POSE_RIGS_KIND and \
+        isinstance(record[u"entries"], dict) and all(prod_pose_valid_rig(e) for e in record[u"entries"].values())
+    if not ok:
+        raise ProdPoseLibraryError(u"metadata", u"Pose rig information is unsupported.")
+    return dict((k, dict(e)) for k, e in record[u"entries"].items())
+
+
+def prod_pose_source_rig(char_dir, preset_id):
+    """The recorded rig of one pose, or None (not recorded, or the sidecar can't be read)."""
+    try:
+        return prod_pose_load_rigs(char_dir).get(preset_id)
+    except Exception:
+        return None
+
+
+def prod_pose_set_rig(selected, preset_id, rig):
+    """Record (or, with rig None, forget) one pose's rig in the selected character's sidecar. Every other entry is
+    kept; the write is contained and read back. A damaged sidecar is never overwritten (refuses)."""
+    if rig is not None and not prod_pose_valid_rig(rig):
+        rig = None
+    entries = prod_pose_load_rigs(selected[u"char_dir"])
+    if rig is None:
+        if preset_id not in entries:
+            return None
+        entries.pop(preset_id)
+    else:
+        entries[preset_id] = dict(rig)
+    path = prod_pose_rigs_path(selected[u"char_dir"])
+    prod_pose_assert_contained(selected, path)
+    p02_safe_write_json(path, {u"schema_version": 1, u"record_kind": PROD_POSE_RIGS_KIND, u"entries": entries})
+    if prod_pose_load_rigs(selected[u"char_dir"]).get(preset_id) != rig:
+        raise ProdPoseLibraryError(u"write-verify", u"The pose rig information did not read back exactly.")
+    return rig
+
 # === end of F-01 stage B block ===
 
 
@@ -42716,6 +42801,60 @@ def prod_pose_session_project():
     except Exception:
         return None
     return name if prod_pose_valid_project(name) else None
+
+
+PROD_POSE_NO_RIG = u"No rig"
+PROD_POSE_CUSTOM_RIG = u"Custom rig"
+
+
+def prod_pose_rig_label(scene, animset_name):
+    """The readable label of a scene rig name. SFM's rig scripts name the rig element <rig>_<animation set>, so that
+    exact suffix is removed; any other name is shown as it is; an empty or unusable result is "Custom rig". Never a
+    script identity and never a compatibility decision."""
+    label = scene
+    suffix = u"_" + (animset_name or u"")
+    if animset_name and scene.endswith(suffix) and len(scene) > len(suffix):
+        label = scene[:-len(suffix)]
+    if not label or len(label) > PROD_POSE_RIG_NAME_MAX or any(ord(c) < 32 for c in label):
+        return PROD_POSE_CUSTOM_RIG
+    return label
+
+
+def prod_pose_instance_rig(context):
+    """The pinned instance's scene rig, read only: {label, scene} for its one rig registration, the "No rig" entry
+    when it has none, or None when that isn't reliably known (several registrations, an unreadable scene)."""
+    try:
+        row = prod_resolve_instance(prod_instance_token(context))
+        animset = row["animset"]
+        nodes, _ = prod_pose_walk(prod_pose_attr(row["shot"], u"scene"))
+        names = []
+        for obj in nodes.values():
+            if prod_pose_type(obj) == u"DmeRig":
+                for reg in prod_pose_seq(prod_pose_attr(obj, u"animSetList")):
+                    linked = prod_pose_attr(reg, u"animationSet")
+                    if linked is not None and prod_pose_h(linked) == prod_pose_h(animset):
+                        names.append(prod_pose_text(obj.GetName()))
+        if not names:
+            return {u"label": PROD_POSE_NO_RIG, u"scene": u""}
+        if len(names) != 1 or not names[0] or len(names[0]) > PROD_POSE_RIG_NAME_MAX or \
+                any(ord(c) < 32 for c in names[0]):
+            return None
+        return {u"label": prod_pose_rig_label(names[0], prod_pose_text(animset.GetName())), u"scene": names[0]}
+    except Exception:
+        return None
+
+
+def prod_pose_record_rig(selected, preset_id, rig):
+    """Record a saved or updated pose's rig after the pose itself is durable. Informational only: any failure is
+    logged and never fails the Save or Update."""
+    try:
+        prod_pose_set_rig(selected, preset_id, rig)
+        prod_pose_log(u"RIG-recorded" if rig else u"RIG-not-recorded", {u"preset_id": preset_id})
+    except Exception as exc:
+        try:
+            prod_pose_log(u"RIG-unrecorded", {u"preset_id": preset_id, u"error": type(exc).__name__})
+        except Exception:
+            pass
 
 
 def prod_pose_record_source(selected, preset_id, project):
@@ -49711,7 +49850,7 @@ def prod_pose_info_date(stamp):
     return u"%s %d, %s" % (PROD_POSE_INFO_MONTHS[int(m.group(2)) - 1], int(m.group(3)), m.group(1))
 
 
-def prod_pose_info_view(record, source_project=None):
+def prod_pose_info_view(record, source_project=None, rig=False):
     """What Pose Info shows about any saved pose (versions 1-3), from the record alone (PS-2 UI corrections,
     2026-11-14; Expression Preset Info is the reference): its type, always Full body or Selected parts (a version 1
     arm pose is Selected parts and includes its saved arm; Owner decision 2026-11-15); the model file and path;
@@ -49766,6 +49905,14 @@ def prod_pose_info_view(record, source_project=None):
     model = u(pose[u"source"].get(u"model_ref") or u"").replace(u"\\", u"/")
     rows.append([u"Model:", model.rsplit(u"/", 1)[-1] or u"Unknown", None])
     rows.append([u"Model path:", model or u"Unknown", None])
+    if rig is not False:          # RC4: the recorded scene rig (the Pose Info dialog always passes its lookup)
+        if prod_pose_valid_rig(rig):
+            tip = (u"The character had no rig when this pose was saved." if not rig[u"scene"] else
+                   u"Scene rig: %s. This is the rig's name in the scene, not the script that built it, and a "
+                   u"matching name doesn't mean a pose will apply." % rig[u"scene"])
+            rows.append([u"Rig:", rig[u"label"], tip])
+        else:
+            rows.append([u"Rig:", PROD_POSE_NOT_RECORDED, None])
     shot = pose[u"source"].get(u"shot_name")
     rows.append([u"Source shot:", u(shot) if isinstance(shot, prod_pose_text_types()) and shot else
                  PROD_POSE_NOT_RECORDED, None])
