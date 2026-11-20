@@ -496,6 +496,9 @@ F01_SFP1_NEW_TOP = set([
 F01_SFP1_NEW_METHODS = set(["prompt_pose_scope"])
 # RC4 Save New responsiveness (RC3 Owner finding, 2026-11-20): immediate feedback before the Save dialog.
 F01_RC4_NEW_METHODS = set(["pose_busy_begin", "pose_busy_end"])
+# RC4 same-model cross-rig adaptation (Astra RC4 ruling, Option B; F01_RC4_CROSS_RIG_ADAPTATION.md).
+F01_RC4_NEW_TOP = set(["PROD_BODY_ADAPT_MESSAGES", "PROD_BODY_ADAPT_SOLVER", "prod_body_adapt_refuse",
+                       "prod_body_adapt_channel_index", "prod_body_adapt_controls", "prod_body_rig_adapt"])
 EXPECTED_CHANGED_TOP = (STEP2B_CHANGED_TOP | STEP3_CHANGED_TOP | STEP4_CHANGED_TOP | R14_CHANGED_TOP
                         | R15_CHANGED_TOP | ITEM6_CHANGED_TOP | ITEM7_CHANGED_TOP | UIPASS_CHANGED_TOP
                         | LOGFIX_CHANGED_TOP | M05_CHANGED_TOP | M06_CHANGED_TOP | M06W1_CHANGED_TOP
@@ -589,7 +592,7 @@ def section_derivation(app):
           added == EXPECTED_NEW_TOP | R15_NEW_TOP | ITEM6_NEW_TOP | UIPASS_NEW_TOP | LOGFIX_NEW_TOP | M05_NEW_TOP
           | M06_NEW_TOP | M06W1_NEW_TOP | F01_STAGEA_NEW_TOP | F01_STAGEB_NEW_TOP | F01_STAGEC_NEW_TOP | F01_STAGED_NEW_TOP
           | F01_UI_NEW_TOP | F01_STAGEE_NEW_TOP | F01_SFP1_NEW_TOP | F01_K2UI_NEW_TOP | F01_OT1_NEW_TOP
-          | F01_H1_NEW_TOP | F01_STRUCTURAL_NEW_TOP, sorted(added))
+          | F01_H1_NEW_TOP | F01_STRUCTURAL_NEW_TOP | F01_RC4_NEW_TOP, sorted(added))
     check("derivation.removed_is_exactly_item6_and_item7", removed == ITEM6_REMOVED_TOP | ITEM7_REMOVED_TOP
           | LOGFIX_REMOVED_TOP, sorted(removed ^ (ITEM6_REMOVED_TOP | ITEM7_REMOVED_TOP | LOGFIX_REMOVED_TOP)))
     bm, am = baseline.methods("ProdWindow"), app.methods("ProdWindow")

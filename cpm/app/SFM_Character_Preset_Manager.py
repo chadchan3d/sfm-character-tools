@@ -37053,7 +37053,7 @@ class ProdWindow(QtGui.QDialog):
 
         if verified:
             self.set_status(
-                PROD_POSE_MESSAGES[u"applied"]
+                PROD_POSE_MESSAGES[u"applied-adapted" if pending.get(u"adapted") else u"applied"]
                 % {
                     u"name": tool_status_name(name),
                     u"parts": prod_pose_parts_phrase(
@@ -42049,6 +42049,7 @@ PROD_POSE_MESSAGES = {
     u"save-region-unreadable": u"The pose wasn't saved: %(part)s can't be read now. Nothing was saved.",
     u"update-refused": u"The pose wasn't updated: %(part)s can't be read. Nothing was changed.",
     u"applied": u"Pose applied: %(name)s.",
+    u"applied-adapted": u"Pose applied: %(name)s. Adapted to this character's rig.",
     u"saved": u"Pose saved: %(name)s.",
     u"save-preparing": u"Checking the character before saving.",
     u"foreign-locked": u"Poses from another character's library can't be changed here.",
@@ -45155,6 +45156,13 @@ def prod_body_compare_descriptor(saved, live):
         if bad:                                       # A3: passive (source-less) twist values
             raise prod_body_error(u"rig-differs", u"passive values differ: %s" % bad[:8])
     if saved.get(u"scale") != live.get(u"scale"):
+        # RC4 (RC3 smoke op 17): a control or bone present on one side only is a rig difference; the scale state of
+        # the same controls and bones is proportions.
+        for part in (u"bones", u"handles"):
+            a, b = (saved.get(u"scale") or {}).get(part) or {}, (live.get(u"scale") or {}).get(part) or {}
+            if sorted(a) != sorted(b):
+                raise prod_body_error(u"rig-differs", u"%s differ: missing %s, extra %s" % (
+                    part, sorted(set(a) - set(b))[:8], sorted(set(b) - set(a))[:8]))
         raise prod_body_error(u"proportions", u"scale state differs: %s" % prod_pose_differences(
             saved.get(u"scale"), live.get(u"scale"), u"scale")[:8])
     rest = lambda d: dict((k, v) for k, v in d.items() if k not in (  # noqa: E731
@@ -45985,7 +45993,17 @@ def prod_body_preflight(identity, authorization, item, reg):
         raise prod_body_error(u"evidence-unreadable", u"the Undo history is unreadable: %s" % prod_pose_undo_problems(undo))
     st = prod_body_state(row, profile)
     D, C, L = st[u"D"], st[u"C"], st[u"L"]
-    prod_body_compare_descriptor(region[u"descriptor"], st[u"descriptor"])
+    saved_region, adaptation = region, None
+    try:
+        prod_body_compare_descriptor(region[u"descriptor"], st[u"descriptor"])
+    except ProdPoseError as exc:
+        # RC4: a structural record and a different rig of the same model: the destination-specific plan, or a refusal
+        # naming the unsupported relationship. The record's own region stays the skeletal reference.
+        if exc.code != u"rig-differs" or not profile.get(u"_structural"):
+            raise
+        adaptation = prod_body_rig_adapt(region, st, profile)
+        region = adaptation[u"region"]
+        prod_pose_log(u"BODY-RIG-adapted", adaptation[u"report"])
     pinned = prod_body_check_fk_positions(region, D, C, profile)
     prod_pose_log(u"BODY-A1", {u"pinned": len(pinned), u"differing": sorted(
         n for n, v in pinned.items() if list(v) != list(region[u"positions"][n])),
@@ -45997,14 +46015,14 @@ def prod_body_preflight(identity, authorization, item, reg):
     snaps = dict((n, prod_body_wrap(lambda n=n: prod_pose_layer_snapshot(bindings[n], t_chan))) for n in bindings)
     plans = prod_body_wrap(lambda: prod_body_plan(region, D, C, snaps, t_chan, pinned))
     values = prod_body_planned_values(region, pinned)     # the one map for plans, no-op, P5 and P7
-    expected = prod_body_expected_skeleton(region, D, C, profile)
-    noop = prod_body_noop(plans, D, C, region, profile, values)
+    expected = prod_body_expected_skeleton(saved_region, D, C, profile)    # always the record's own reference
+    noop = prod_body_noop(plans, D, C, saved_region, profile, values)
     handles = dict((n, prod_pose_h(b[u"channel"])) for n, b in bindings.items())
     return {u"state": st, u"profile": profile, u"undo": undo, u"time": st[u"time"], u"gate": gate,
             u"region": region, u"inputs": inputs, u"pinned": pinned,
             u"bindings": bindings, u"snaps": snaps, u"plans": plans, u"values": values, u"expected": expected,
             u"noop": noop, u"expected_authored": prod_body_expected_authored(st[u"authored"], plans, handles),
-            u"row": row}
+            u"row": row, u"saved_region": saved_region, u"adaptation": adaptation}
 
 
 def prod_body_same_state(identity, authorization, pre, abort_record=None):
@@ -46024,6 +46042,12 @@ def prod_body_same_state(identity, authorization, pre, abort_record=None):
             problems.append(u"%s changed %s" % (key, prod_pose_differences(st[key], pre[u"state"][key])[:4]))
     if st[u"C"] != pre[u"state"][u"C"]:
         problems.append(u"classification changed")
+    if pre.get(u"adaptation") is not None:          # RC4: the adaptation's assumptions, derived again from this read
+        try:
+            if prod_body_rig_adapt(pre[u"saved_region"], st, pre[u"profile"]) != pre[u"adaptation"]:
+                problems.append(u"adaptation changed")
+        except ProdPoseError as exc:
+            problems.append(u"adaptation refused: %s" % exc.code)
     if st[u"D"][u"authority"] != pre[u"state"][u"D"][u"authority"]:
         problems.append(u"authority changed")
     try:
@@ -46177,7 +46201,7 @@ def prod_body_pending(pre, label, finish_exception=False, owned_top=True):
             u"observed": st[u"observed"], u"baseline": st[u"D"], u"classes": st[u"C"],
             u"expected": dict((k, [list(v[0]), list(v[1])]) for k, v in pre[u"expected"].items()),
             u"values": pre[u"values"], u"pinned": pre[u"pinned"], u"finish_exception": finish_exception,
-            u"owned_top": owned_top,
+            u"owned_top": owned_top, u"adapted": pre.get(u"adaptation") is not None,
             u"regions": [PROD_BODY_REGION]}
 
 
@@ -46785,6 +46809,259 @@ def prod_body_rig_inventory(inventory, probe):
     out[u"highlighted"] = []
     out[u"structural_rig"] = True
     return out
+
+# --- part 5: RC4 same-model cross-rig adaptation -------------------------------------------------------------------
+# Astra's RC4 ruling (Option B, ACCEPT WITH CONDITIONS) and the Designer's "F-01 RC4 - Astra Ruling and Implementation
+# Authorization" (2026-11-20; F01_RC4_CROSS_RIG_ASSESSMENT.md). A structural record whose rig differs from the
+# destination's rig of the same model only by single-bone, zero-offset point and orient controls (a control that drives
+# exactly one bone the other rig poses directly) and by the controls attached under them gets a temporary,
+# destination-specific plan: the destination's own written channels, with values derived by exact rigid composition
+# from the saved values and the saved skeletal reference. Nothing is copied by name across a different relationship.
+# The record and its skeletal reference are never changed, P1-P7 run unchanged on the plan, and P7 verifies the result
+# against the saved reference. Applicability is decided from structure only; anything else refuses.
+PROD_BODY_ADAPT_MESSAGES = {
+    u"rig": u"This character's rig is set up differently from the one this pose was saved on (%s), so the pose "
+            u"can't be adapted safely. Nothing was changed.",
+    u"unreachable": u"This pose moves %s in a way this character's rig can't reproduce. Nothing was changed.",
+}
+PROD_BODY_ADAPT_SOLVER = {u"mode": {u"present": True, u"value": 0}}     # a plain point or orient constraint
+
+
+def prod_body_adapt_refuse(what, detail):
+    return prod_body_error(u"rig-differs", u"adaptation: %s" % detail, PROD_BODY_ADAPT_MESSAGES[u"rig"] % what)
+
+
+def prod_body_adapt_channel_index(desc):
+    """(owner, attribute) -> channel name of the description's written channels."""
+    out = {}
+    for name, c in desc[u"channels"].items():
+        if c[u"role"] in PROD_BODY_WRITTEN_ROLES:
+            out[(c[u"owner"], c[u"attribute"])] = name
+    return out
+
+
+def prod_body_adapt_controls(desc, extra, common):
+    """The description's constraints split into those not touching an extra control and, per extra control, its own
+    constraints. An extra control must be a core control under a common one, with no scale, used only as the single
+    target of point or orient constraints of one bone."""
+    refuse = prod_body_adapt_refuse
+    labels = set(u"handle:" + n for n in extra)
+    plain, own = [], dict((n, []) for n in extra)
+    for n in extra:
+        h = desc[u"handles"][n]
+        if h[u"class"] != u"core" or h[u"parent"] not in common or \
+                desc[u"scale"][u"handles"].get(n) != {u"present": False}:
+            raise refuse(u"the %s control works differently" % n, u"control %s is not a plain core control under a "
+                                                                   u"common one" % n)
+    for c in desc[u"constraints"]:
+        used = set(c[u"targets"]) | set(c[u"slaves"].values()) | (set([c[u"pole"]]) if c[u"pole"] else set())
+        hit = sorted(used & labels)
+        if not hit:
+            plain.append(c)
+            continue
+        n = hit[0][7:]
+        if len(hit) != 1 or c[u"type"] not in (PROD_BODY_RIG_POINT, PROD_BODY_RIG_ORIENT) or c[u"pole"] or \
+                c[u"targets"] != [hit[0]] or sorted(c[u"slaves"]) != [u"slave"] or \
+                not c[u"slaves"][u"slave"].startswith(u"bone:"):
+            raise refuse(u"the %s control drives other parts of the rig" % n, u"constraint %s" % (
+                prod_body_constraint_identity(c),))
+        off = c[u"offsets"]
+        o = off.get(u"oOffset") or {}
+        if off.get(u"vecOffset") != {u"present": True, u"value": [0.0, 0.0, 0.0]} or o.get(u"present") is not True \
+                or prod_body_rotation_value(o)[3] is not None or \
+                prod_body_rotation_angle(o[u"value"], [0.0, 0.0, 0.0, 1.0]) > PROD_BODY_ROTATION_LIMIT_DEG:
+            raise refuse(u"the %s control is offset from its bone" % n, u"constraint offsets %r" % (off,))
+        if c[u"solver"] != PROD_BODY_ADAPT_SOLVER:
+            raise refuse(u"the %s control works differently" % n, u"solver %r" % (c[u"solver"],))
+        own[n].append(c)
+    driven = {}
+    for n in extra:
+        rows = own[n]
+        bones = set(r[u"slaves"][u"slave"] for r in rows)
+        if sorted(r[u"type"] for r in rows) != sorted([PROD_BODY_RIG_POINT, PROD_BODY_RIG_ORIENT]) or len(bones) != 1:
+            raise refuse(u"the %s control works differently" % n, u"control %s drives %s" % (
+                n, sorted((r[u"type"], r[u"slaves"][u"slave"]) for r in rows)))
+        driven[n] = list(bones)[0][5:]
+    return plain, driven
+
+
+def prod_body_rig_adapt(region, live, profile):
+    """RC4: the destination-specific plan of a structural record whose rig differs from the destination's, or a
+    refusal naming the unsupported relationship. Pure: the saved region (record) and the destination's own state at P1
+    (descriptor, discovery, classification). Returns {region, report}: the region holds the destination's written
+    channels with derived values, the saved skeletal reference (unchanged) and the destination's description."""
+    refuse = prod_body_adapt_refuse
+    S, T, D, C = region[u"descriptor"], live[u"descriptor"], live[u"D"], live[u"C"]
+    if not profile.get(u"_structural") or S[u"rig_name"] != PROD_BODY_RIG_NAME or T[u"rig_name"] != PROD_BODY_RIG_NAME:
+        raise refuse(u"its rig isn't one CPM can adapt", u"not two structural descriptions")
+    if S[u"model_ref"] != T[u"model_ref"]:
+        raise refuse(u"it is a different model", u"model %r / %r" % (S[u"model_ref"], T[u"model_ref"]))
+    # 1. The same skeleton and the same proportions.
+    sb = dict((b[u"name"], b) for b in S[u"bones"])
+    tb = dict((b[u"name"], b) for b in T[u"bones"])
+    if sorted(sb) != sorted(tb) or [n for n in sb if (sb[n][u"index"], sb[n][u"parent"]) !=
+                                    (tb[n][u"index"], tb[n][u"parent"])]:
+        raise refuse(u"its skeleton is different", u"bones differ")
+    for key in (u"structural_positions", u"structural_orientations"):
+        a, b = S[key], T[key]
+        if sorted(a) != sorted(b):
+            raise refuse(u"its limb controls are different", u"%s names differ" % key)
+        bad = [n for n in sorted(a) if not prod_body_exact(list(a[n]), list(b[n]))]
+        if bad:
+            raise prod_body_error(u"proportions", u"adaptation: %s differ: %s" % (key, bad[:8]))
+    if S[u"scale"][u"model"] != T[u"scale"][u"model"] or S[u"scale"][u"bones"] != T[u"scale"][u"bones"]:
+        raise prod_body_error(u"proportions", u"adaptation: model or bone scale differs")
+    hs, ht = S[u"handles"], T[u"handles"]
+    common = sorted(set(hs) & set(ht))
+    extra_s, extra_t = sorted(set(hs) - set(ht)), sorted(set(ht) - set(hs))
+    if [n for n in common if S[u"scale"][u"handles"].get(n) != T[u"scale"][u"handles"].get(n)]:
+        raise prod_body_error(u"proportions", u"adaptation: control scale differs")
+    # 2. Controls: the common ones mean the same thing; an extra one drives exactly one bone the other rig poses directly.
+    for n in common:
+        if hs[n][u"class"] != ht[n][u"class"]:
+            raise refuse(u"the %s control works differently" % n, u"control %s class differs" % n)
+    plain_s, driven_s = prod_body_adapt_controls(S, extra_s, common)
+    plain_t, driven_t = prod_body_adapt_controls(T, extra_t, common)
+
+    def attached(H, extra, n):
+        p = H[n][u"parent"]
+        return H[p][u"parent"] if p in extra else p
+    for n in common:
+        if attached(hs, extra_s, n) != attached(ht, extra_t, n):
+            raise refuse(u"the %s control is attached differently" % n, u"control %s parent %s / %s" % (
+                n, hs[n][u"parent"], ht[n][u"parent"]))
+    try:
+        prod_body_compare_constraints(plain_s, plain_t)
+    except ProdPoseError as exc:
+        same = sorted(prod_body_constraint_identity(c) for c in plain_s) == sorted(
+            prod_body_constraint_identity(c) for c in plain_t)
+        # The same relationships with offsets beyond the established numerical equivalence (separately built rigs)
+        # are reported as such; the limits are never widened here.
+        raise refuse(u"its arm or leg controls were built with slightly different offsets" if same else
+                     u"its other controls or limb IK are different", u"constraints: %s" % exc)
+    converted = sorted(n for n in sb if sb[n][u"class"] != tb[n][u"class"])
+    explained = {}
+    for side, driven, mine, other in ((u"saved", driven_s, sb, tb), (u"destination", driven_t, tb, sb)):
+        for n, bone in sorted(driven.items()):
+            if bone in explained or mine[bone][u"class"] != u"constrained" or other[bone][u"class"] != u"fk":
+                raise refuse(u"the %s bone is controlled differently" % bone, u"%s control %s drives %s (%s/%s)" % (
+                    side, n, bone, mine[bone][u"class"], other[bone][u"class"]))
+            explained[bone] = (side, n)
+    if sorted(explained) != converted:
+        what = sorted(set(converted) - set(explained))
+        raise refuse(u"the %s bone is controlled differently" % (what or converted)[0], u"converted %s, explained %s"
+                     % (converted, sorted(explained)))
+    for c in plain_s + plain_t:
+        if [v for v in c[u"slaves"].values() if v[5:] in explained]:
+            raise refuse(u"the %s bone is controlled differently" % [v[5:] for v in c[u"slaves"].values()
+                                                                      if v[5:] in explained][0],
+                         u"a converted bone has other drivers")
+    # 3. Channels: equal, except an extra control's own channels and weights, and a converted bone's two channels.
+    cs, ct = S[u"channels"], T[u"channels"]
+    one_side = {u"saved": [], u"destination": []}
+    for name in sorted(set(cs) | set(ct)):
+        a, b = cs.get(name), ct.get(name)
+        if a == b:
+            continue
+        if a is not None and b is not None:
+            owner = a[u"owner"]
+            if owner[5:] in explained and owner.startswith(u"bone:") and b[u"owner"] == owner and dict(
+                    a, role=None) == dict(b, role=None) and sorted([a[u"role"], b[u"role"]]) == [u"fk-written",
+                                                                                                  u"slave-base"] and \
+                    a[u"role"] == (u"fk-written" if sb[owner[5:]][u"class"] == u"fk" else u"slave-base"):
+                continue
+            raise refuse(u"its controls are different", u"channel %s differs" % name)
+        side, row = (u"saved", a) if b is None else (u"destination", b)
+        one_side[side].append((name, row))
+    for side, extra, driven in ((u"saved", extra_s, driven_s), (u"destination", extra_t, driven_t)):
+        rows = one_side[side]
+        written = sorted((r[u"owner"], r[u"attribute"]) for _, r in rows if r[u"role"] == u"handle-written")
+        weights = [n for n, r in rows if r[u"role"] == u"weight"]
+        if written != sorted((u"handle:" + n, attr) for n in extra for attr in (u"orientation", u"position")) or \
+                len(weights) != 2 * len(extra) or len(written) + len(weights) != len(rows):
+            raise refuse(u"its controls are different", u"%s-only channels %s" % (side, sorted(n for n, _ in rows)[:8]))
+    # 4. The destination's values: copied where the relationship is the same, derived where it differs.
+    saved = dict(region[u"positions"])
+    saved.update(region[u"orientations"])
+    oracle = region[u"oracle"][u"bones"]
+    index_s, index_t = prod_body_adapt_channel_index(S), prod_body_adapt_channel_index(T)
+    placement = [n for n in common if hs[n][u"class"] == u"placement"]
+    if len(placement) != 1:
+        raise refuse(u"its placement control is different", u"placement %s" % placement)
+    placement = placement[0]
+    identity = ([0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0])
+
+    def saved_local(n):
+        p, o = index_s.get((u"handle:" + n, u"position")), index_s.get((u"handle:" + n, u"orientation"))
+        if p is None or o is None:
+            raise refuse(u"the %s control can't be carried over" % n, u"control %s is not written" % n)
+        return (list(saved[p]), prod_pose_unit(saved[o]))
+    memo_s, memo_t, local_t = {}, {}, {}
+
+    def world_s(n):                                   # placement-relative, in the saved rig
+        if n == placement:
+            return identity
+        if n not in memo_s:
+            if hs[n][u"parent"] == u"@rig":
+                raise refuse(u"the %s control can't be carried over" % n, u"control %s is outside the placement" % n)
+            memo_s[n] = prod_pose_compose(world_s(hs[n][u"parent"]), saved_local(n))
+        return memo_s[n]
+
+    def dest_local(n):
+        if n not in local_t:
+            parent = ht[n][u"parent"]
+            if n in driven_t:                         # FK to control: the control takes the saved bone's posture
+                o = oracle[driven_t[n]]
+                local_t[n] = prod_pose_compose(prod_pose_invert(world_t(parent)), (o[u"position"], o[u"orientation"]))
+            elif parent == hs[n][u"parent"]:          # the same relationship: the saved values, unchanged
+                local_t[n] = saved_local(n)
+            else:                                     # attached under another control: the same placement-relative pose
+                local_t[n] = prod_pose_compose(prod_pose_invert(world_t(parent)), world_s(n))
+        return local_t[n]
+
+    def world_t(n):                                   # placement-relative, in the destination's rig
+        if n == placement:
+            return identity
+        if n not in memo_t:
+            if ht[n][u"parent"] == u"@rig":
+                raise refuse(u"the %s control can't be carried over" % n, u"control %s is outside the placement" % n)
+            memo_t[n] = prod_pose_compose(world_t(ht[n][u"parent"]), dest_local(n))
+        return memo_t[n]
+    positions, orientations, derived = {}, {}, []
+    limit = prod_body_fk_limit(profile)
+    for name in sorted(C[u"written"]):
+        owner, attr = C[u"owners"][name]
+        kind, _, what = owner.partition(u":")
+        if kind == u"handle" and (what in extra_t or ht[what][u"parent"] != hs[what][u"parent"]):
+            p, q = dest_local(what)
+            value = prod_body_f32_list(p) if attr == u"position" else prod_body_f32_list(prod_pose_unit(q))
+            derived.append(name)
+        elif kind == u"bone" and what in explained:
+            o = oracle[what]
+            if attr == u"position":                   # control to FK: the destination keeps its own position (A1)
+                value = prod_body_f32_list(o[u"local_position"])
+                here = prod_body_channel_value(D, name)
+                if not (prod_body_fk_distance(value, here) == 0.0 or
+                        (limit > 0.0 and prod_pose_f32(prod_body_fk_distance(value, here)) <= limit)):
+                    raise prod_body_error(u"fk-position", u"adaptation: %s is %r from the pose" % (
+                        name, prod_body_fk_distance(value, here)), PROD_BODY_ADAPT_MESSAGES[u"unreachable"] % what)
+            else:
+                value = prod_body_f32_list(prod_pose_unit(o[u"local_orientation"]))
+            derived.append(name)
+        else:
+            src = index_s.get((owner, attr))
+            if src is None or src not in saved:
+                raise refuse(u"%s can't be carried over" % what, u"no saved value for %s" % name)
+            value = list(saved[src])
+        (positions if attr == u"position" else orientations)[name] = value
+    out = {u"profile_id": region[u"profile_id"], u"frame": region[u"frame"], u"positions": positions,
+           u"orientations": orientations, u"oracle": region[u"oracle"], u"descriptor": T,
+           u"exclusions": region.get(u"exclusions") or []}
+    report = {u"converted": [{u"bone": b, u"destination": tb[b][u"class"]} for b in converted],
+              u"destination_only_controls": extra_t, u"saved_only_controls": extra_s,
+              u"reattached_controls": [n for n in common if hs[n][u"parent"] != ht[n][u"parent"]],
+              u"derived_channels": sorted(derived)}
+    return prod_pose_roundtrip({u"region": out, u"report": report})
 
 # === end of F-01 stage E block ===
 
