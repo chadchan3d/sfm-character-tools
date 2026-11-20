@@ -503,7 +503,10 @@ F01_SFP1_NEW_METHODS = set(["prompt_pose_scope"])
 F01_RC4_NEW_METHODS = set(["pose_busy_begin", "pose_busy_end"])
 # RC4 same-model cross-rig adaptation (Astra RC4 ruling, Option B; F01_RC4_CROSS_RIG_ADAPTATION.md).
 F01_RC4_NEW_TOP = set(["PROD_BODY_ADAPT_MESSAGES", "PROD_BODY_ADAPT_SOLVER", "prod_body_adapt_refuse",
-                       "prod_body_adapt_channel_index", "prod_body_adapt_controls", "prod_body_rig_adapt"])
+                       "prod_body_adapt_channel_index", "prod_body_adapt_controls", "prod_body_rig_adapt",
+                       # Astra's numerical compatibility ruling (bounded static-offset equivalence, structural route)
+                       "PROD_BODY_RIG_ROTATION_LIMIT_DEG", "PROD_BODY_RIG_VECTOR_LIMIT", "prod_body_vector_value",
+                       "prod_body_log_equivalent"])
 EXPECTED_CHANGED_TOP = (STEP2B_CHANGED_TOP | STEP3_CHANGED_TOP | STEP4_CHANGED_TOP | R14_CHANGED_TOP
                         | R15_CHANGED_TOP | ITEM6_CHANGED_TOP | ITEM7_CHANGED_TOP | UIPASS_CHANGED_TOP
                         | LOGFIX_CHANGED_TOP | M05_CHANGED_TOP | M06_CHANGED_TOP | M06W1_CHANGED_TOP

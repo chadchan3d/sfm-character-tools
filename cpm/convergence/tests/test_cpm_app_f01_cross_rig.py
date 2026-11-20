@@ -248,23 +248,6 @@ def live_of(record, move=None):
     return {u"descriptor": desc, u"D": D, u"C": {u"written": written, u"owners": owners}}
 
 
-def aligned_to(saved, then=None):
-    """The destination's common constraints carry the saved record's offsets (the two native rigs were built
-    separately and differ in offsets beyond the established equivalence; see N.native_pair_refuses_on_offsets). This
-    isolates the structural difference; `then` adds one more change."""
-    rows = dict((json.dumps([c[u"type"], c[u"slaves"], c[u"targets"], c[u"pole"]], sort_keys=True), c)
-                for c in saved[u"pose"][u"regions"][u"full_body"][u"descriptor"][u"constraints"])
-
-    def move(desc, D):
-        for c in desc[u"constraints"]:
-            s = rows.get(json.dumps([c[u"type"], c[u"slaves"], c[u"targets"], c[u"pole"]], sort_keys=True))
-            if s is not None:
-                c[u"solver"], c[u"offsets"] = copy.deepcopy(s[u"solver"]), copy.deepcopy(s[u"offsets"])
-        if then is not None:
-            then(desc, D)
-    return move
-
-
 def profile_of(ns):
     return {u"_structural": True, u"_id": u"structural_rig_v1", u"fk_position_limit": 0.001,
             u"tolerances": dict(ns["PROD_SCOPE_TOLERANCES"])}
@@ -315,17 +298,9 @@ def section_wording(ns, recs):
 
 def section_native(ns, recs):
     rc3, sit = recs[u"RC3 Tails"], recs[u"Tails sit alt"]
-    # The RC3 smoke's op 17 pair as recorded: the chest difference is adaptable, but the separately built arm
-    # controls differ in offsets beyond the established equivalence (0.0005 degrees; exact positions), which is never
-    # widened here: it refuses, and says so.
-    copy_rig = ns["PROD_BODY_ADAPT_MESSAGES"][u"rig"]
-    offsets = copy_rig % u"its arm or leg controls were built with slightly different offsets"
-    for label, s, d in ((u"chest_to_direct", rc3, sit), (u"direct_to_chest", sit, rc3)):
-        got = adapt(ns, s, live_of(d))
-        check("N.native_pair_%s_refuses_on_offsets_not_the_chest" % label, got[0] != u"ok" and got[1] ==
-              u"rig-differs" and got[2] == offsets, got)
-    # 23 -> 22 with the common offsets aligned: the structural adaptation itself.
-    live = live_of(sit, aligned_to(rc3))
+    # The RC3 smoke's op 17 pair exactly as recorded (offsets not aligned): the separately built arm controls differ
+    # within Astra's bounded static-offset equivalence, and the chest difference is adapted.
+    live = live_of(sit)
     got = adapt(ns, rc3, live)
     check("N.chest_rig_pose_adapts_to_the_rig_without_chest", got[0] == u"ok", got)
     if got[0] != u"ok":
@@ -368,7 +343,7 @@ def section_native(ns, recs):
     check("N.spine_translation_is_within_the_a1_allowance", distance(values[u"bip_spine_3_p"], live[u"D"][
         u"channels"][u"bip_spine_3_p"][u"value"]) <= 0.001)
     # 22 -> 23: the reverse.
-    live = live_of(rc3, aligned_to(sit))
+    live = live_of(rc3)
     got = adapt(ns, sit, live)
     check("N.direct_spine_pose_adapts_to_the_chest_rig", got[0] == u"ok", got)
     if got[0] == u"ok":
@@ -388,8 +363,8 @@ def section_native(ns, recs):
     # Deterministic, and independent of constraint order.
     def reorder(desc, D):
         desc[u"constraints"].reverse()
-    first, again = adapt(ns, rc3, live_of(sit, aligned_to(rc3))), adapt(ns, rc3, live_of(sit, aligned_to(rc3)))
-    other = adapt(ns, rc3, live_of(sit, aligned_to(rc3, reorder)))
+    first, again = adapt(ns, rc3, live_of(sit)), adapt(ns, rc3, live_of(sit))
+    other = adapt(ns, rc3, live_of(sit, reorder))
     pick = lambda g: (g[1][u"region"][u"positions"], g[1][u"region"][u"orientations"], g[1][u"report"])  # noqa: E731
     check("N.adaptation_is_deterministic_and_order_independent", first[0] == other[0] == u"ok" and first == again and
           pick(first) == pick(other), (first[:1], other[:1]))
@@ -449,7 +424,17 @@ def section_native_refusals(ns, recs):
     def chest_solver(desc, D):
         chest(desc, point)[u"solver"] = {u"mode": {u"present": True, u"value": 1}}
     # Destination with the chest (22 -> 23), each changed in one relationship.
+    def small_rotation(desc, D):
+        chest(desc, orient)[u"offsets"][u"oOffset"] = {u"present": True, u"value": B.rotate(
+            [0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 1.0], 0.001)}
+
+    def small_vector(desc, D):
+        chest(desc, point)[u"offsets"][u"vecOffset"] = {u"present": True, u"value": [1e-6, 0.0, 0.0]}
     for label, move, what in (
+            (u"chest_rotation_offset_within_the_new_bound", small_rotation,
+             u"the rig_chest control is offset from its bone"),
+            (u"chest_position_offset_within_the_new_bound", small_vector,
+             u"the rig_chest control is offset from its bone"),
             (u"chest_orientation_offset", rotated_offset, u"the rig_chest control is offset from its bone"),
             (u"chest_position_offset", moved_offset, u"the rig_chest control is offset from its bone"),
             (u"chest_driving_two_bones", drives_two_bones, u"the rig_chest control works differently"),
@@ -458,7 +443,7 @@ def section_native_refusals(ns, recs):
             (u"chest_solver_setting", chest_solver, u"the rig_chest control works differently"),
             (u"chest_weight_channel_missing", missing_weight, u"its controls are different")):
         del ns["LOG"][:]
-        got = adapt(ns, sit, live_of(rc3, aligned_to(sit, move)))
+        got = adapt(ns, sit, live_of(rc3, move))
         check("N.refuses_%s" % label, got[0] != u"ok" and got[1] == u"rig-differs" and got[2] == copy_rig % what,
               got)
     for label, move, what in (
@@ -467,27 +452,301 @@ def section_native_refusals(ns, recs):
             (u"a_different_ik_pole", ik_pole, u"its other controls or limb IK are different"),
             (u"a_different_skeleton", renamed_bone, u"its skeleton is different"),
             (u"another_bone_controlled_differently", other_class, u"the bip_neck bone is controlled differently")):
-        got = adapt(ns, rc3, live_of(sit, aligned_to(rc3, move)))
+        got = adapt(ns, rc3, live_of(sit, move))
         check("N.refuses_%s" % label, got[0] != u"ok" and got[1] == u"rig-differs" and got[2] == copy_rig % what,
               got)
 
     def far_spine(desc, D):
         v = D[u"channels"][u"bip_spine_3_p"][u"value"]
         D[u"channels"][u"bip_spine_3_p"][u"value"] = [v[0], v[1] + 0.25, v[2]]
-    got = adapt(ns, rc3, live_of(sit, aligned_to(rc3, far_spine)))
+    got = adapt(ns, rc3, live_of(sit, far_spine))
     check("N.refuses_an_unreachable_spine_translation", got[0] != u"ok" and got[1] == u"fk-position" and got[2] ==
           ns["PROD_BODY_ADAPT_MESSAGES"][u"unreachable"] % u"bip_spine_3", got)
 
     def bigger(desc, D):
         b = desc[u"scale"][u"bones"]
         b[u"bip_head"] = {u"present": True, u"value": 1.25}
-    refused("N.different_bone_scale_is_proportions", adapt(ns, rc3, live_of(sit, aligned_to(rc3, bigger))),
-            u"proportions")
+    refused("N.different_bone_scale_is_proportions", adapt(ns, rc3, live_of(sit, bigger)), u"proportions")
 
     def other_model(desc, D):
         desc[u"model_ref"] = u"models/other.mdl"
-    got = adapt(ns, rc3, live_of(sit, aligned_to(rc3, other_model)))
+    got = adapt(ns, rc3, live_of(sit, other_model))
     check("N.refuses_another_model", got[1] == u"rig-differs" and got[2] == copy_rig % u"it is a different model", got)
+
+
+# ---------------------------------------------------------------------------
+# K. Astra's numerical compatibility ruling: bounded static-offset equivalence on the structural route
+# ---------------------------------------------------------------------------
+
+POINT, ORIENT, IK = u"DmeRigPointConstraintOperator", u"DmeRigOrientConstraintOperator", u"DmeRigIKConstraintOperator"
+
+
+def identity_of(c):
+    return json.dumps([c[u"type"], c[u"slaves"], c[u"targets"], c[u"pole"]], sort_keys=True)
+
+
+def measured_offsets(ns, saved, live):
+    """Every common constraint's offset differences between two descriptions, measured here (angles with the CPM
+    formula's reference, distances in double precision)."""
+    rows = dict((identity_of(c), c) for c in live[u"constraints"])
+    out = []
+    for c in saved[u"constraints"]:
+        d = rows.get(identity_of(c))
+        if d is None:
+            continue
+        who = sorted(c[u"slaves"].values())[0]
+        for group, name in ((u"solver", u"startOffset"), (u"solver", u"midOffset"), (u"offsets", u"oOffset")):
+            if name in c[group] and c[group][name].get(u"present"):
+                out.append((name, c[u"type"], who, angle(c[group][name][u"value"], d[group][name][u"value"])))
+        if c[u"offsets"][u"vecOffset"].get(u"present"):
+            out.append((u"vecOffset", c[u"type"], who, distance(c[u"offsets"][u"vecOffset"][u"value"],
+                                                               d[u"offsets"][u"vecOffset"][u"value"])))
+    return out
+
+
+def rotate_field(desc, kind, slave_prefix, group, name, degrees, axis=(0.3, -0.5, 0.8)):
+    n = math.sqrt(sum(a * a for a in axis))
+    axis = [a / n for a in axis]
+    c = [r for r in desc[u"constraints"] if r[u"type"] == kind and sorted(r[u"slaves"].values())[0].startswith(
+        slave_prefix)][0]
+    c[group][name] = {u"present": True, u"value": list(FB.qnorm(FB.qmul(B.rotate([0.0, 0.0, 0.0, 1.0], list(axis),
+                                                                                  degrees), c[group][name][u"value"])))}
+    return c
+
+
+def section_bounds(ns, recs):
+    rc3, sit = recs[u"RC3 Tails"], recs[u"Tails sit alt"]
+    S = rc3[u"pose"][u"regions"][u"full_body"][u"descriptor"]
+    T = sit[u"pose"][u"regions"][u"full_body"][u"descriptor"]
+    check("K.contract_constants", ns["PROD_BODY_RIG_ROTATION_LIMIT_DEG"] == 0.005 and
+          ns["PROD_BODY_RIG_VECTOR_LIMIT"] == 0.0001 and ns["PROD_BODY_ROTATION_LIMIT_DEG"] == 0.0005 and
+          ns["PROD_BODY_ROTATION_NORM_LIMIT"] == 2.0 ** -19)
+    # 1. The measured offsets of the two preserved records (recorded in F01_RC4_CROSS_RIG_ADAPTATION.md).
+    m = measured_offsets(ns, S, T)
+    rot = [r for r in m if r[0] != u"vecOffset"]
+    vec = [r for r in m if r[0] == u"vecOffset"]
+    worst_rot, worst_vec = max(rot, key=lambda r: r[3]), max(vec, key=lambda r: r[3])
+    print("      measured: largest angle %r, largest distance %r" % (worst_rot, worst_vec))
+    hands = sorted((r[2], r[0], r[3]) for r in m if r[2] in (u"bone:bip_hand_L", u"bone:bip_hand_R") and r[3] > 0)
+    print("      measured hand differences: %r" % (hands,))
+    check("K.native_offsets_exceed_the_old_and_meet_the_new_bounds", 0.0005 < worst_rot[3] <= 0.005 and
+          0.0 < worst_vec[3] <= 0.0001 and worst_rot[2] == u"bone:bip_hand_L", (worst_rot, worst_vec))
+    check("K.native_offsets_as_recorded", abs(worst_rot[3] - 0.0013037) < 1e-6 and abs(worst_vec[3] - 6.0334e-6) <
+          1e-9 and len([h for h in hands if h[1] == u"vecOffset"]) == 2, (worst_rot, worst_vec, hands))
+    # 2. Both directions succeed without alignment; the records are unchanged.
+    for label, s, d in ((u"chest_to_direct", rc3, sit), (u"direct_to_chest", sit, rc3)):
+        before = copy.deepcopy(s)
+        got = adapt(ns, s, live_of(d))
+        check("K.original_records_%s_adapt" % label, got[0] == u"ok" and s == before, got[:3] if got[0] != u"ok"
+              else None)
+    # 3. The same-rig comparison on the structural route uses the bounds; the profile route does not.
+    def cmp(a, b, structural):
+        return outcome(lambda: ns["prod_body_compare_descriptor"](a, b, structural))
+    check("K.identical_structural_descriptions_compare_equal", cmp(S, S, True)[0] == u"ok")
+    for label, kind, prefix, group, name, base in (
+            (u"ik_start_offset", IK, u"bone:bip_hand_L", u"solver", u"startOffset", 0.005),
+            (u"ik_mid_offset", IK, u"bone:bip_hand_L", u"solver", u"midOffset", 0.005),
+            (u"orient_o_offset", ORIENT, u"bone:bip_hand_L", u"offsets", u"oOffset", 0.005),
+            (u"point_o_offset", POINT, u"bone:bip_pelvis", u"offsets", u"oOffset", 0.005)):
+        for delta, want in ((base * 0.9999, True), (base * 1.0001, False)):
+            d = copy.deepcopy(S)
+            rotate_field(d, kind, prefix, group, name, delta)
+            got = cmp(S, d, True)
+            check("K.%s_%s_degrees_%s" % (label, delta, "admitted" if want else "refused"), (got[0] == u"ok") == want
+                  and (want or got[1] == u"rig-differs"), got[:2])
+        # Inclusive: the measured angle of a rotation is itself the bound.
+        d = copy.deepcopy(S)
+        c = rotate_field(d, kind, prefix, group, name, base)
+        at = ns["prod_body_rotation_angle"]([r for r in S[u"constraints"] if identity_of(r) == identity_of(c)][0][
+            group][name][u"value"], c[group][name][u"value"])
+        real = ns["PROD_BODY_RIG_ROTATION_LIMIT_DEG"]
+        try:
+            ns["PROD_BODY_RIG_ROTATION_LIMIT_DEG"] = at
+            inclusive = cmp(S, d, True)[0] == u"ok"
+            ns["PROD_BODY_RIG_ROTATION_LIMIT_DEG"] = at * (1.0 - 1e-12)
+            beyond = cmp(S, d, True)[0] != u"ok"
+        finally:
+            ns["PROD_BODY_RIG_ROTATION_LIMIT_DEG"] = real
+        check("K.%s_bound_is_inclusive" % label, inclusive and beyond and abs(at - base) < 1e-9, at)
+        d = copy.deepcopy(S)
+        rotate_field(d, kind, prefix, group, name, 0.001)
+        check("K.%s_profile_route_keeps_the_old_limit" % label, cmp(S, d, False)[1] == u"rig-differs" and
+              cmp(S, d, True)[0] == u"ok")
+    # An IK constraint's own oOffset keeps the old limit on both routes.
+    d = copy.deepcopy(S)
+    rotate_field(d, IK, u"bone:bip_hand_L", u"offsets", u"oOffset", 0.001)
+    check("K.ik_o_offset_keeps_the_old_limit", cmp(S, d, True)[1] == u"rig-differs")
+
+    def vec_case(prefix, kind, value):
+        d = copy.deepcopy(S)
+        c = [r for r in d[u"constraints"] if r[u"type"] == kind and sorted(r[u"slaves"].values())[0].startswith(
+            prefix)][0]
+        base = c[u"offsets"][u"vecOffset"][u"value"]
+        c[u"offsets"][u"vecOffset"] = {u"present": True, u"value": [base[i] + value[i] for i in range(3)]}
+        return d
+    for label, value, want in (
+            (u"below", [0.0000999, 0.0, 0.0], True),
+            (u"at", [0.0001, 0.0, 0.0], True),
+            (u"above", [0.0001001, 0.0, 0.0], False),
+            (u"components_pass_jointly_above", [0.00006, 0.00006, 0.00006], False),
+            (u"components_jointly_below", [0.00005, 0.00005, 0.00005], True)):
+        for kind, prefix in ((ORIENT, u"bone:bip_hand_L"), (POINT, u"bone:bip_pelvis")):
+            got = cmp(S, vec_case(prefix, kind, value), True)
+            check("K.vec_offset_%s_%s_%s" % (label, kind[6:-18].lower(), "admitted" if want else "refused"),
+                  (got[0] == u"ok") == want and (want or got[1] == u"rig-differs"), got[:2])
+    check("K.vec_offset_profile_route_stays_exact", cmp(S, vec_case(u"bone:bip_pelvis", POINT, [1e-6, 0.0, 0.0]),
+                                                        False)[1] == u"rig-differs")
+    check("K.ik_vec_offset_stays_exact", cmp(S, vec_case(u"bone:bip_hand_L", IK, [1e-6, 0.0, 0.0]), True)[1] ==
+          u"rig-differs")
+    for label, bad in ((u"nan", [float("nan"), 0.0, 0.0]), (u"two_numbers", [0.0, 0.0]), (u"text", [u"x", 0, 0])):
+        d = copy.deepcopy(S)
+        c = [r for r in d[u"constraints"] if r[u"type"] == POINT][0]
+        c[u"offsets"][u"vecOffset"] = {u"present": True, u"value": bad}
+        check("K.invalid_vec_offset_%s_refuses" % label, cmp(S, d, True)[1] == u"rig-differs")
+    d = copy.deepcopy(S)
+    [r for r in d[u"constraints"] if r[u"type"] == POINT][0][u"offsets"][u"vecOffset"] = {u"present": False}
+    check("K.vec_offset_presence_differs_refuses", cmp(S, d, True)[1] == u"rig-differs")
+    d = copy.deepcopy(S)
+    c = [r for r in d[u"constraints"] if r[u"type"] == ORIENT][0]
+    c[u"offsets"][u"oOffset"] = {u"present": True, u"value": [-v for v in c[u"offsets"][u"oOffset"][u"value"]]}
+    check("K.sign_equivalent_o_offset_is_admitted", cmp(S, d, True)[0] == u"ok")
+    d = copy.deepcopy(S)
+    c = [r for r in d[u"constraints"] if r[u"type"] == ORIENT][0]
+    c[u"offsets"][u"oOffset"] = {u"present": True, u"value": [x * (1.0 + 2.0 ** -18) for x in
+                                                              c[u"offsets"][u"oOffset"][u"value"]]}
+    check("K.norm_envelope_is_unchanged", cmp(S, d, True)[1] == u"rig-differs")
+    # 4. Topology is established first and every other rule stays exact.
+    ik = [i for i, r in enumerate(S[u"constraints"]) if r[u"type"] == IK][0]
+    pt = [i for i, r in enumerate(S[u"constraints"]) if r[u"type"] == POINT][0]
+    for label, fn in (
+            (u"changed_target", lambda d: d[u"constraints"][ik].__setitem__(u"targets", [u"handle:rig_hand_R"])),
+            (u"changed_pole", lambda d: d[u"constraints"][ik].__setitem__(u"pole", u"handle:rig_knee_R")),
+            (u"changed_type", lambda d: d[u"constraints"][pt].__setitem__(u"type", ORIENT)),
+            (u"changed_slave", lambda d: d[u"constraints"][pt][u"slaves"].__setitem__(u"slave", u"bone:Other")),
+            (u"changed_solver_mode", lambda d: d[u"constraints"][ik][u"solver"].__setitem__(u"mode", {
+                u"present": True, u"value": 1})),
+            (u"changed_pole_vector", lambda d: d[u"constraints"][ik][u"solver"].__setitem__(u"poleVector", {
+                u"present": True, u"value": [0.0, 1.0, 1e-7]})),
+            (u"duplicate_identity", lambda d: d[u"constraints"].append(copy.deepcopy(d[u"constraints"][ik]))),
+            (u"missing_constraint", lambda d: d[u"constraints"].pop(ik)),
+            (u"extra_dependency", lambda d: d[u"constraints"].append(dict(copy.deepcopy(d[u"constraints"][pt]),
+                                                                           slaves={u"slave": u"bone:Extra"}))),
+            (u"changed_control_parent", lambda d: d[u"handles"][u"rig_head"].__setitem__(u"parent", u"rig_spine_1")),
+            (u"changed_weight_channel", lambda d: d[u"channels"].pop(sorted(
+                n for n, c in d[u"channels"].items() if c[u"role"] == u"weight")[0]))):
+        d = copy.deepcopy(S)
+        fn(d)
+        got = cmp(S, d, True)
+        check("K.%s_still_refuses" % label, got[0] != u"ok" and got[1] == u"rig-differs", got[:2])
+    for label, fn in (
+            (u"ik_bone_length", lambda d: d[u"structural_positions"].__setitem__(sorted(d[u"structural_positions"])[0],
+                                                                                 [0.0, 9.0, 0.0])),
+            (u"bone_scale", lambda d: d[u"scale"][u"bones"].__setitem__(u"bip_head", {u"present": True,
+                                                                                    u"value": 1.1}))):
+        d = copy.deepcopy(S)
+        fn(d)
+        refused("K.%s_still_refuses_as_proportions" % label, cmp(S, d, True), u"proportions")
+    # Offsets beyond the bound between the two records: the adapter says so, in plain words.
+    d = copy.deepcopy(T)
+    rotate_field(d, IK, u"bone:bip_hand_L", u"solver", u"startOffset", 0.01)
+    got = adapt(ns, rc3, live_of(sit, lambda desc, D: desc.__setitem__(u"constraints", d[u"constraints"])))
+    check("K.beyond_the_bound_the_adapter_names_the_offsets", got[0] != u"ok" and got[2] == ns[
+        "PROD_BODY_ADAPT_MESSAGES"][u"rig"] % u"its arm or leg controls were built with slightly different offsets",
+        got)
+
+
+def perturb_offsets(w, rot_deg=0.004, vec=(0.00004, 0.00003, 0.0)):
+    """The destination's own offsets moved within Astra's bounds: an arm IK start and mid offset, a hand orient
+    oOffset and its vecOffset, and a point constraint's vecOffset."""
+    done = []
+    for op, el in w.ops:
+        if op["type"] == IK and u"hand_L" in op["name"]:
+            for f in (u"startOffset", u"midOffset"):
+                if f in el.attrs:
+                    el.set(f, FB.Quaternion(*FB.qnorm(FB.qmul(B.rotate([0.0, 0.0, 0.0, 1.0], [0, 0, 1], rot_deg),
+                                                                FB.plain(el.attrs[f])))))
+                    done.append((op["name"], f))
+        if op["type"] in (ORIENT, POINT) and op["name"] in (u"orientConstraint_bip_hand_L",
+                                                            u"pointConstraint_bip_pelvis"):
+            tgt = el.attrs["targets"].items[0]
+            if op["type"] == ORIENT:
+                tgt.set("oOffset", FB.Quaternion(*FB.qnorm(FB.qmul(B.rotate([0.0, 0.0, 0.0, 1.0], [1, 0, 0], rot_deg),
+                                                                   FB.plain(tgt.attrs["oOffset"])))))
+            v = FB.plain(tgt.attrs["vecOffset"])
+            tgt.set("vecOffset", FB.Vector(*[v[i] + vec[i] for i in range(3)]))
+            done.append((op["name"], u"offsets"))
+    w.evaluate()
+    return done
+
+
+def section_bounded_live(ns, reg, fx, chest_fx, items):
+    chest_item, direct_item, chest_posture, direct_posture = items
+    for label, item, posture, fx_ in ((u"same_rig", direct_item, direct_posture, fx),
+                                      (u"chest_to_direct", chest_item, chest_posture, fx),
+                                      (u"direct_to_chest", direct_item, direct_posture, chest_fx)):
+        w = world(fx_)
+        done = perturb_offsets(w)
+        place_elsewhere(w)
+        before = B.all_keys(w)
+        del ns["LOG"][:]
+        auth, got = J.apply_(ns, reg, item, w)
+        verdict = J.verify(ns, auth, got)
+        dp, dq = B.max_difference(J.posture(w), posture)
+        eq = R.log_detail(R.last_log(ns, u"BODY-rotation-equivalent")) or {}
+        vq = R.log_detail(R.last_log(ns, u"BODY-vector-equivalent")) or {}
+        print("      %s: max skeletal error %.3g units %.3g deg; offsets %r" % (label, dp, dq, (
+            eq.get(u"max_angle_deg"), vq.get(u"max_distance"))))
+        check("K.live_%s_with_destination_offsets_within_the_bounds_verifies" % label, len(done) == 4 and
+              got[0] == u"ok" and verdict is not None and verdict.get(u"phase") == u"committed-verified" and
+              dp < 1e-3 and dq < 0.01 and eq.get(u"limit_deg") == 0.005 and vq.get(u"limit") == 0.0001,
+              (got[:2], verdict, dp, dq, eq, vq))
+        w.dm.Undo()
+        check("K.live_%s_undo_restores" % label, B.all_keys(w) == before)
+    # P2 stays exact: a change within the bounds after P1 is stale, before any write.
+    original = ns["prod_body_preflight"]
+    w = world(fx)
+
+    def preflight_then_change(*args):
+        pre = original(*args)
+        perturb_offsets(w, rot_deg=0.0001, vec=(1e-6, 0.0, 0.0))
+        return pre
+    ns["prod_body_preflight"] = preflight_then_change
+    try:
+        _, got = J.apply_(ns, reg, chest_item, w)
+    finally:
+        ns["prod_body_preflight"] = original
+    refused("K.p2_destination_offset_change_within_the_bounds_is_stale", got, u"stale")
+    check("K.p2_offset_change_writes_nothing", not B.scene_writes(w) and not [
+        c for c in w.dm.calls if c[0] == "StartUndo"])
+    # Post-commit: a destination offset change prevents a verified success.
+    w = world(fx)
+    perturb_offsets(w)
+    auth, got = J.apply_(ns, reg, chest_item, w)
+    perturb_offsets(w, rot_deg=0.0001, vec=(1e-6, 0.0, 0.0))
+    verdict = J.verify(ns, auth, got)
+    check("K.post_commit_offset_change_is_unverified", verdict is not None and verdict.get(u"phase") ==
+          u"committed-unverified", verdict)
+    # Abort restores the destination's own captured baseline (its own offsets, not the record's).
+    w = world(fx)
+    perturb_offsets(w)
+    before = B.all_keys(w)
+    offsets = [(op["name"], [FB.plain(v) for k, v in sorted(el.attrs.items()) if k in (u"startOffset",
+                                                                                      u"midOffset")])
+               for op, el in w.ops]
+    w.fail_on_write = u"rig_spine_1_o"
+    auth, got = J.apply_(ns, reg, chest_item, w)
+    after = [(op["name"], [FB.plain(v) for k, v in sorted(el.attrs.items()) if k in (u"startOffset", u"midOffset")])
+             for op, el in w.ops]
+    check("K.abort_restores_the_destination_baseline", got[0] == u"ok" and got[1][u"phase"] == u"not-applied" and
+          B.all_keys(w) == before and after == offsets, got[:2])
+    # P7 still detects an incorrect reproduction.
+    w = world(fx)
+    perturb_offsets(w)
+    auth, got = J.apply_(ns, reg, chest_item, w)
+    turn(w, u"bip_spine_3_o", [1.0, 0.0, 0.0], 2.0)
+    verdict = J.verify(ns, auth, got)
+    check("K.p7_still_detects_a_wrong_reproduction", verdict is not None and verdict.get(u"phase") ==
+          u"committed-unverified", verdict)
 
 
 # ---------------------------------------------------------------------------
@@ -777,11 +1036,13 @@ def main():
         run("wording", lambda: section_wording(ns, recs))
         run("native", lambda: section_native(ns, recs))
         run("native_refusals", lambda: section_native_refusals(ns, recs))
+        run("bounds", lambda: section_bounds(ns, recs))
         run("variant", lambda: section_variant(ns, fx, chest_fx, recs))
         items = run("live", lambda: section_live(ns, reg, fx, chest_fx, root))
         if items not in (None, True):
             run("live_refusals", lambda: section_live_refusals(ns, reg, fx, chest_fx, root, items))
             run("transaction", lambda: section_transaction(ns, reg, fx, chest_fx, items))
+            run("bounded_live", lambda: section_bounded_live(ns, reg, fx, chest_fx, items))
         run("copy", lambda: section_copy(ns, app))
     finally:
         shutil.rmtree(root, True)

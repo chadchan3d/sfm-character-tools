@@ -1,0 +1,45 @@
+{
+ "format": "F01-RC4X-config-v1",
+ "description": "F-01 RC4: the native two-direction Tails cross-rig qualification (a new rig_biped_simple Tails with rig_chest and the session's original Tails, the original Fox as the untouched peer) of the RC4 candidate CPM in qualification mode, on a disposable copy of the R2 fixture that is never saved. Copy to <Q>/rc4x.json and replace the path placeholders; change no pin.",
+ "paths": {
+  "Q": "<RUN_DIR>",
+  "REPO": "<REPO>",
+  "GAME": "<SFM game>",
+  "LIBRARY": "%USERPROFILE%/Documents/SFM Character Preset Manager",
+  "SESSIONS": "<SFM sessions folder>",
+  "SCRIPTS_ROOT": "{GAME}/usermod/scripts",
+  "CFG_ROOT": "{GAME}/usermod/cfg",
+  "CANDIDATE": "{REPO}/cpm/app/SFM_Character_Preset_Manager.py",
+  "PROFILE": "{REPO}/cpm/pose_profiles/cpm_pose_profiles_v1.json",
+  "BODY_PROFILE": "{REPO}/cpm/pose_profiles/cpm_body_profiles_v1.json",
+  "R2_FIXTURE": "<R2_FIXTURE_DIR>/F01_R2_DISPOSABLE_<SOURCE_SESSION>.dmx",
+  "S3_RUN1": "<S3 run 1 folder (f01-full-body-s3)>",
+  "LOG_DIR": "C:/Users/Public/Documents/SFM Character Preset Manager Logs",
+  "LEGACY_POSE": "<S3 run 1 folder>/evidence/library_poses/krystal2020--7d2aee52ef3a/NQ1 Pose A--5273df2209ca.json"
+ },
+ "pins": {
+  "analyzer_sha256": "09b270f57e4025bdde318defab449f3fa7f8c14a6f97238d9def2388c7d896e4",
+  "body_profile_sha256": "a2254930489772c024a42d057b98a5a01e164be05096dd85df2d461aad73d622",
+  "candidate_cpm_sha256": "f51322d33498e9cfd16727cc2f88f7af0aae59d09aa6c5a87b11e6f122026264",
+  "capture_sha256": "765eefc280e6aa3b403d81ed0bd885862851436f95074fa390b532cf34bbbb22",
+  "destination_sha256": "61df8bcd5397c78b064e102047e51b5d9e4e3c43df40394522c57944ba67e992",
+  "legacy_pose_sha256": "4916a7243193306ab7a93dec9fbc988b079c9af4c3bb0e9828a5b2d89cef3541",
+  "observer_sha256": "4a358cc05449592c7ea3cd6828cb40ca2faed08fc602156c2f15a9398e67c0c4",
+  "procedure_sha256": "03787420814942e4514ab7a4422af2897ca672cdcbaf9df407abd9988a9585f3",
+  "profile_sha256": "f445d5ef7fb183e6bcae3099b3812ffd2363213911605134231c2a1f708d6d00",
+  "published_cpm_sha256": "ccbed9d794984643fc6f7d7d9c65ef90e5812eb27f85dc4a86855a17c2d3d8df",
+  "qualification_cpm_sha256": "df6c432679eeb0f4b8402ea70d9cefa2590d9863050fcf2abf0cfef4805b6997",
+  "r2_fixture_sha256": "259ea8a614bc9e43e5bde15afdf38e1a1295dffb50b14cf75692df4221a05a2c",
+  "s2t_wrapper_sha256": "3bd20f07c7fd447b9801bd856ef1e6389c848612775abd84e82fa87891a610d4",
+  "wrapper_sha256": "ec1e2b138c37a2ba4022d7ecb01eedae3c950401acf9c47e2effb34c445d1d21"
+ },
+ "housekeeping": [
+  "cfg\\config.cfg",
+  "cfg\\ifm.txt",
+  "cfg\\server_blacklist.txt",
+  "demoheader.tmp",
+  "stats.txt",
+  "tf2_playerstats.dmx",
+  "voice_ban.dt"
+ ]
+}

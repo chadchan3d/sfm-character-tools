@@ -45159,6 +45159,14 @@ def prod_body_descriptor(D, C, profile):
 PROD_BODY_ROTATION_FIELDS = ((u"solver", u"startOffset"), (u"solver", u"midOffset"), (u"offsets", u"oOffset"))
 PROD_BODY_ROTATION_NORM_LIMIT = 2.0 ** -19          # validity envelope: abs(norm(q) - 1)
 PROD_BODY_ROTATION_LIMIT_DEG = 0.0005               # inclusive angular allowance
+# RC4: Astra's numerical compatibility ruling (ACCEPT, bounded static-offset equivalence), for the structural-rig route
+# only (separately built rigs: the rig script computes these offsets from the bones when it runs). Inclusive bounds:
+# IK startOffset and midOffset, and the oOffset of a point or orient constraint, by angle; the vecOffset of a point or
+# orient constraint by Euclidean distance. The validity envelope, the normalized comparison copies and q/-q
+# equivalence are unchanged; everything else (an IK constraint's oOffset and vecOffset included) stays as before, and
+# the registry profile route keeps PROD_BODY_ROTATION_LIMIT_DEG and exact vectors.
+PROD_BODY_RIG_ROTATION_LIMIT_DEG = 0.005
+PROD_BODY_RIG_VECTOR_LIMIT = 0.0001
 
 
 def prod_body_rotation_angle(a, b):
@@ -45192,14 +45200,16 @@ def prod_body_rotation_value(field):
     return True, q, norm, None
 
 
-def prod_body_rotation_compare(ident, group, name, saved, live):
+def prod_body_rotation_compare(ident, group, name, saved, live, limit=None):
     """None when the saved and live offsets are the same rotation within the limit (or both absent); otherwise the
-    complete diagnostic. Always against the saved record's own value."""
+    complete diagnostic. Always against the saved record's own value. `limit`: the route's bound (default
+    PROD_BODY_ROTATION_LIMIT_DEG)."""
+    limit = PROD_BODY_ROTATION_LIMIT_DEG if limit is None else limit
     sp, sq, sn, s_bad = prod_body_rotation_value(saved)
     lp, lq, ln, l_bad = prod_body_rotation_value(live)
     diag = {u"constraint": ident, u"field": group + u"." + name, u"saved": sq if sp else u"absent",
             u"live": lq if lp else u"absent", u"saved_norm": sn, u"live_norm": ln, u"angle_deg": None,
-            u"limit_deg": PROD_BODY_ROTATION_LIMIT_DEG, u"norm_limit": PROD_BODY_ROTATION_NORM_LIMIT}
+            u"limit_deg": limit, u"norm_limit": PROD_BODY_ROTATION_NORM_LIMIT}
     if s_bad or l_bad:
         diag[u"problem"] = u"saved %s" % s_bad if s_bad else u"live %s" % l_bad
         return diag
@@ -45210,7 +45220,7 @@ def prod_body_rotation_compare(ident, group, name, saved, live):
         return None
     angle = prod_body_rotation_angle(sq, lq)
     diag[u"angle_deg"] = angle
-    if not angle <= PROD_BODY_ROTATION_LIMIT_DEG:
+    if not angle <= limit:
         diag[u"problem"] = u"rotation differs"
         return diag
     return None
@@ -45239,16 +45249,38 @@ def prod_body_constraint_rows(rows, side):
     return out
 
 
-def prod_body_compare_constraints(saved_rows, live_rows):
+def prod_body_vector_value(field):
+    """(present, components, problem) of one typed position offset field ({present[, value]})."""
+    if not isinstance(field, dict) or not isinstance(field.get(u"present"), bool):
+        return None, None, u"malformed field"
+    if not field[u"present"]:
+        return (False, None, None) if sorted(field) == [u"present"] else (False, None, u"malformed field")
+    v = field.get(u"value")
+    if sorted(field) != [u"present", u"value"] or not isinstance(v, list) or len(v) != 3 or \
+            not all(prod_pose_is_number(c) for c in v):
+        return True, v, u"not three numbers"
+    out = [float(c) for c in v]
+    if any(math.isnan(c) or math.isinf(c) for c in out):
+        return True, out, u"not finite"
+    return True, out, None
+
+
+def prod_body_compare_constraints(saved_rows, live_rows, structural=False):
     """Structural matching by identity, then per field: the three rotation offsets by bounded rotation equivalence,
-    everything else exactly. Returns the accepted rotation differences (for the log); refuses otherwise."""
+    everything else exactly. `structural` (RC4, the structural-rig route only): IK startOffset and midOffset and a
+    point or orient constraint's oOffset within PROD_BODY_RIG_ROTATION_LIMIT_DEG, and a point or orient constraint's
+    vecOffset within PROD_BODY_RIG_VECTOR_LIMIT (Euclidean); identities, targets, slaves, poles, types, weights and
+    solver settings are established first and stay exact. Returns the accepted differences (for the log); refuses
+    otherwise."""
     saved, live = prod_body_constraint_rows(saved_rows, u"saved"), prod_body_constraint_rows(live_rows, u"live")
     if sorted(saved) != sorted(live):
         raise prod_body_error(u"rig-differs", u"constraint identities differ: missing %s, extra %s" % (
             sorted(set(saved) - set(live))[:4], sorted(set(live) - set(saved))[:4]))
     problems, rotations, accepted = [], [], []
+    plain_types = (u"DmeRigPointConstraintOperator", u"DmeRigOrientConstraintOperator")
     for ident in sorted(saved):
         a, b = saved[ident], live[ident]
+        plain = structural and a.get(u"type") in plain_types
         for group, name in PROD_BODY_ROTATION_FIELDS:
             ga, gb = a.get(group), b.get(group)
             if isinstance(ga, dict) and isinstance(gb, dict) and (name in ga or name in gb):
@@ -45256,18 +45288,47 @@ def prod_body_compare_constraints(saved_rows, live_rows):
                     rotations.append({u"constraint": ident, u"field": group + u"." + name,
                                       u"problem": u"presence differs"})
                     continue
-                d = prod_body_rotation_compare(ident, group, name, ga[name], gb[name])
+                limit = PROD_BODY_RIG_ROTATION_LIMIT_DEG if structural and (
+                    name in (u"startOffset", u"midOffset") or plain) else PROD_BODY_ROTATION_LIMIT_DEG
+                d = prod_body_rotation_compare(ident, group, name, ga[name], gb[name], limit)
                 if d is not None:
                     rotations.append(d)
                 elif ga[name] != gb[name]:
                     accepted.append({u"constraint": ident, u"field": group + u"." + name,
-                                     u"angle_deg": prod_body_rotation_angle(ga[name][u"value"], gb[name][u"value"])})
+                                     u"angle_deg": prod_body_rotation_angle(ga[name][u"value"], gb[name][u"value"]),
+                                     u"limit_deg": limit})
+        if plain:
+            oa, ob = a.get(u"offsets"), b.get(u"offsets")
+            if not isinstance(oa, dict) or not isinstance(ob, dict) or (u"vecOffset" in oa) != (u"vecOffset" in ob):
+                rotations.append({u"constraint": ident, u"field": u"offsets.vecOffset", u"problem": u"presence differs"})
+            elif u"vecOffset" in oa:
+                sp, sv, s_bad = prod_body_vector_value(oa[u"vecOffset"])
+                lp, lv, l_bad = prod_body_vector_value(ob[u"vecOffset"])
+                diag = {u"constraint": ident, u"field": u"offsets.vecOffset", u"saved": sv if sp else u"absent",
+                        u"live": lv if lp else u"absent", u"distance": None, u"limit": PROD_BODY_RIG_VECTOR_LIMIT}
+                if s_bad or l_bad:
+                    diag[u"problem"] = u"saved %s" % s_bad if s_bad else u"live %s" % l_bad
+                    rotations.append(diag)
+                elif sp != lp:
+                    diag[u"problem"] = u"presence differs"
+                    rotations.append(diag)
+                elif sp:
+                    distance = math.sqrt(sum((x - y) ** 2 for x, y in zip(sv, lv)))
+                    diag[u"distance"] = distance
+                    if not distance <= PROD_BODY_RIG_VECTOR_LIMIT:
+                        diag[u"problem"] = u"position offset differs"
+                        rotations.append(diag)
+                    elif sv != lv:
+                        accepted.append({u"constraint": ident, u"field": u"offsets.vecOffset",
+                                         u"distance": distance, u"limit": PROD_BODY_RIG_VECTOR_LIMIT})
 
         def rest(row):
             r = dict(row)
             for group, name in PROD_BODY_ROTATION_FIELDS:
                 if isinstance(r.get(group), dict) and name in r[group]:
                     r[group] = dict((k, v) for k, v in r[group].items() if k != name)
+            if plain and isinstance(r.get(u"offsets"), dict):
+                r[u"offsets"] = dict((k, v) for k, v in r[u"offsets"].items() if k != u"vecOffset")
             return r
         problems.extend(u"%s%s" % (ident, p) for p in prod_pose_differences(rest(a), rest(b)))
     if rotations:
@@ -45278,7 +45339,7 @@ def prod_body_compare_constraints(saved_rows, live_rows):
     return accepted
 
 
-def prod_body_compare_descriptor(saved, live):
+def prod_body_compare_descriptor(saved, live, structural=False):
     """Exact equality, except the static constraint rotation offsets (prod_body_compare_constraints: constraints
     matched by structural identity, bounded rotation equivalence for startOffset, midOffset and oOffset only).
     Structural values (IK bone offsets, source-less twist channels) and scale differences are proportions or passive
@@ -45310,11 +45371,22 @@ def prod_body_compare_descriptor(saved, live):
     if problems:
         raise prod_body_error(u"rig-differs", u"descriptor differs (%d%s): %s" % (
             len(problems), u"+" if len(problems) >= 64 else u"", problems[:16]))
-    accepted = prod_body_compare_constraints(saved.get(u"constraints"), live.get(u"constraints"))
-    if accepted:
+    prod_body_log_equivalent(prod_body_compare_constraints(saved.get(u"constraints"), live.get(u"constraints"),
+                                                           structural))
+
+
+def prod_body_log_equivalent(accepted):
+    """The accepted offset differences of one comparison, in the diagnostic log (angles and, RC4, distances)."""
+    angles = [r for r in accepted if u"angle_deg" in r]
+    vectors = [r for r in accepted if u"distance" in r]
+    if angles:
         prod_pose_log(u"BODY-rotation-equivalent", {
-            u"count": len(accepted), u"max_angle_deg": max(r[u"angle_deg"] for r in accepted),
-            u"limit_deg": PROD_BODY_ROTATION_LIMIT_DEG, u"offsets": accepted[:8]})
+            u"count": len(angles), u"max_angle_deg": max(r[u"angle_deg"] for r in angles),
+            u"limit_deg": max(r[u"limit_deg"] for r in angles), u"offsets": angles[:8]})
+    if vectors:                                       # RC4: the structural route's bounded position offsets
+        prod_pose_log(u"BODY-vector-equivalent", {
+            u"count": len(vectors), u"max_distance": max(r[u"distance"] for r in vectors),
+            u"limit": PROD_BODY_RIG_VECTOR_LIMIT, u"offsets": vectors[:8]})
 
 
 # --- version 2 record ------------------------------------------------------------------------------------------------
@@ -46134,7 +46206,7 @@ def prod_body_preflight(identity, authorization, item, reg):
     D, C, L = st[u"D"], st[u"C"], st[u"L"]
     saved_region, adaptation = region, None
     try:
-        prod_body_compare_descriptor(region[u"descriptor"], st[u"descriptor"])
+        prod_body_compare_descriptor(region[u"descriptor"], st[u"descriptor"], bool(profile.get(u"_structural")))
     except ProdPoseError as exc:
         # RC4: a structural record and a different rig of the same model: the destination-specific plan, or a refusal
         # naming the unsupported relationship. The record's own region stays the skeletal reference.
@@ -47070,7 +47142,7 @@ def prod_body_rig_adapt(region, live, profile):
             raise refuse(u"the %s control is attached differently" % n, u"control %s parent %s / %s" % (
                 n, hs[n][u"parent"], ht[n][u"parent"]))
     try:
-        prod_body_compare_constraints(plain_s, plain_t)
+        prod_body_log_equivalent(prod_body_compare_constraints(plain_s, plain_t, structural=True))
     except ProdPoseError as exc:
         same = sorted(prod_body_constraint_identity(c) for c in plain_s) == sorted(
             prod_body_constraint_identity(c) for c in plain_t)
