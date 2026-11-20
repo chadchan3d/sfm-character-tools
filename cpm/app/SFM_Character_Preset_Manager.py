@@ -36336,6 +36336,51 @@ class ProdWindow(QtGui.QDialog):
             work,
         )
 
+    def pose_busy_begin(
+        self,
+        text,
+    ):
+        """Save New (RC3 Owner finding, 2026-11-20): immediate feedback while the read-only checks before the Save
+        dialog run. The status says what is happening and is painted now, and the cursor shows work in progress. The
+        event loop is never run (no re-entrant clicks). pose_busy_end restores the cursor and, unless something
+        else replaced it, the previous status. Feedback never fails or changes the action."""
+        self.pose_busy_end()
+        try:
+            previous = (self.status.text(), self.status.styleSheet())
+        except Exception:
+            previous = None
+        self.set_status(text, u"neutral")
+        busy = {"previous": previous, "generation": getattr(self, "status_generation", 0), "cursor": False}
+        self.pose_busy = busy
+        try:
+            self.status.repaint()
+        except Exception:
+            pass
+        try:
+            QtGui.QApplication.setOverrideCursor(QtGui.QCursor(QtCore.Qt.WaitCursor))
+            busy["cursor"] = True
+        except Exception:
+            pass
+
+    def pose_busy_end(
+        self,
+    ):
+        busy = getattr(self, "pose_busy", None)
+        self.pose_busy = None
+        if not busy:
+            return
+        if busy["cursor"]:
+            try:
+                QtGui.QApplication.restoreOverrideCursor()
+            except Exception:
+                pass
+        if busy["previous"] is not None and getattr(self, "status_generation", 0) == busy["generation"]:
+            try:
+                self.status.setText(busy["previous"][0])
+                self.status.setStyleSheet(busy["previous"][1])
+            except Exception:
+                pass
+
     def save_pose(
         self,
         name,
@@ -36449,6 +36494,7 @@ class ProdWindow(QtGui.QDialog):
                 if rig_route:
                     inventory = prod_body_rig_inventory(inventory, rig_probe)
                     body_pinned = rig_probe[u"time"]
+                self.pose_busy_end()
                 choice = self.prompt_pose_scope(
                     inventory,
                     body_route,
@@ -36532,6 +36578,7 @@ class ProdWindow(QtGui.QDialog):
                             chosen,
                         )
                     )
+                    self.pose_busy_end()
                     pose_name = self.prompt(
                         "Save Pose",
                         u"Pose",
@@ -36633,10 +36680,16 @@ class ProdWindow(QtGui.QDialog):
             )
             return saved
 
-        result = self.pose_guard(
-            u"Save Pose",
-            work,
-        )
+        if name is None:
+            # Interactive Save New: the checks before the dialog take seconds on a rigged character.
+            self.pose_busy_begin(PROD_POSE_MESSAGES[u"save-preparing"])
+        try:
+            result = self.pose_guard(
+                u"Save Pose",
+                work,
+            )
+        finally:
+            self.pose_busy_end()
 
         if result is not None:
             self.refresh_pose_view(
@@ -41997,6 +42050,7 @@ PROD_POSE_MESSAGES = {
     u"update-refused": u"The pose wasn't updated: %(part)s can't be read. Nothing was changed.",
     u"applied": u"Pose applied: %(name)s.",
     u"saved": u"Pose saved: %(name)s.",
+    u"save-preparing": u"Checking the character before saving.",
     u"foreign-locked": u"Poses from another character's library can't be changed here.",
 }
 # Dialog titles (Designer disposition of Fox run 3).
@@ -45850,9 +45904,11 @@ def prod_body_resolve_profile(reg, authorization):
     return profile
 
 
-def prod_body_current_time(identity, authorization, reg):
-    """The time triple pinned when the Save or Update dialog opens; every channel's clock must be the mapped tick."""
-    profile = prod_body_resolve_profile(reg, authorization)
+def prod_body_current_time(identity, authorization, reg, profile=None):
+    """The time triple pinned when the Save or Update dialog opens; every channel's clock must be the mapped tick.
+    `profile`: the caller's profile already resolved for this authorization (Save New probe: drafted once)."""
+    if profile is None:
+        profile = prod_body_resolve_profile(reg, authorization)
     row = prod_resolve_instance(prod_instance_token(authorization[u"context"]), identity)
 
     def read():
@@ -46687,8 +46743,10 @@ def prod_body_rig_probe(operation_context, identity, reg, mode):
         return None
     try:
         authorization = prod_body_rig_authorize(operation_context, identity, reg, mode, u"Save Pose")
-        time = prod_body_current_time(identity, authorization, reg)
+        # Save New responsiveness (2026-11-20): one draft for the time read and the admission (it was drafted twice
+        # from the same pinned instance); prod_body_state still re-reads and confirms the same drafted description.
         profile = prod_body_resolve_profile(reg, authorization)
+        time = prod_body_current_time(identity, authorization, reg, profile=profile)
         st = prod_body_state(prod_resolve_instance(prod_instance_token(operation_context), identity), profile)
     except (ProdPoseError, ProdPoseIntegrationError) as exc:
         if getattr(exc, "code", None) in (u"capture-clock", u"stale", u"time-mapping", u"editor-mode"):

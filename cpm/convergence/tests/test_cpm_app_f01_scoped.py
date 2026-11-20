@@ -1319,7 +1319,8 @@ def section_transactions(ns, app, root, lib, grip):
 # M/N. the real ProdWindow lifecycle, UI state and dispatch (R3 6.1, 7, 11 "UI/library", "Dispatch")
 # ---------------------------------------------------------------------------
 
-WINDOW_METHODS = ["pose_registry_mode", "pose_guard", "apply_pose", "save_pose", "update_pose"]
+WINDOW_METHODS = ["pose_registry_mode", "pose_guard", "apply_pose", "save_pose", "update_pose", "pose_busy_begin",
+                  "pose_busy_end"]
 
 
 class FakeWindow(object):

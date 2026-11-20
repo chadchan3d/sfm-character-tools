@@ -861,7 +861,8 @@ def section_live_refusals(ns, reg, fx, item):
 # S1-E: the Poses window methods (Save New, Update Pose, Apply Pose) on the fake scene
 # ---------------------------------------------------------------------------
 
-WINDOW_METHODS = ["pose_registry_mode", "pose_guard", "apply_pose", "save_pose", "update_pose"]
+WINDOW_METHODS = ["pose_registry_mode", "pose_guard", "apply_pose", "save_pose", "update_pose", "pose_busy_begin",
+                  "pose_busy_end"]
 
 
 class FakeWindow(object):

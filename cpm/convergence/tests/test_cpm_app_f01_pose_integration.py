@@ -48,7 +48,8 @@ STAGE_D_START = u"# F-01 Pose Library M1, stage D: the left-arm live layer"
 STAGE_D_END = u"# === end of F-01 stage D block ==="
 STAGE_B_START = u"# F-01 Pose Library M1, stage B: offline pose library"
 STAGE_B_END = u"# === end of F-01 stage B block ==="
-POSE_METHODS = ["pose_registry_mode", "pose_guard", "apply_pose", "save_pose", "pose_begin_verification",
+POSE_METHODS = ["pose_registry_mode", "pose_guard", "apply_pose", "save_pose", "pose_busy_begin", "pose_busy_end",
+                "pose_begin_verification",
                 "pose_finish_verification", "update_pose"]
 PAGE_METHODS = ["refresh_pose_view", "selected_pose", "refresh_pose_buttons", "apply_selected_pose",
                 "pose_selection_for_action", "update_selected_pose", "toggle_pose_favorite", "delete_selected_pose",

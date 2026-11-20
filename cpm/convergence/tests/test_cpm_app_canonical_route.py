@@ -494,6 +494,8 @@ F01_SFP1_NEW_TOP = set([
     "prod_pose_info_view", "PROD_POSE_INFO_MONTHS", "PROD_POSE_FULL_BODY_NOT_INCLUDED"
 ])
 F01_SFP1_NEW_METHODS = set(["prompt_pose_scope"])
+# RC4 Save New responsiveness (RC3 Owner finding, 2026-11-20): immediate feedback before the Save dialog.
+F01_RC4_NEW_METHODS = set(["pose_busy_begin", "pose_busy_end"])
 EXPECTED_CHANGED_TOP = (STEP2B_CHANGED_TOP | STEP3_CHANGED_TOP | STEP4_CHANGED_TOP | R14_CHANGED_TOP
                         | R15_CHANGED_TOP | ITEM6_CHANGED_TOP | ITEM7_CHANGED_TOP | UIPASS_CHANGED_TOP
                         | LOGFIX_CHANGED_TOP | M05_CHANGED_TOP | M06_CHANGED_TOP | M06W1_CHANGED_TOP
@@ -601,7 +603,7 @@ def section_derivation(app):
     check("derivation.changed_methods_are_bounded", m_changed == expected_methods, sorted(m_changed))
     check("derivation.added_methods_are_bounded",
           set(am) - set(bm) == EXPECTED_NEW_METHODS | R15_NEW_METHODS | M05_NEW_METHODS | F01_STAGEC_NEW_METHODS
-          | F01_STAGED_NEW_METHODS | F01_UI_NEW_METHODS | F01_SFP1_NEW_METHODS,
+          | F01_STAGED_NEW_METHODS | F01_UI_NEW_METHODS | F01_SFP1_NEW_METHODS | F01_RC4_NEW_METHODS,
           sorted(set(am) - set(bm)))
     check("derivation.removed_methods_are_exactly_item6", set(bm) - set(am) == ITEM6_REMOVED_METHODS,
           sorted(set(bm) - set(am)))

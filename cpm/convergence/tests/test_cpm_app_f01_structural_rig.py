@@ -833,6 +833,46 @@ def section_window(app, ns, reg, fx, root):
               body_route is False and prod_saved is not None and ns["prod_body_rig_is_record"](prod_saved[u"record"])
               and win.statuses[-1][1] == u"Pose saved: Prod Fox." and len(files()) == 1,
               (win.statuses[-1:], inv[u"full_body"]))
+        # RC4 Save New responsiveness (RC3 Owner finding, 2026-11-20): the status says what is happening before the
+        # read-only checks run, the feedback is over when the dialog opens, and the probe drafts the rig only once.
+        win = B.window(app, ns, reg, lib)
+        win.dialogs, win.prompts = [], [u"Busy Fox"]
+        seen, drafts = [], []
+        real_prompt, real_draft = type(win).prompt_pose_scope, ns["prod_body_rig_draft"]
+
+        def watched_prompt(self, inventory, body_route):
+            seen.append((list(self.statuses), getattr(self, "pose_busy", u"unset"), len(drafts)))
+            return real_prompt(self, inventory, body_route)
+        type(win).prompt_pose_scope = watched_prompt
+        ns["prod_body_rig_draft"] = lambda D, exclusions=None: drafts.append(1) or real_draft(D, exclusions)
+        try:
+            busy_saved = win.save_pose(None, (u"full_body",))
+        finally:
+            type(win).prompt_pose_scope = real_prompt
+            ns["prod_body_rig_draft"] = real_draft
+        preparing = ns["PROD_POSE_MESSAGES"][u"save-preparing"]
+        check("E.rc4_save_new_shows_feedback_before_the_checks", len(seen) == 1 and seen[0][0][:1] == [
+            ("status", preparing, u"neutral")] and preparing == u"Checking the character before saving.", seen[:1])
+        check("E.rc4_feedback_ends_before_the_dialog_opens", seen and seen[0][1] is None, seen[:1])
+        check("E.rc4_probe_drafts_the_rig_once_then_confirms_it", seen and seen[0][2] == 2, seen and seen[0][2])
+        check("E.rc4_save_new_still_saves_the_structural_pose", busy_saved is not None and
+              ns["prod_body_rig_is_record"](busy_saved[u"record"]) and win.statuses[-1][1] ==
+              u"Pose saved: Busy Fox." and win.pose_busy is None, win.statuses[-1:])
+        win.prompts = []                                   # cancelled in the dialog
+        check("E.rc4_cancel_ends_the_feedback", win.save_pose(None, (u"full_body",)) is None and
+              win.pose_busy is None)
+        src.timeline_mode = 3                              # the Clip Editor: a clock refusal before the dialog
+        try:
+            win.dialogs, win.prompts = [], [u"Refused Fox"]
+            refused_save = win.save_pose(None, (u"full_body",))
+        finally:
+            src.timeline_mode = 2
+        check("E.rc4_refusal_before_the_dialog_ends_the_feedback", refused_save is None and not win.dialogs and
+              win.pose_busy is None and win.statuses[-1][2] == u"capture-clock", win.statuses[-1:])
+        before = len(win.statuses)
+        outcome(lambda: win.save_pose(u"Named Fox", (u"full_body",)))
+        check("E.rc4_no_feedback_for_a_named_save", (u"status", preparing, u"neutral") not in win.statuses[before:],
+              win.statuses[before:])
         # Qualification build: the structural route reaches the dialog and saves a version 2 record.
         ns["PROD_POSE_REGISTRY_MODE"] = QUAL
         win = B.window(app, ns, reg, lib)
