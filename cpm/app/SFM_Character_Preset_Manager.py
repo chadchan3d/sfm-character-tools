@@ -46228,9 +46228,9 @@ PROD_BODY_RIG_LEAF_REVISION = 2
 PROD_BODY_RIG_REVISIONS = (PROD_BODY_RIG_REVISION, PROD_BODY_RIG_LEAF_REVISION)
 PROD_BODY_SIMULATED_LEAF = u"simulated-leaf"
 PROD_BODY_RIG_LEAF_PROC = u"STUDIO_PROC_JIGGLE"
-# experimental: usable in the qualification build only; production keeps the RC2 refusal of rigged characters
-# without a registry profile until the Owner accepts the native Fox qualification.
-PROD_BODY_RIG_STATUS = u"experimental"
+# qualified (v1.1.0 RC3): the Owner/Designer accepted the native Fox (Stage 1) and Tails (Stage 2) qualifications, so
+# production admits the structural route. "experimental" restores the RC2 refusal (qualification build only).
+PROD_BODY_RIG_STATUS = u"qualified"
 PROD_BODY_RIG_AUTH_SCHEMA = u"cpm-structural-rig-authorization-v1"
 PROD_BODY_RIG_NAME = u"@structural"           # the descriptor's rig name: never the instance's rig_biped_<animset>
 PROD_BODY_RIG_EXCLUSION_PROVENANCE = (u"user_confirmed",)
@@ -46620,7 +46620,10 @@ def prod_body_rig_authorize(operation_context, identity, reg, mode, label, item=
     return {u"schema": PROD_BODY_RIG_AUTH_SCHEMA, u"operation": label, u"mode": mode, u"structural": True,
             u"rule": PROD_BODY_RIG_RULE, u"revision": PROD_BODY_RIG_REVISION,
             u"mappings": [{u"region": PROD_BODY_REGION, u"from": PROD_BODY_RIG_RULE, u"to": PROD_BODY_RIG_RULE,
-                           u"status": PROD_BODY_RIG_STATUS, u"evidence": None}],
+                           u"status": PROD_BODY_RIG_STATUS, u"evidence": (
+                               u"F-01 Stage 1 Fox and Stage 2 Tails native qualifications, closed by Owner/Designer "
+                               u"adjudication; F01_STAGE1_RECOVERY_CHECK_RESULTS.md, F01_STAGE2_TAILS_NATIVE_RESULTS.md"
+                               if PROD_BODY_RIG_STATUS == u"qualified" else None)}],
             u"destination": {u"model": u(identity["model"]), u"checksum": int(identity["checksum"]),
                              u"rig_class": PROD_BODY_RIG_RULE},
             u"context": operation_context, u"record": record, u"exclusions": exclusions}

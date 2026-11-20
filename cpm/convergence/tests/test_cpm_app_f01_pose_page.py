@@ -1195,9 +1195,19 @@ def section_structural_apply(window, tabs, env, boxes, QtGui):
         g["PROD_POSE_RECOVERY_BLOCK"][0] = None
         g["PROD_POSE_REGISTRY_MODE"] = u"production"
         reload()
-        check("S4 production (adapter experimental): the structural pose stays disabled, and Pose Info says so",
-              select(u"Fox Rig") is False and note(u"Fox Rig") == [u"Can't be applied to foxmccouldwm3: Full body."],
-              note(u"Fox Rig"))
+        check("S4 production (v1.1.0 RC3, adapter qualified): the structural pose enables Apply Pose, with no note",
+              select(u"Fox Rig") is True and note(u"Fox Rig") == [], note(u"Fox Rig"))
+        check("S4 production keeps another model and an unknown revision disabled",
+              select(u"Other Model") is False and select(u"Future Rig") is False)
+        status = g["PROD_BODY_RIG_STATUS"]
+        g["PROD_BODY_RIG_STATUS"] = u"experimental"
+        try:
+            reload()
+            check("S4 production (adapter experimental): the structural pose stays disabled, and Pose Info says so",
+                  select(u"Fox Rig") is False and note(u"Fox Rig") == [u"Can't be applied to foxmccouldwm3: Full "
+                                                                       u"body."], note(u"Fox Rig"))
+        finally:
+            g["PROD_BODY_RIG_STATUS"] = status
     finally:
         g["PROD_POSE_RECOVERY_BLOCK"][0] = None
         window.pose_list.setCurrentRow(-1)

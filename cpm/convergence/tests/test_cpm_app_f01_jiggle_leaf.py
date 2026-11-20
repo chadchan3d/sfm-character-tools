@@ -758,14 +758,33 @@ def section_unchanged_routes(ns, reg, root, old):
 # ---------------------------------------------------------------------------
 
 def section_production_and_teeth(ns, reg, fx, item, old):
+    # v1.1.0 RC3: the adapter is qualified, so production offers Tails' Full body (its seven leaves admitted) and
+    # authorizes the Apply exactly as the qualification build does.
     use(ns, world(fx, posed=False))
-    check("H.production_build_does_not_offer_the_adapter", ns["prod_body_rig_probe"](ctx(ns), IDENTITY, reg, PROD)
-          is None)
+    probe = ns["prod_body_rig_probe"](ctx(ns), IDENTITY, reg, PROD)
+    check("H.rc3_production_build_offers_the_adapter", probe is not None and probe == ns["prod_body_rig_probe"](
+        ctx(ns), IDENTITY, reg, QUAL) and sorted(n for n, c in probe[u"classes"].items() if c == u"simulated-leaf")
+        == sorted(LEAVES), probe and sorted(n for n, c in probe[u"classes"].items() if c == u"simulated-leaf"))
     w = world(fx)
     use(ns, w)
     got = outcome(lambda: authorize(ns, reg, u"Apply Pose", item, mode=PROD))
-    refused("H.production_apply_is_not_qualified", got, u"not-qualified")
-    check("H.production_refusal_writes_nothing", no_mutation(w))
+    check("H.rc3_production_apply_is_authorized", got[0] == u"ok" and got[1][u"mappings"][0][u"status"] ==
+          u"qualified" and bool(got[1][u"mappings"][0][u"evidence"]), got if got[0] != u"ok" else None)
+    check("H.rc3_production_authorization_writes_nothing", no_mutation(w))
+    # The RC2 behaviour, kept against the experimental status.
+    status = ns["PROD_BODY_RIG_STATUS"]
+    ns["PROD_BODY_RIG_STATUS"] = u"experimental"
+    try:
+        use(ns, world(fx, posed=False))
+        check("H.production_build_does_not_offer_the_adapter", ns["prod_body_rig_probe"](ctx(ns), IDENTITY, reg,
+                                                                                         PROD) is None)
+        w = world(fx)
+        use(ns, w)
+        got = outcome(lambda: authorize(ns, reg, u"Apply Pose", item, mode=PROD))
+        refused("H.production_apply_is_not_qualified", got, u"not-qualified")
+        check("H.production_refusal_writes_nothing", no_mutation(w))
+    finally:
+        ns["PROD_BODY_RIG_STATUS"] = status
 
     # Teeth 1: the Stage 1 candidate (no admission) refuses Tails exactly as before.
     D = discovered(old, world(fx, posed=False, simulate=False))

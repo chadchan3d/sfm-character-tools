@@ -1,0 +1,4 @@
+# v1.1.0 RC1: the spec and config are hash-pinned (rc.template.json, RC_VERIFY.json); keep exact LF bytes.
+*.json text eol=lf
+*.md text eol=lf
+*.py text eol=lf

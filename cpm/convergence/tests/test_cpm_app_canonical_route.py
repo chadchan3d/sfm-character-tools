@@ -357,6 +357,26 @@ F01_OT1_NEW_TOP = set(["prod_bs_operate_bound_expression", "PROD_BS_EXPRESSION_R
 F01_H1_NEW_TOP = set(["PROD_SCOPE_HELPER_ROLE", "PROD_SCOPE_HELPER_PROC", "PROD_SCOPE_HELPER_REQUIRED_FLAG",
                       "PROD_SCOPE_HELPER_EXCLUDED_FLAGS", "PROD_SCOPE_HELPER_MAX_ITEMS", "PROD_SCOPE_HELPER_NOTE",
                       "prod_scope_helper_evidence", "prod_scope_helper_admission"])
+# F-01 v1.1.0 RC3 ("F-01 v1.1.0 - RC3 Authorization"; F01_V110_RC3_INTEGRATION.md): the structural rig adapter
+# of Stage 1 (Fox; F01_STAGE1_STRUCTURAL_RIG_SUPPORT.md and its corrections) and Stage 2 (Tails' JIGGLE leaves;
+# F01_STAGE2_JIGGLE_LEAF_IMPLEMENTATION.md), enabled for production in RC3. Exactly the names added since RC2's CPM
+# (7aa0fc4e); none removed. Listed from those Designer-accepted implementations; the eleven names unlisted at RC2
+# stay unlisted, so this check still reports them.
+F01_STRUCTURAL_NEW_TOP = set([
+    "PROD_BODY_RIG_AUTH_SCHEMA", "PROD_BODY_RIG_EXCLUSION_PROVENANCE", "PROD_BODY_RIG_IK", "PROD_BODY_RIG_LEAF_PROC",
+    "PROD_BODY_RIG_LEAF_REVISION", "PROD_BODY_RIG_MAX_EXCLUSIONS", "PROD_BODY_RIG_NAME", "PROD_BODY_RIG_ORIENT",
+    "PROD_BODY_RIG_POINT", "PROD_BODY_RIG_PROFILE_KEYS", "PROD_BODY_RIG_REVISION", "PROD_BODY_RIG_REVISIONS",
+    "PROD_BODY_RIG_RULE", "PROD_BODY_RIG_STATUS", "PROD_BODY_ROTATION_FIELDS", "PROD_BODY_ROTATION_LIMIT_DEG",
+    "PROD_BODY_ROTATION_NORM_LIMIT", "PROD_BODY_SIMULATED_LEAF", "PROD_POSE_TITLE_NOT_APPLIED",
+    "PROD_POSE_TITLE_RECOVERY_UNVERIFIED", "PROD_SCOPE_FULL_BODY_UNSUPPORTED", "PROD_SCOPE_REVIEW_CHOICE",
+    "PROD_SCOPE_REVIEW_TITLE", "prod_body_compare_constraints", "prod_body_constraint_identity",
+    "prod_body_constraint_rows", "prod_body_rig_authorize", "prod_body_rig_availability", "prod_body_rig_check",
+    "prod_body_rig_confirm", "prod_body_rig_draft", "prod_body_rig_exclusions", "prod_body_rig_header",
+    "prod_body_rig_inventory", "prod_body_rig_is_record", "prod_body_rig_leaf_admission", "prod_body_rig_probe",
+    "prod_body_rig_record", "prod_body_rig_resolve", "prod_body_rig_time_names", "prod_body_rig_usable",
+    "prod_body_rig_validate", "prod_body_rotation_angle", "prod_body_rotation_compare", "prod_body_rotation_value",
+    "prod_pose_abort_undo_check", "prod_pose_not_applied",
+])
 F01_STAGEC_CHANGED_METHODS = set(["selected_or_none", "operation_default_error_copy"])
 F01_STAGEC_NEW_METHODS = set(["apply_pose", "pose_begin_verification", "pose_finish_verification", "pose_guard",
                               "pose_registry_mode", "save_pose"])
@@ -567,7 +587,7 @@ def section_derivation(app):
           added == EXPECTED_NEW_TOP | R15_NEW_TOP | ITEM6_NEW_TOP | UIPASS_NEW_TOP | LOGFIX_NEW_TOP | M05_NEW_TOP
           | M06_NEW_TOP | M06W1_NEW_TOP | F01_STAGEA_NEW_TOP | F01_STAGEB_NEW_TOP | F01_STAGEC_NEW_TOP | F01_STAGED_NEW_TOP
           | F01_UI_NEW_TOP | F01_STAGEE_NEW_TOP | F01_SFP1_NEW_TOP | F01_K2UI_NEW_TOP | F01_OT1_NEW_TOP
-          | F01_H1_NEW_TOP, sorted(added))
+          | F01_H1_NEW_TOP | F01_STRUCTURAL_NEW_TOP, sorted(added))
     check("derivation.removed_is_exactly_item6_and_item7", removed == ITEM6_REMOVED_TOP | ITEM7_REMOVED_TOP
           | LOGFIX_REMOVED_TOP, sorted(removed ^ (ITEM6_REMOVED_TOP | ITEM7_REMOVED_TOP | LOGFIX_REMOVED_TOP)))
     bm, am = baseline.methods("ProdWindow"), app.methods("ProdWindow")

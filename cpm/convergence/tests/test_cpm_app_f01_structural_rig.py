@@ -541,15 +541,39 @@ def section_live_refusals(ns, reg, fx, item):
         _, got = apply_(ns, reg, item, w)
         refused("R.external_constraint_on_%s_refuses" % bone, got, u"shared-authority")
         check("R.external_constraint_on_%s_changes_nothing" % bone, no_mutation(w))
-    # Production build: the adapter is experimental, so Apply and Save refuse (the RC2 behaviour).
+    # Production build (v1.1.0 RC3: the adapter is qualified): Save and Apply are authorized exactly as in the
+    # qualification build, the structural mapping carries its evidence, the probe admits, and the Apply verifies.
     w = world(fx)
     use(ns, w)
     got = outcome(lambda: authorize(ns, reg, u"Apply Pose", item, mode=PROD))
-    refused("R.production_build_refuses_a_structural_apply", got, u"not-qualified")
-    refused("R.production_build_refuses_a_structural_save", outcome(lambda: authorize(ns, reg, u"Save Pose",
-                                                                                      mode=PROD)), u"not-qualified")
-    check("R.production_probe_is_inert", ns["prod_body_rig_probe"](ctx(ns), IDENTITY, reg, PROD) is None and
-          no_mutation(w))
+    mapping = got[1][u"mappings"][0] if got[0] == u"ok" else {}
+    check("R.rc3_production_build_authorizes_a_structural_apply", got[0] == u"ok" and got[1][u"mode"] == PROD and
+          mapping.get(u"status") == u"qualified" and bool(mapping.get(u"evidence")), got if got[0] != u"ok" else mapping)
+    check("R.rc3_production_build_authorizes_a_structural_save",
+          outcome(lambda: authorize(ns, reg, u"Save Pose", mode=PROD))[0] == u"ok")
+    probe = ns["prod_body_rig_probe"](ctx(ns), IDENTITY, reg, PROD)
+    check("R.rc3_production_probe_admits_without_writing", probe is not None and probe == ns["prod_body_rig_probe"](
+        ctx(ns), IDENTITY, reg, QUAL) and no_mutation(w))
+    auth, got = apply_(ns, reg, item, world(fx), mode=PROD)
+    verdict = ns["prod_pose_deferred_verify"](dict(got[1][u"pending"], authorization=auth)) if got[0] == u"ok" and         got[1].get(u"pending") else None
+    check("R.rc3_production_apply_verifies", verdict is not None and verdict.get(u"phase") == u"committed-verified",
+          (got[:2], verdict))
+    # The RC2 behaviour, kept against the experimental status: Apply and Save refuse and the probe is inert.
+    status = ns["PROD_BODY_RIG_STATUS"]
+    ns["PROD_BODY_RIG_STATUS"] = u"experimental"
+    try:
+        w = world(fx)
+        use(ns, w)
+        got = outcome(lambda: authorize(ns, reg, u"Apply Pose", item, mode=PROD))
+        refused("R.production_build_refuses_a_structural_apply", got, u"not-qualified")
+        refused("R.production_build_refuses_a_structural_save", outcome(lambda: authorize(ns, reg, u"Save Pose",
+                                                                                          mode=PROD)), u"not-qualified")
+        check("R.production_probe_is_inert", ns["prod_body_rig_probe"](ctx(ns), IDENTITY, reg, PROD) is None and
+              no_mutation(w))
+        check("R.experimental_authorization_carries_no_evidence", authorize(ns, reg, u"Save Pose")[u"mappings"][0][
+            u"evidence"] is None)
+    finally:
+        ns["PROD_BODY_RIG_STATUS"] = status
     # Same model identity required.
     other = dict(item, record=dict(item[u"record"], model_ref=u"models/other/model.mdl"))
     refused("R.a_record_of_another_model_refuses", outcome(lambda: authorize(ns, reg, u"Apply Pose", other)),
@@ -783,16 +807,32 @@ def section_window(app, ns, reg, fx, root):
         d = os.path.join(lib[u"char_dir"], u"Poses")
         return sorted(os.listdir(d)) if os.path.isdir(d) else []
     try:
-        # Production (the RC2 baseline behaviour): Fox's Full body refuses as before; nothing is saved.
+        # Production with the RC2 experimental status: Fox's Full body refuses as before; nothing is saved.
+        status = ns["PROD_BODY_RIG_STATUS"]
+        ns["PROD_BODY_RIG_STATUS"] = u"experimental"
+        try:
+            win = B.window(app, ns, reg, lib)
+            win.dialogs = []
+            win.prompts = [u"Prod Fox"]
+            got = win.save_pose(None, (u"full_body",))
+            inv = win.dialogs[-1][0] if win.dialogs else None
+            check("E.production_fox_full_body_keeps_the_rc2_refusal", got is None and not files() and
+                  inv is not None and inv[u"full_body"][u"status"] == u"refused" and
+                  inv[u"full_body"][u"code"] == u"rig-driven" and not inv.get(u"structural_rig") and
+                  not any(u"BODY-RIG" in l for l in ns["LOG"][-40:]), (win.statuses[-1:], inv and inv[u"full_body"]))
+        finally:
+            ns["PROD_BODY_RIG_STATUS"] = status
+        # RC3 production (the adapter qualified): the same dialog offers Full body through the structural route.
         win = B.window(app, ns, reg, lib)
         win.dialogs = []
         win.prompts = [u"Prod Fox"]
-        got = win.save_pose(None, (u"full_body",))
-        inv = win.dialogs[-1][0] if win.dialogs else None
-        check("E.production_fox_full_body_keeps_the_rc2_refusal", got is None and not files() and inv is not None and
-              inv[u"full_body"][u"status"] == u"refused" and inv[u"full_body"][u"code"] == u"rig-driven" and
-              not inv.get(u"structural_rig") and not any(u"BODY-RIG" in l for l in ns["LOG"][-40:]),
-              (win.statuses[-1:], inv and inv[u"full_body"]))
+        prod_saved = win.save_pose(None, (u"full_body",))
+        inv, body_route = win.dialogs[-1]
+        check("E.rc3_production_dialog_offers_full_body_through_the_structural_route",
+              inv.get(u"structural_rig") is True and inv[u"full_body"][u"status"] == u"available" and
+              body_route is False and prod_saved is not None and ns["prod_body_rig_is_record"](prod_saved[u"record"])
+              and win.statuses[-1][1] == u"Pose saved: Prod Fox." and len(files()) == 1,
+              (win.statuses[-1:], inv[u"full_body"]))
         # Qualification build: the structural route reaches the dialog and saves a version 2 record.
         ns["PROD_POSE_REGISTRY_MODE"] = QUAL
         win = B.window(app, ns, reg, lib)
@@ -869,16 +909,33 @@ def section_window(app, ns, reg, fx, root):
         future[u"pose"][u"adapter"][u"revision"] = 3        # unknown (Stage 2 defines revision 2)
         check("E.c1_availability_same_model_in_qualification", av(rec, IDENTITY, QUAL) == u"available" and
               av(rec, dict(IDENTITY, model=MODEL.upper()), QUAL) == u"available")
-        check("E.c1_availability_refuses_production_other_models_and_unknown_revisions",
-              av(rec, IDENTITY, PROD) == u"not-qualified" and av(rec, dict(IDENTITY, model=u"models/x.mdl"), QUAL) ==
-              u"different-model" and av(rec, None, QUAL) == u"different-model" and av(future, IDENTITY, QUAL) ==
-              u"not-qualified")
-        # Production build with a structural record: Apply refuses before any write.
+        check("E.c1_availability_refuses_other_models_and_unknown_revisions",
+              av(rec, dict(IDENTITY, model=u"models/x.mdl"), QUAL) == u"different-model" and
+              av(rec, None, QUAL) == u"different-model" and av(future, IDENTITY, QUAL) == u"not-qualified" and
+              av(rec, dict(IDENTITY, model=u"models/x.mdl"), PROD) == u"different-model" and
+              av(future, IDENTITY, PROD) == u"not-qualified")
+        check("E.rc3_availability_same_model_in_production", av(rec, IDENTITY, PROD) == u"available")
+        ns["PROD_BODY_RIG_STATUS"] = u"experimental"
+        check("E.c1_availability_refuses_production_while_experimental", av(rec, IDENTITY, PROD) == u"not-qualified"
+              and av(rec, IDENTITY, QUAL) == u"available")
+        # Production build with a structural record and the RC2 experimental status: Apply refuses before any write.
         ns["PROD_POSE_REGISTRY_MODE"] = PROD
+        try:
+            dst = use(ns, world(fx))
+            win.apply_pose(ns["prod_pose_reread"](lib, updated, reg))
+            check("E.production_apply_of_a_structural_record_refuses", win.statuses[-1][2] == u"not-qualified" and
+                  no_mutation(dst), win.statuses[-1])
+        finally:
+            ns["PROD_BODY_RIG_STATUS"] = status
+        # RC3 production: the same record applies through the window dispatch and verifies.
         dst = use(ns, world(fx))
+        win.pending = []
         win.apply_pose(ns["prod_pose_reread"](lib, updated, reg))
-        check("E.production_apply_of_a_structural_record_refuses", win.statuses[-1][2] == u"not-qualified" and
-              no_mutation(dst), win.statuses[-1])
+        verdict = ns["prod_pose_deferred_verify"](win.pending[0]) if len(win.pending) == 1 else None
+        check("E.rc3_production_apply_of_a_structural_record_verifies", verdict is not None and
+              verdict.get(u"phase") == u"committed-verified" and [c[0] for c in dst.dm.calls] == ["StartUndo",
+                                                                                                "FinishUndo"],
+              (win.statuses[-1:], verdict))
         ns["PROD_POSE_REGISTRY_MODE"] = QUAL
         # A character outside Stage 1 (a control-less bone, as Tails' jiggle tips): the generic refusal stands.
         def jiggle(w):
