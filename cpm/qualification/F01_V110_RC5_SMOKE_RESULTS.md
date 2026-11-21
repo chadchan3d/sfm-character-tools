@@ -9,12 +9,12 @@ reported in "F-01 RC5 — Final Production Smoke Results". Kit `real_sfm_qualifi
 | | Result |
 |---|---|
 | **Automated (unchanged analyzer `079c86a9…`)** | **SMOKE FAIL (15/23)** in procedure order (restore, then analyze); see section 3 |
-| **Owner visual** | **PASS**, as given: "All steps worked as expected, including Fox and Tails pose operations, Pose Info, Undo/Redo and repeat Apply. No problems were reported." The item-by-item record was not filled in |
+| **Owner visual** | **WITHDRAWN by the Owner** ("F-01 RC5 — Correct Owner Verdict and Assess Release Readiness"): the earlier blanket PASS was inaccurate; the Fox steps were not performed. No Owner visual observation is recorded for this run (section 6). The original report is kept in section 6 |
 | **Restoration** | **RESTORED**: published CPM `ccbed9d7…`, both registries removed, preset library files and folders equal to the pre-run backup, no protected-inventory problems |
 
 The automated FAIL is **missing evidence, not a product failure**: no step was refused, failed or entered recovery, and
-every operation that ran passed. But the CPM log does not contain the Fox steps, the repeat Apply or a second Pose
-Info, which the Owner reports as done. That discrepancy is unresolved (section 4).
+every operation that ran passed. The CPM log does not contain the Fox steps, the repeat Apply or a second Pose
+Info. The Owner has since confirmed these were not performed (section 6).
 
 ## 2. What ran (the one CPM log of the run)
 
@@ -76,3 +76,30 @@ or an explicit adjudication accepting the evidence as it stands. Each needs sepa
 - Sessions: `RC4_SESSION.dmx` still hashes to the R2 fixture `259ea8a6…` (never saved); `RC4_SPARE.dmx` still
   `61df8bcd…` (never opened). The protected `krystal_s2fm_alone_port.dmx` hashes to its pre-run inventory value
   `5a6a6cde…` (read only).
+
+## 6. Owner verdict correction (2026-11-20)
+
+**Original Owner report** ("F-01 RC5 — Final Production Smoke Results"), kept for the record: "Owner visual verdict:
+PASS. I completed the final production smoke test. All steps worked as expected, including Fox and Tails pose
+operations, Pose Info, Undo/Redo and repeat Apply. No problems were reported."
+
+**Correction** ("F-01 RC5 — Correct Owner Verdict and Assess Release Readiness"): that statement was inaccurate. The Fox
+steps were not performed, and the CPM log establishes that the repeat Apply and other prescribed checks were not
+performed. The blanket visual PASS is **withdrawn**. Section 4's discrepancy is resolved: the evidence is right, and the
+missing steps did not happen.
+
+**What the RC5 run supports, from its evidence only** (CPM log, library and restoration; no Owner visual observation):
+
+| RC5 step | Evidence | Status |
+|---|---|---|
+| Fox Save New, Pose Info, Apply, Undo, Redo (steps 3–5) | absent | **not performed** |
+| Tails `RC4 Sit` Save from the original Tails (step 6) | op 6 verified; structural adapter revision 2 in production mode; record and `pose_rigs.json` (`rig_biped`) written | performed, passed |
+| Cross-rig Apply to the chest-rigged Tails (step 7) | op 8 verified; `RIG-adapted`; P7 0.0204° / 0.00095 units within the revised envelope; one owned Undo entry `Apply Pose RC4 Sit` | performed, passed (automated); not visually reported |
+| Pose Info (steps 3, 6) | op 9 completed once, on `milestailsprower2` | performed once; displayed content not reported |
+| Repeat Apply (step 8) | absent | **not performed** |
+| Final Undo (step 9) | SFM action, not in CPM's log; not reported | **unverified** |
+| Exit without saving; restoration | session copy unchanged; RESTORED | passed |
+
+The automated verdict stays **SMOKE FAIL (15/23)**, unchanged and not reinterpreted; the earlier out-of-order
+INCOMPLETE (9/23) also stays. The release-readiness assessment that uses this evidence is
+`F01_V110_RC5_RELEASE_READINESS.md`.

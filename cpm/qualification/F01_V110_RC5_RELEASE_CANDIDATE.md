@@ -50,12 +50,14 @@ Owner's decision). `procedure_sha256` is re-pinned (`df1c3794…`); the analyzer
 
 Record: `F01_V110_RC5_SMOKE_RESULTS.md`. Automated **SMOKE FAIL (15/23)** with the unchanged analyzer (procedure order;
 every failed check is an absent step: the Fox Save/Apply, the repeat Apply and Fox's Pose Info are not in the CPM log;
-no refusal, failure or recovery). Owner visual **PASS** (as given). **RESTORED.** The Tails cross-rig transfer passed
+no refusal, failure or recovery). Owner visual: the PASS first reported was **withdrawn** by the Owner (the Fox
+steps were not performed); no Owner visual observation is recorded. **RESTORED.** The Tails cross-rig transfer passed
 natively with the production package (adapted, verified, 0.0204° within 0.1°; Pose Info rig label `rig_biped`
 recorded).
 
 ## 6. Remaining release blockers
 
-1. **Final smoke evidence incomplete:** the automated verdict and the Owner's report disagree on what ran. Needs the
-   Owner's decision (a short re-run of the missing steps, or an explicit adjudication).
+1. **Final smoke evidence incomplete:** resolved as to the facts (the Owner confirmed the steps were not performed).
+   The Owner declined a repeat native test; the evidence-based assessment is `F01_V110_RC5_RELEASE_READINESS.md`,
+   for the Owner's decision.
 2. **Owner-only:** signing the inventory `15db1c1a…`, merging, pushing, publication.
