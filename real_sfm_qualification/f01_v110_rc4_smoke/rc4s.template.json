@@ -1,0 +1,47 @@
+{
+ "format": "F01-RC4S-config-v1",
+ "description": "F-01 v1.1.0 RC4 native release smoke: Fox Full body and the Tails cross-rig transfer in a normal installation, with the exact RC4 production CPM and registries from the unsigned RC4 package. Copy to <Q>/rc4s.json and replace the path placeholders; change no pin.",
+ "paths": {
+  "Q": "<RUN_DIR>",
+  "REPO": "<REPO>",
+  "GAME": "<SFM game>",
+  "LIBRARY": "%USERPROFILE%/Documents/SFM Character Preset Manager",
+  "SESSIONS": "<SFM sessions folder>",
+  "SCRIPTS_ROOT": "{GAME}/usermod/scripts",
+  "CFG_ROOT": "{GAME}/usermod/cfg",
+  "CANDIDATE": "{REPO}/cpm/app/SFM_Character_Preset_Manager.py",
+  "PROFILE": "{REPO}/cpm/pose_profiles/cpm_pose_profiles_v1.json",
+  "BODY_PROFILE": "{REPO}/cpm/pose_profiles/cpm_body_profiles_v1.json",
+  "RC_ZIP": "<RC4 package folder>/SFM.Character.Tools.v1.1.0-rc4-UNSIGNED.zip",
+  "R2_FIXTURE": "<R2_FIXTURE_DIR>/F01_R2_DISPOSABLE_<SOURCE_SESSION>.dmx",
+  "S3_RUN1": "<S3 run 1 folder (f01-full-body-s3)>",
+  "LOG_DIR": "C:/Users/Public/Documents/SFM Character Preset Manager Logs",
+  "LEGACY_POSE": "<S3 run 1 folder>/evidence/library_poses/krystal2020--7d2aee52ef3a/NQ1 Pose A--5273df2209ca.json"
+ },
+ "pins": {
+  "rc4_zip_sha256": "bef9171a6e06aa1e2d3d0d0628d641bf33d3238a91952d7b6b15c659ad52f8fd",
+  "rc4_cpm_sha256": "b89af5a8e8e86e65352a34803aef84b751c42082aecb58be250149da39e02525",
+  "qualification_cpm_sha256": "b89af5a8e8e86e65352a34803aef84b751c42082aecb58be250149da39e02525",
+  "profile_sha256": "f445d5ef7fb183e6bcae3099b3812ffd2363213911605134231c2a1f708d6d00",
+  "body_profile_sha256": "a2254930489772c024a42d057b98a5a01e164be05096dd85df2d461aad73d622",
+  "published_cpm_sha256": "ccbed9d794984643fc6f7d7d9c65ef90e5812eb27f85dc4a86855a17c2d3d8df",
+  "r2_fixture_sha256": "259ea8a614bc9e43e5bde15afdf38e1a1295dffb50b14cf75692df4221a05a2c",
+  "destination_sha256": "61df8bcd5397c78b064e102047e51b5d9e4e3c43df40394522c57944ba67e992",
+  "observer_sha256": "4a358cc05449592c7ea3cd6828cb40ca2faed08fc602156c2f15a9398e67c0c4",
+  "legacy_pose_sha256": "4916a7243193306ab7a93dec9fbc988b079c9af4c3bb0e9828a5b2d89cef3541",
+  "analyzer_sha256": "079c86a988ab4efc15ac33e09824e519aa1c39c04ecfe31c6c6a43d49321b6da",
+  "modes_sha256": "6927bf043bb84c901467f9b30b04677c5937f10c3f926249ffbdb0b462eda460",
+  "procedure_sha256": "6668de4762bcaaf79388b7ff670a76771f94657003a5c0f6d302bac312d57cf9"
+ },
+ "fox_dir": "foxmccouldwm--2d646d9605f0",
+ "tails_dir": "milestailsprower--caebe27de7ca",
+ "housekeeping": [
+  "cfg\\config.cfg",
+  "cfg\\ifm.txt",
+  "cfg\\server_blacklist.txt",
+  "demoheader.tmp",
+  "stats.txt",
+  "tf2_playerstats.dmx",
+  "voice_ban.dt"
+ ]
+}
