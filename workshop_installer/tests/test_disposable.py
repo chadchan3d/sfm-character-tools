@@ -74,7 +74,7 @@ class DisposableInstallTests(unittest.TestCase):
         # interpretable gameinfo configuration at all.
         shutil.rmtree(self.game / "workshop" / "scripts")
         (self.game / "usermod" / "gameinfo.txt").unlink()
-        self.assertEqual(len(self.full.files), 1006)
+        self.assertEqual(len(self.full.files), len(release.PATHS) + 2)  # plus Setup helper and launcher
         self.install(self.full)
         for rel, wanted in self.full.files.items():
             self.assertEqual(core.digest_file(self.target(rel)), wanted)

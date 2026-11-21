@@ -319,7 +319,7 @@ class Prepared:
 def prepare(release_zip, helper_exe):
     """Pin and extract source bytes outside Workshop before the user closes SFM."""
     if digest_file(release_zip) != RELEASE_SHA256:
-        raise Refusal("The Workshop release ZIP is not the approved v1.0.0 artifact")
+        raise Refusal("The Workshop release ZIP is not the approved v%s artifact" % release.VERSION)
     helper_hash = digest_file(helper_exe)
     root = Path(tempfile.mkdtemp(prefix="sct_workshop_setup_"))
     try:

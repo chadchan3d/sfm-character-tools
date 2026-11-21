@@ -1,0 +1,30 @@
+{
+ "format": "WU-config-v1",
+ "description": "Workshop Setup v1.1.0 native upgrade acceptance on the Owner's v1.0.0 Workshop installation. Copy to <Q>/wu.json and fill the <...> paths; change no pin.",
+ "paths": {
+  "Q": "<RUN_DIR>",
+  "GAME": "<SFM game>",
+  "LIBRARY": "%USERPROFILE%/Documents/SFM Character Preset Manager",
+  "ZIP": "<v1.1.0 release>/SFM.Character.Tools.v1.1.0.zip",
+  "STAGE_PAYLOAD": "<staging>/scripts/sfm/mainmenu/SFM Character Tools/_workshop_installer",
+  "R2_FIXTURE": "<R2_FIXTURE_DIR>/F01_R2_DISPOSABLE_<SOURCE_SESSION>.dmx"
+ },
+ "pins": {
+  "zip_sha256": "0f64eb1306a57f7065db6dcc8419e7e909525a9057af1ee67dce0c8fcc6b8b57",
+  "helper_sha256": "6fb5ac65b9358e28a50bdbe3401890f1d9f46d20805a89d293fd2e377cb7b28e",
+  "manager_sha256": "47ed666a8f3d810ba10efd1e9d183a8f4321eb8203b3d446343e83c10d3609e0",
+  "v100_package_sha256": "5323b1431a200c0bea3641e7dcb2f9fac45920d889f749ac9bf07972f5a89458",
+  "v100_cpm_sha256": "ccbed9d794984643fc6f7d7d9c65ef90e5812eb27f85dc4a86855a17c2d3d8df",
+  "v110_cpm_sha256": "b89af5a8e8e86e65352a34803aef84b751c42082aecb58be250149da39e02525",
+  "r2_fixture_sha256": "259ea8a614bc9e43e5bde15afdf38e1a1295dffb50b14cf75692df4221a05a2c"
+ },
+ "housekeeping": [
+  "cfg\\config.cfg",
+  "cfg\\ifm.txt",
+  "cfg\\server_blacklist.txt",
+  "demoheader.tmp",
+  "stats.txt",
+  "tf2_playerstats.dmx",
+  "voice_ban.dt"
+ ]
+}

@@ -264,3 +264,35 @@ The 1,088-byte archive-size difference equals the README's compressed-size diffe
 The Owner explicitly approves retaining A for Workshop and B for the current GitHub release. Neither archive, existing release asset, tag, executable or tested Workshop payload is changed by this closeout. The final Setup and four-file staging ZIP retain the identities recorded above; build source remains `eed44a919620f1926f28817892ac0dd00b137dbc`.
 
 **PUBLIC REPOSITORY SANITATION: PASS.** This closeout changes documentation only, uses public identifiers and relative paths, and contains no private evidence or build artifacts. PR #3 merge into its existing `master` target is Owner-authorized after integrity checks. Making the tested Workshop item public and publishing the announcement remain Owner actions.
+
+## v1.1.0 update (offline; native acceptance pending)
+
+Authority: "SFM Character Tools v1.1.0 — Workshop Installer Update GO" (Owner, 2026-11-21). Offline preparation only: nothing was installed, no native test was run, and the Workshop item still distributes the v1.0.0 payload.
+
+**Change.** `release.py` binds the official GitHub v1.1.0 archive: version 1.1.0, `SFM.Character.Tools.v1.1.0.zip`, SHA-256 `0f64eb1306a57f7065db6dcc8419e7e909525a9057af1ee67dce0c8fcc6b8b57`, 1,008 entries, 33 inventory entries, and the two Pose Library registries added to the mapped paths (1,006). `OBSOLETE` stays empty: v1.1.0 removes no v1.0.0 file. Refusal messages name the bound version instead of a fixed "v1.0.0". Installation, update, recovery and uninstall logic is unchanged.
+
+| Check | Result | Evidence boundary |
+|---|---|---|
+| Release binding equals the published ZIP (version, name, hash, entries, mapped paths incl. both registries) | PASS | ZIP downloaded anonymously from the GitHub release, byte-identical to the local original |
+| Prepared package: Pose Library registries, CPM `b89af5a8…`, inventory `15db1c1a…` | PASS | `core.prepare` on the published ZIP |
+| v1.0.0 archive and a tampered v1.1.0 ZIP refused by `prepare` and `stage` | PASS | One changed CPM byte; Archive A |
+| Upgrade from a v1.0.0 Setup installation | PASS | Disposable game folder: v1.0.0 installed with v1.0.0 Setup's constants; preview shows installed 1.0.0 / package 1.1.0; every v1.1.0 file installed; customized TXT backed up; updater backups, SFM settings, other add-ons, Autoinit files and a preset library unchanged; uninstall removes programs, registries and launcher and keeps the TXT, backups and user files |
+| Full existing suite | PASS | 50 tests (the 4 new ones included) with `SCT_V1_RELEASE_ZIP` = the published v1.1.0 ZIP and `SCT_V100_RELEASE_ZIP` = Archive A |
+| Helper build | PASS | `build.ps1` unchanged; Python 3.10.6, PyInstaller 6.11.1 (the existing build environment); embedded `release`, `core`, `app`, `window` equal the repository source; frozen `--help` starts |
+| Staged payload | PASS | Two independent stagings identical; `stage.verify` PASS |
+| Generated SFM scripts' Python 2 grammar | PASS | Workshop launcher and Manage Installation launcher compile with SFM's own Python 2.7.5 (no bytecode written) |
+
+**Identities.**
+
+| File | SHA-256 |
+|---|---|
+| `SCT_Setup.exe` (6,705,942 bytes) | `6fb5ac65b9358e28a50bdbe3401890f1d9f46d20805a89d293fd2e377cb7b28e` |
+| Generated `Manage Installation.py` (1,477 bytes) | `47ed666a8f3d810ba10efd1e9d183a8f4321eb8203b3d446343e83c10d3609e0` |
+| Staged `Install or Update (Windows Setup).py` (1,867 bytes) | `43a552cb6522368420102bee9a0e120ff3c02d9abffd6d9666de5fc01985229b` |
+| Staged `_workshop_installer/SCT_Setup.exe` | `6fb5ac65…` |
+| Staged `_workshop_installer/SFM.Character.Tools.v1.1.0.zip` | `0f64eb13…` |
+| Staged `_workshop_installer/installer_manifest.json` (732 bytes) | `9f866c4a2733bc016945ad90657066e594b4f10f79cd6cbdbc22787235f6fa06` |
+
+**Native acceptance (pending).** `real_sfm_qualification/workshop_v110_upgrade/` (procedure, configuration, `wu_tool.py`; offline end-to-end test with the real installer PASS): on the Owner's v1.0.0 Workshop installation, run the staged Setup, update, check presets, the toolbar button and the Poses tab, uninstall with Manage Installation, then restore the exact v1.0.0 state. The previous v1.0.0 Workshop payload and its evidence are unchanged.
+
+**Remaining before Workshop publication:** the native acceptance; the Owner's upload of the four-file staging tree through the established Scripts-category procedure (replacing the v1.0.0 payload); a post-publication check that Steam delivers the staged hashes.

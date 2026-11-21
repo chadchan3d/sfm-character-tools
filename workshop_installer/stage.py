@@ -1,4 +1,4 @@
-"""Build the temporary Workshop Scripts payload from the unchanged v1.0.0 ZIP."""
+"""Build the temporary Workshop Scripts payload from the approved release ZIP (release.py)."""
 import argparse
 import hashlib
 import json
@@ -62,7 +62,7 @@ def stage(release_zip, executable, output):
     if output.exists():
         raise ValueError("Output already exists; choose a fresh staging directory")
     if digest_file(release_zip) != RELEASE_SHA256:
-        raise ValueError("Release ZIP hash differs from the approved v1.0.0 artifact")
+        raise ValueError("Release ZIP hash differs from the approved v%s artifact" % release.VERSION)
     exe_sha = digest_file(executable)
     paths = {
         SCRIPT_REL: launcher(exe_sha, RELEASE_SHA256),

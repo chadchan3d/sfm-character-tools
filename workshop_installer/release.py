@@ -1,10 +1,11 @@
-"""Publisher-maintained description of the unchanged release. No installed-path discovery."""
+"""Publisher-maintained description of the official v1.1.0 release (GitHub release v1.1.0,
+https://github.com/chadchan3d/sfm-character-tools/releases/tag/v1.1.0). No installed-path discovery."""
 
-VERSION = "1.0.0"
-ARCHIVE = "SFM.Character.Tools.v1.0.0.zip"
-SHA256 = "5323b1431a200c0bea3641e7dcb2f9fac45920d889f749ac9bf07972f5a89458"
-ARCHIVE_ENTRIES = 1006
-INVENTORY_ENTRIES = 31
+VERSION = "1.1.0"
+ARCHIVE = "SFM.Character.Tools.v1.1.0.zip"
+SHA256 = "0f64eb1306a57f7065db6dcc8419e7e909525a9057af1ee67dce0c8fcc6b8b57"
+ARCHIVE_ENTRIES = 1008
+INVENTORY_ENTRIES = 33
 # Explicit paths removed from older releases, if any. Never directory globs.
 OBSOLETE = ()
 PATHS = (
@@ -14,7 +15,9 @@ PATHS = (
     'scripts/ChadChan3D_CPM/SFM_Character_Preset_Manager.py',
     'scripts/ChadChan3D_CPM/cpm_ase_quick_launch.py',
     'scripts/SFM Character Tools/cpm_authority_adapter.py',
+    'scripts/SFM Character Tools/cpm_body_profiles_v1.json',
     'scripts/SFM Character Tools/cpm_compat_v1_projection.py',
+    'scripts/SFM Character Tools/cpm_pose_profiles_v1.json',
     'scripts/SFM Character Tools/sfm_master_authority_productionized/__init__.py',
     'scripts/SFM Character Tools/sfm_master_authority_productionized/bootstrap.py',
     'scripts/SFM Character Tools/sfm_master_authority_productionized/broker.py',
