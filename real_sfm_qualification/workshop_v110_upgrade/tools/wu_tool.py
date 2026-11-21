@@ -122,9 +122,16 @@ def roots(c):
     return r
 
 
+def protected_files(c):
+    """Game-relative settings files of other add-ons (Autoinit Manager): backed up, checked and restored."""
+    return dict((rel, sha(g(c, rel)) if os.path.isfile(g(c, rel)) else None) for rel in c.get("protected", []))
+
+
 def all_inventories(c):
     inv = dict((k, inventory(v)) for k, v in roots(c).items())
     inv["workshop"] = inventory(g(c, WORKSHOP))
+    inv["readonly"] = dict((rel, inventory(g(c, rel))) for rel in c.get("readonly_trees", []))
+    inv["protected"] = protected_files(c)
     return inv
 
 
@@ -182,6 +189,13 @@ def cmd_pre(c):
             shutil.copytree(root, dst, copy_function=shutil.copy2)
         if inventory(dst) != inv[name]:
             raise SystemExit("PRE FAILED: the backup of %s does not verify (inspect %s)" % (name, dst))
+    for rel, h in inv["protected"].items():
+        if h is not None:
+            dst = q(c, "backup", "protected", *rel.split("/"))
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy2(g(c, rel), dst)
+            if sha(dst) != h:
+                raise SystemExit("PRE FAILED: the backup of %s does not verify" % rel)
     os.makedirs(q(c, "sessions"))
     shutil.copy2(c["paths"]["R2_FIXTURE"], q(c, "sessions", "WU_SESSION.dmx"))
     if T(c, q(c, "sessions", "WU_SESSION.dmx")) != c["pins"]["r2_fixture_sha256"]:
@@ -269,6 +283,8 @@ def cmd_check_update(c):
         "updater_backups_kept": all(now_flat.get(p) == h for p, h in pre_flat.items() if p.startswith(UPDATER_BACKUPS)),
         "library_unchanged": not (lib["changed"] or lib["deleted"] or lib["added"]),
         "workshop_payload_unchanged": now["workshop"] == pre["inventories"]["workshop"],
+        "autoinit_code_unchanged": now["readonly"] == pre["inventories"]["readonly"],
+        "autoinit_settings_unchanged": now["protected"] == pre["inventories"]["protected"],
     }
     return finish(path, R, "CHECK-UPDATE")
 
@@ -294,7 +310,10 @@ def cmd_check_uninstall(c):
         "no_preexisting_library_file_changed": not (lib["changed"] or lib["deleted"]),
         "library_additions_are_preset_records": lib["added_are_library_records"],
         "workshop_payload_unchanged": now["workshop"] == pre["inventories"]["workshop"],
+        "autoinit_code_unchanged": now["readonly"] == pre["inventories"]["readonly"],
     }
+    R["autoinit_settings_changed_while_sfm_ran"] = sorted(
+        k for k, v in now["protected"].items() if v != pre["inventories"]["protected"].get(k))
     R["note"] = ("A remaining Setup executable is reported by Setup when it ran from the installed copy; the Owner "
                  "deletes it after closing Setup (README). Its presence alone does not fail the gate.")
     return finish(path, R, "CHECK-UNINSTALL")
@@ -332,13 +351,19 @@ def cmd_restore(c):
                 rel = os.path.relpath(p, root).replace(os.sep, "/")
                 if rel not in keep and os.path.isdir(p) and not os.listdir(p):
                     os.rmdir(p)
+    for rel, h in sorted(pre["inventories"]["protected"].items()):
+        if h is not None and (sha(g(c, rel)) if os.path.isfile(g(c, rel)) else None) != h:
+            shutil.copy2(q(c, "backup", "protected", *rel.split("/")), g(c, rel))
+            restored.append(rel)
     after = all_inventories(c)
     dirs_now = dict((k, sorted(os.path.relpath(os.path.join(b, d), v).replace(os.sep, "/")
                                for b, ds, _ in os.walk(v) for d in ds)) for k, v in roots(c).items())
     R = {"moved_to_evidence": moved, "restored_from_backup": restored,
-         "equal_to_pre": dict((k, after[k] == pre["inventories"][k]) for k in after),
+         "equal_to_pre": dict((k, after[k] == pre["inventories"][k]) for k in after if k != "readonly"),
+         "autoinit_code_unchanged": after["readonly"] == pre["inventories"]["readonly"],
          "dirs_equal_to_pre": dict((k, dirs_now[k] == pre["dirs"][k]) for k in dirs_now)}
-    R["restored"] = all(R["equal_to_pre"].values()) and all(R["dirs_equal_to_pre"].values())
+    R["restored"] = (all(R["equal_to_pre"].values()) and all(R["dirs_equal_to_pre"].values()) and
+                     R["autoinit_code_unchanged"])
     write_json(path, R)
     print(json.dumps({k: R[k] for k in ("equal_to_pre", "dirs_equal_to_pre", "restored")}, indent=1))
     print("RESTORED: %d files restored, %d moved to evidence" % (len(restored), len(moved)) if R["restored"]

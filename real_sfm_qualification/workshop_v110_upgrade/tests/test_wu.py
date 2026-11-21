@@ -63,6 +63,9 @@ class WUKitTest(unittest.TestCase):
                     "scripts/sfm/mainmenu/SFM Character Tools/_workshop_installer/sfm.character.tools.v1.0.0.zip"):
             (game / "workshop" / rel).parent.mkdir(parents=True, exist_ok=True)
             (game / "workshop" / rel).write_bytes(b"steam-managed marker")
+        (game / "autoinit_scripts.txt").write_bytes(b"ChadChan3D_CPM_ASE_Button enabled")
+        (game / "workshop_archive/scripts/sfm/autoinit").mkdir(parents=True)
+        (game / "workshop_archive/scripts/sfm/autoinit/autoinit_manager.py").write_bytes(b"autoinit")
         stage = root / "stage" / "payload"
         stage.mkdir(parents=True)
         helper = stage / "SCT_Setup.exe"
@@ -111,6 +114,7 @@ class WUKitTest(unittest.TestCase):
             poses.write_bytes(b"{}")
             (library / "Characters/krystal/pose_rigs.json").write_bytes(b"{}")
             core.uninstall(game, core.removal_preview(game))
+            (game / "autoinit_scripts.txt").write_bytes(b"rewritten while SFM ran")
             code, out = run(c, "check-uninstall")
             self.assertEqual(code, 0, out)
             self.assertIn("CHECK-UNINSTALL PASS", out)
@@ -125,6 +129,7 @@ class WUKitTest(unittest.TestCase):
         for r in REGS:
             self.assertFalse((game / "usermod" / r).exists())
         self.assertFalse(poses.exists())
+        self.assertEqual((game / "autoinit_scripts.txt").read_bytes(), b"ChadChan3D_CPM_ASE_Button enabled")
         self.assertEqual((game / "usermod/cfg/sfm_defaultanimationgroups.txt").read_bytes(), b"customized\n")
         self.assertTrue((root / "Q/evidence/after_restore_removed/library").exists())
 

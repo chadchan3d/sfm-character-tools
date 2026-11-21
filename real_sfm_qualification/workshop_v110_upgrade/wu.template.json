@@ -26,5 +26,14 @@
   "stats.txt",
   "tf2_playerstats.dmx",
   "voice_ban.dt"
+ ],
+ "protected": [
+  "autoinit_scripts.txt",
+  "autoinit_skipped.txt",
+  "autoinit_light_limit_patch.txt"
+ ],
+ "readonly_trees": [
+  "workshop_archive/scripts/sfm/autoinit",
+  "workshop_archive/scripts/sfm/mainmenu/kiwifruitdev"
  ]
 }
