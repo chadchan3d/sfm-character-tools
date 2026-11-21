@@ -89,3 +89,14 @@ Remaining before publication (Owner only):
    verification) before distribution.
 3. Merge, push and publish. Workshop Setup still installs v1.0.0 (Archive A); distributing v1.1.0 through Workshop
    needs its own installer release work.
+
+## 6. Owner decision (2026-11-20)
+
+"SFM Character Tools v1.1.0 — Signing and Final Package Verification GO": **the Owner/Designer explicitly accepts the
+documented RC5 evidence gaps** (section 4) as low-risk limits of the release evidence. The Fox qualification, the
+repeat-Apply (no-op) test and the Undo test are not repeated to complete the smoke checklist.
+
+Preserved unchanged: the RC5 automated **SMOKE FAIL (15/23)** (and the out-of-order INCOMPLETE 9/23); the **withdrawal**
+of the Owner's RC5 visual PASS; the RC5 production-mode Tails evidence; the earlier accepted Fox (Stage 1, RC3) and
+RC4 native qualifications; this risk assessment. No incomplete test is relabelled as passed. The acceptance is a release
+decision on the evidence as it stands, not a verdict change.
