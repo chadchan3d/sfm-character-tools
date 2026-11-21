@@ -2,23 +2,23 @@
 
 SFM character models use different bone and flex names and layouts. SFM Character Tools helps animators use a consistent control layout and reuse character settings across shots.
 
-**Get v1.0.0:** [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3826760383) · [GitHub download](https://github.com/chadchan3d/sfm-character-tools/releases/tag/v1.0.0)
+**Get v1.1.0:** [GitHub download](https://github.com/chadchan3d/sfm-character-tools/releases/tag/v1.1.0) · [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3826760383) (Workshop Setup currently installs v1.0.0)
 
 ## What's included
 
 - **Control Group Normalizer** rebuilds model control groups into a consistent layout, making bones and flexes easier to find without changing the shot structure.
-- **Character Preset Manager (CPM)** saves and applies body settings and facial expressions across shots. It also fits clothing to characters.
+- **Character Preset Manager (CPM)** saves and applies body settings and facial expressions across shots. Its Pose Library, new in v1.1.0, saves character poses and applies them to other copies of the same model. It also fits clothing to characters.
 - **SFM Control Group Updater** updates Animation Groups data and builds its matching sidecar after you edit or replace the TXT. It updates recognition data, not the applications.
 
 The included Animation Groups file catalogues bone and flex names from more than 9,000 SFM models, providing broad model support without model-by-model setup. Its matching sidecar is included, so the tools can run immediately after installation.
 
 ## Installation
 
-**Steam Workshop:** [Subscribe to SFM Character Tools](https://steamcommunity.com/sharedfiles/filedetails/?id=3826760383), open SFM, then choose **Scripts → SFM Character Tools → Install or Update (Windows Setup)**. Close SFM while keeping Setup open, install the tools, then close Setup and restart SFM. Setup backs up your existing Animation Groups TXT before replacing it; custom edits are not merged.
+**Steam Workshop:** [Subscribe to SFM Character Tools](https://steamcommunity.com/sharedfiles/filedetails/?id=3826760383), open SFM, then choose **Scripts → SFM Character Tools → Install or Update (Windows Setup)**. Close SFM while keeping Setup open, install the tools, then close Setup and restart SFM. Setup backs up your existing Animation Groups TXT before replacing it; custom edits are not merged. Workshop Setup currently installs v1.0.0; a v1.1.0 Workshop update will follow.
 
-**GitHub manual installation:** Download the software ZIP from the [v1.0.0 release](https://github.com/chadchan3d/sfm-character-tools/releases/tag/v1.0.0). Close SFM, extract the ZIP, and copy its `usermod` folder into `SourceFilmmaker/game`, merging with the existing folder. **Back up a customized `usermod/cfg/sfm_defaultanimationgroups.txt` first:** manual installation replaces it.
+**GitHub manual installation:** Download the software ZIP from the [v1.1.0 release](https://github.com/chadchan3d/sfm-character-tools/releases/tag/v1.1.0). Close SFM, extract the ZIP, and copy its `usermod` folder into `SourceFilmmaker/game`, merging with the existing folder. **Back up a customized `usermod/cfg/sfm_defaultanimationgroups.txt` first:** manual installation replaces it.
 
-Open **Scripts → SFM Character Tools** to use the tools. See the [release README](release/v1.0.0/README.txt) for complete installation and usage instructions.
+Open **Scripts → SFM Character Tools** to use the tools. See the [release README](release/v1.1.0/README.txt) for complete installation and usage instructions.
 
 ## Optional CPM toolbar button
 
@@ -32,7 +32,7 @@ To enable or disable the button, open **Scripts → kiwifruit → Autoinit Manag
 
 Many models are still unrepresented. Share scan data from your model library to improve bone and flex recognition for everyone. Your scans help the Normalizer organize more models correctly and Character Preset Manager support more characters.
 
-Use [SFM Model Scanner](https://github.com/chadchan3d/sfm-model-scanner) and share your scan data through [ChadChat](https://chadchan3d.com/chat/), where you can also get help. See the [release README](release/v1.0.0/README.txt) for the scan and export procedure.
+Use [SFM Model Scanner](https://github.com/chadchan3d/sfm-model-scanner) and share your scan data through [ChadChat](https://chadchan3d.com/chat/), where you can also get help. See the [release README](release/v1.1.0/README.txt) for the scan and export procedure.
 
 ## Known limitations
 
