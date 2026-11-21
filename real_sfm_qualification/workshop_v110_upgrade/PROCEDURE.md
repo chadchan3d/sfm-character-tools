@@ -21,7 +21,8 @@ the v1.0.0 Workshop installation, ready for the later real Workshop update.
 | Starting state required | installation record package `5323b143…` (v1.0.0), CPM `ccbed9d7…`, no registries |
 | Session | `WU_SESSION.dmx`: a verified copy of the R2 fixture `259ea8a6…`, **never saved** |
 | Tool | `python -I <REPO>\real_sfm_qualification\workshop_v110_upgrade\tools\wu_tool.py <Q>\wu.json <command>` |
-| Backed up and restored | `usermod\scripts`, `usermod\cfg`, `usermod\tools`, `Documents\SFM Character Preset Manager` |
+| Backed up and restored | `usermod\scripts`, `usermod\cfg`, `usermod\tools`, `Documents\SFM Character Preset Manager`; Autoinit Manager's settings (`autoinit_scripts.txt`, `autoinit_skipped.txt`, `autoinit_light_limit_patch.txt`) |
+| Checked unchanged (read only) | Steam's Workshop payload; Autoinit Manager's code in `workshop_archive` |
 
 **Never:** save the session; use the Workshop menu's "Install or Update (Windows Setup)" entry (that is still the
 v1.0.0 payload); unsubscribe or change anything in Steam; delete files by hand except the one Setup file Setup itself
