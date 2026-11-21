@@ -1,6 +1,6 @@
 {
  "format": "F01-RC4S-config-v1",
- "description": "F-01 v1.1.0 RC4 native release smoke: Fox Full body and the Tails cross-rig transfer in a normal installation, with the exact RC4 production CPM and registries from the unsigned RC4 package. Copy to <Q>/rc4s.json and replace the path placeholders; change no pin.",
+ "description": "F-01 v1.1.0 RC4 native release smoke: Fox Full body and the Tails cross-rig transfer in a normal installation, with the exact RC4 production CPM and registries from the unsigned RC5 package (RC4's production files with the approved v1.1.0 README; the pin key rc4_zip_sha256 keeps its name). Copy to <Q>/rc4s.json and replace the path placeholders; change no pin.",
  "paths": {
   "Q": "<RUN_DIR>",
   "REPO": "<REPO>",
@@ -12,14 +12,14 @@
   "CANDIDATE": "{REPO}/cpm/app/SFM_Character_Preset_Manager.py",
   "PROFILE": "{REPO}/cpm/pose_profiles/cpm_pose_profiles_v1.json",
   "BODY_PROFILE": "{REPO}/cpm/pose_profiles/cpm_body_profiles_v1.json",
-  "RC_ZIP": "<RC4 package folder>/SFM.Character.Tools.v1.1.0-rc4-UNSIGNED.zip",
+  "RC_ZIP": "<RC5 package folder>/SFM.Character.Tools.v1.1.0-rc5-UNSIGNED.zip",
   "R2_FIXTURE": "<R2_FIXTURE_DIR>/F01_R2_DISPOSABLE_<SOURCE_SESSION>.dmx",
   "S3_RUN1": "<S3 run 1 folder (f01-full-body-s3)>",
   "LOG_DIR": "C:/Users/Public/Documents/SFM Character Preset Manager Logs",
   "LEGACY_POSE": "<S3 run 1 folder>/evidence/library_poses/krystal2020--7d2aee52ef3a/NQ1 Pose A--5273df2209ca.json"
  },
  "pins": {
-  "rc4_zip_sha256": "bef9171a6e06aa1e2d3d0d0628d641bf33d3238a91952d7b6b15c659ad52f8fd",
+  "rc4_zip_sha256": "baadc4be54e17aead1ddf16474956b9b4cb9ba41fe073f7d4b568bf661fcf6d9",
   "rc4_cpm_sha256": "b89af5a8e8e86e65352a34803aef84b751c42082aecb58be250149da39e02525",
   "qualification_cpm_sha256": "b89af5a8e8e86e65352a34803aef84b751c42082aecb58be250149da39e02525",
   "profile_sha256": "f445d5ef7fb183e6bcae3099b3812ffd2363213911605134231c2a1f708d6d00",
@@ -31,7 +31,7 @@
   "legacy_pose_sha256": "4916a7243193306ab7a93dec9fbc988b079c9af4c3bb0e9828a5b2d89cef3541",
   "analyzer_sha256": "079c86a988ab4efc15ac33e09824e519aa1c39c04ecfe31c6c6a43d49321b6da",
   "modes_sha256": "6927bf043bb84c901467f9b30b04677c5937f10c3f926249ffbdb0b462eda460",
-  "procedure_sha256": "6668de4762bcaaf79388b7ff670a76771f94657003a5c0f6d302bac312d57cf9"
+  "procedure_sha256": "df1c379456de4b845c02894d8027c1c16e3829b81294702de19c3fd571d6f281"
  },
  "fox_dir": "foxmccouldwm--2d646d9605f0",
  "tails_dir": "milestailsprower--caebe27de7ca",

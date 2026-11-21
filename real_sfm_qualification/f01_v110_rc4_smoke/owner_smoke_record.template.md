@@ -6,7 +6,7 @@ Fox S: ________  Fox D: ________  Tails N: ________
 
 | Item | Step | What to record | Result | Message / notes |
 |---|---|---|---|---|
-| U1 | 3 | Save New showed "Checking the character before saving." at once | | |
+| U1 | 3 | Save New gave immediate feedback (a busy cursor is enough) | | |
 | U2 | 3, 6 | Pose Info's Rig row (expected `rig_biped`) for RC4 Fox and RC4 Sit | | |
 | F1 | 3 | `RC4 Fox` saved as Full body | | |
 | F2 | 4 | Fox D takes Fox S's posture; placement and facing kept; no bad deformation; nothing else changed | | |

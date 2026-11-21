@@ -404,3 +404,6 @@ real_sfm_qualification/f01_ui_acceptance/** text eol=lf
 # F-01 Q1 PS-2 diagnostic kit (2026-11-15): the observer SHA-256 is pinned in q1.template.json
 # (q1_observer_sha256) and PROCEDURE.md; keep exact LF bytes for the whole kit on every checkout and archive export.
 real_sfm_qualification/f01_q1_ps2_diagnostic/** text eol=lf
+
+# v1.1.0 RC5: the Owner-approved package README, exact bytes (LF, final newline), never normalized
+release/v1.1.0-rc5/README.txt -text

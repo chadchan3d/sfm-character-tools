@@ -1,7 +1,7 @@
 # F-01 v1.1.0 RC4 native release smoke (RC4S): operator procedure
 
-**Status:** prepared offline, **not run**. Running it, and every installation change below, needs the Owner's
-separate authorization.
+**Status:** prepared offline; package pin moved to RC5 before any run. Authorized by "SFM Character Tools v1.1.0 —
+README Integration and Final Release Smoke GO" (2026-11-20).
 
 **Authority:** "F-01 Pose Library — v1.1.0 Release Candidate GO" (2026-11-20). Record:
 `cpm/qualification/F01_V110_RC4_RELEASE_CANDIDATE.md`.
@@ -11,13 +11,14 @@ script in SFM; production registry mode). It covers:
 - Fox Full body Save, Apply to a second Fox, Undo and Redo (the structural route);
 - the qualified Tails cross-rig transfer: `RC4 Sit` saved from the session's original sitting Tails, applied to a new
   chest-rigged Tails (adapted), applied again (a no-op), and undone once;
-- Save New's immediate feedback and Pose Info's Rig row, as you see them.
+- Save New's immediate feedback (the Owner accepts the busy cursor as sufficient) and Pose Info's Rig row, as you
+  see them.
 
 The RC4 qualifications are not repeated.
 
 | Item | Value |
 |---|---|
-| Installed CPM | `b89af5a8e8e86e65352a34803aef84b751c42082aecb58be250149da39e02525` (production mode), from the unsigned RC4 package `bef9171a6e06aa1e2d3d0d0628d641bf33d3238a91952d7b6b15c659ad52f8fd` |
+| Installed CPM | `b89af5a8e8e86e65352a34803aef84b751c42082aecb58be250149da39e02525` (production mode), from the unsigned RC5 package `baadc4be54e17aead1ddf16474956b9b4cb9ba41fe073f7d4b568bf661fcf6d9` (RC4's production files with the approved v1.1.0 README) |
 | Registries | `f445d5ef…`, `a2254930…` (unchanged) |
 | Sessions | `RC4_SESSION.dmx`: a verified copy of the R2 fixture `259ea8a6…`, **never saved**. `RC4_SPARE.dmx`: never opened |
 | Tool | `python -I <REPO>\real_sfm_qualification\f01_v110_rc4_smoke\tools\rc4s_tool.py <Q>\rc4s.json <command>` |
@@ -50,7 +51,7 @@ The RC4 qualifications are not repeated.
    - **Fox S:** bend the spine, turn the head, move the hands, lift a foot.
    - **Fox D and Tails N:** move `rig_root` a few hundred units away and turn it; give Fox D a different pose.
 3. **Save Fox.** Open **Character Preset Manager**, choose **Refresh Models** and select Fox S. Choose **Poses: Save New**.
-   **Note whether "Checking the character before saving." appears at once.** Keep **Full body**, name it `RC4 Fox`
+   **Note whether Save New gives immediate feedback (a busy cursor is enough).** Keep **Full body**, name it `RC4 Fox`
    and save. Select `RC4 Fox` and open **Pose Info**: **note the Rig row** (expected `rig_biped`). Close it. **[F1]**
 4. **Apply Fox.** Select Fox D and `RC4 Fox`, then **Apply Pose**. Expect `Pose applied: RC4 Fox.` Check that Fox D
    takes the posture, stays in place facing the same way, and that nothing else changed. **[F2]**
